@@ -176,6 +176,11 @@ html, body {
     background-color: var(--highlight-color);
 }
 
+.header-btn.active {
+    color: var(--text-color);
+    background-color: var(--highlight-color);
+}
+
 .book-title {
     flex: 1;
     font-size: 1.1rem;

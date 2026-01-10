@@ -13,7 +13,10 @@
         totalPages: 0,
         currentParagraphIndex: 0,
         pagesData: [],         // Array of { startParagraph, endParagraph } for each page
-        isImporting: false
+        isImporting: false,
+        ttsEnabled: false,
+        ttsUtterance: null,
+        ttsWaitingForChapter: false
     };
 
     // DOM Elements
@@ -35,7 +38,8 @@
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
         chapterListOverlay: document.getElementById('chapter-list-overlay'),
-        chapterList: document.getElementById('chapter-list')
+        chapterList: document.getElementById('chapter-list'),
+        ttsToggle: document.getElementById('tts-toggle')
     };
 
     // Chapter list state
@@ -208,6 +212,7 @@
     async function loadChapter(chapterIndex, pageIndex = 0, paragraphIndex = 0) {
         if (chapterIndex < 0 || chapterIndex >= state.chapters.length) return;
 
+        state.ttsWaitingForChapter = true;
         state.currentChapterIndex = chapterIndex;
         localStorage.setItem(STORAGE_KEYS.LAST_CHAPTER, chapterIndex);
 
@@ -226,7 +231,14 @@
             state.currentParagraphIndex = Math.min(paragraphIndex, state.paragraphs.length - 1);
             state.currentParagraphIndex = Math.max(0, state.currentParagraphIndex);
             renderPage();
+
+            // Continue TTS if it was enabled
+            state.ttsWaitingForChapter = false;
+            if (state.ttsEnabled) {
+                ttsSpeakCurrent();
+            }
         } catch (error) {
+            state.ttsWaitingForChapter = false;
             console.error('Failed to load chapter:', error);
             state.paragraphs = [];
             elements.columnLeft.innerHTML = '<p class="no-content">Content not available</p>';
@@ -527,6 +539,7 @@
 
     // Back to library
     function backToLibrary() {
+        ttsStop();
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
         elements.searchResults.classList.add('hidden');
@@ -586,6 +599,110 @@
             chapterListSelectedIndex = newIndex;
             renderChapterList();
             scrollChapterIntoView(chapterListSelectedIndex);
+        }
+    }
+
+    // Text-to-Speech functions
+    function ttsToggle() {
+        if (!window.speechSynthesis) {
+            console.warn('Speech synthesis not supported');
+            return;
+        }
+
+        if (state.ttsEnabled) {
+            ttsStop();
+        } else {
+            state.ttsEnabled = true;
+            elements.ttsToggle.classList.add('active');
+            ttsSpeakCurrent();
+        }
+    }
+
+    function ttsStop() {
+        state.ttsEnabled = false;
+        state.ttsUtterance = null;
+        speechSynthesis.cancel();
+        if (elements.ttsToggle) {
+            elements.ttsToggle.classList.remove('active');
+        }
+    }
+
+    function ttsSpeakCurrent() {
+        if (!state.ttsEnabled || state.paragraphs.length === 0 || state.ttsWaitingForChapter) {
+            return;
+        }
+
+        const paragraph = state.paragraphs[state.currentParagraphIndex];
+        if (!paragraph) {
+            ttsStop();
+            return;
+        }
+
+        // Extract plain text from HTML content
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = paragraph.content;
+        const text = tempDiv.textContent || tempDiv.innerText || '';
+
+        // Skip empty paragraphs
+        if (!text.trim()) {
+            ttsAdvanceAndContinue();
+            return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        state.ttsUtterance = utterance;
+
+        utterance.onend = () => {
+            if (state.ttsEnabled) {
+                ttsAdvanceAndContinue();
+            }
+        };
+
+        utterance.onerror = (event) => {
+            if (event.error !== 'interrupted') {
+                console.error('TTS error:', event.error);
+            }
+        };
+
+        speechSynthesis.speak(utterance);
+    }
+
+    function ttsAdvanceAndContinue() {
+        const wasLastParagraph = state.currentParagraphIndex >= state.paragraphs.length - 1;
+        const wasLastChapter = state.currentChapterIndex >= state.chapters.length - 1;
+
+        if (wasLastParagraph && wasLastChapter) {
+            // End of book
+            ttsStop();
+            return;
+        }
+
+        if (wasLastParagraph) {
+            // Need to load next chapter - nextParagraph handles this
+            // We'll continue reading after chapter loads
+            const prevChapter = state.currentChapterIndex;
+            nextParagraph();
+
+            // Wait for chapter to load, then continue
+            const checkAndContinue = () => {
+                if (state.currentChapterIndex !== prevChapter && state.paragraphs.length > 0) {
+                    ttsSpeakCurrent();
+                } else if (state.ttsEnabled) {
+                    setTimeout(checkAndContinue, 100);
+                }
+            };
+            setTimeout(checkAndContinue, 100);
+        } else {
+            nextParagraph();
+            ttsSpeakCurrent();
+        }
+    }
+
+    function ttsInterrupt() {
+        // Called when user navigates manually while TTS is active
+        if (state.ttsEnabled) {
+            speechSynthesis.cancel();
+            ttsSpeakCurrent();
         }
     }
 
@@ -700,6 +817,11 @@
         // Back to library
         elements.backToLibrary.addEventListener('click', backToLibrary);
 
+        // TTS toggle
+        if (elements.ttsToggle) {
+            elements.ttsToggle.addEventListener('click', ttsToggle);
+        }
+
         // Search input
         elements.searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
@@ -796,26 +918,36 @@
                 case 'j':
                     e.preventDefault();
                     nextParagraph();
+                    ttsInterrupt();
                     break;
                 case 'k':
                     e.preventDefault();
                     prevParagraph();
+                    ttsInterrupt();
                     break;
                 case 'l':
                     e.preventDefault();
                     nextPage();
+                    ttsInterrupt();
                     break;
                 case 'h':
                     e.preventDefault();
                     prevPage();
+                    ttsInterrupt();
                     break;
                 case 'L':
                     e.preventDefault();
+                    if (state.ttsEnabled) speechSynthesis.cancel();
                     nextChapter();
                     break;
                 case 'H':
                     e.preventDefault();
+                    if (state.ttsEnabled) speechSynthesis.cancel();
                     prevChapter();
+                    break;
+                case 'p':
+                    e.preventDefault();
+                    ttsToggle();
                     break;
                 case 'Escape':
                     backToLibrary();
