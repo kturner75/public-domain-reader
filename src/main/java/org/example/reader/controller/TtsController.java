@@ -1,0 +1,253 @@
+package org.example.reader.controller;
+
+import org.example.reader.entity.BookEntity;
+import org.example.reader.entity.ChapterEntity;
+import org.example.reader.entity.ParagraphEntity;
+import org.example.reader.model.VoiceSettings;
+import org.example.reader.repository.BookRepository;
+import org.example.reader.repository.ChapterRepository;
+import org.example.reader.repository.ParagraphRepository;
+import org.example.reader.service.TtsService;
+import org.example.reader.service.VoiceAnalysisService;
+import org.jsoup.Jsoup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/tts")
+public class TtsController {
+
+  private static final Logger log = LoggerFactory.getLogger(TtsController.class);
+
+  private final TtsService ttsService;
+  private final VoiceAnalysisService voiceAnalysisService;
+  private final BookRepository bookRepository;
+  private final ChapterRepository chapterRepository;
+  private final ParagraphRepository paragraphRepository;
+
+  public TtsController(TtsService ttsService, VoiceAnalysisService voiceAnalysisService,
+                       BookRepository bookRepository, ChapterRepository chapterRepository,
+                       ParagraphRepository paragraphRepository) {
+    this.ttsService = ttsService;
+    this.voiceAnalysisService = voiceAnalysisService;
+    this.bookRepository = bookRepository;
+    this.chapterRepository = chapterRepository;
+    this.paragraphRepository = paragraphRepository;
+  }
+
+  @GetMapping("/status")
+  public Map<String, Object> getStatus() {
+    Map<String, Object> status = new HashMap<>();
+    status.put("openaiConfigured", ttsService.isConfigured());
+    status.put("ollamaAvailable", voiceAnalysisService.isOllamaAvailable());
+    status.put("voices", TtsService.AVAILABLE_VOICES);
+    return status;
+  }
+
+  @GetMapping("/voices")
+  public List<Map<String, String>> getVoices() {
+    return TtsService.AVAILABLE_VOICES;
+  }
+
+  @GetMapping("/settings/{bookId}")
+  public ResponseEntity<VoiceSettings> getVoiceSettings(@PathVariable String bookId) {
+    Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
+    if (bookOpt.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+
+    BookEntity book = bookOpt.get();
+
+    // Return saved settings if they exist
+    if (book.getTtsVoice() != null) {
+      VoiceSettings settings = new VoiceSettings(
+          book.getTtsVoice(),
+          book.getTtsSpeed() != null ? book.getTtsSpeed() : 1.0,
+          book.getTtsInstructions(),
+          book.getTtsReasoning()
+      );
+      return ResponseEntity.ok(settings);
+    }
+
+    return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/analyze/{bookId}")
+  public ResponseEntity<VoiceSettings> analyzeBook(
+      @PathVariable String bookId,
+      @RequestParam(required = false, defaultValue = "false") boolean force) {
+    Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
+    if (bookOpt.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+
+    BookEntity book = bookOpt.get();
+
+    // Return existing settings if already analyzed (unless force=true)
+    if (!force && book.getTtsVoice() != null) {
+      VoiceSettings settings = new VoiceSettings(
+          book.getTtsVoice(),
+          book.getTtsSpeed() != null ? book.getTtsSpeed() : 1.0,
+          book.getTtsInstructions(),
+          book.getTtsReasoning()
+      );
+      return ResponseEntity.ok(settings);
+    }
+
+    // Get opening text from first chapter
+    String openingText = "";
+    List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(book.getId());
+    if (!chapters.isEmpty()) {
+      List<ParagraphEntity> paragraphs = paragraphRepository
+          .findByChapterIdOrderByParagraphIndex(chapters.get(0).getId());
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < Math.min(10, paragraphs.size()); i++) {
+        sb.append(extractPlainText(paragraphs.get(i).getContent())).append("\n\n");
+      }
+      openingText = sb.toString();
+    }
+
+    VoiceSettings settings = voiceAnalysisService.analyzeBookForVoice(
+        book.getTitle(), book.getAuthor(), openingText);
+
+    // Save settings to database
+    book.setTtsVoice(settings.voice());
+    book.setTtsSpeed(settings.speed());
+    book.setTtsInstructions(settings.instructions());
+    book.setTtsReasoning(settings.reasoning());
+    bookRepository.save(book);
+
+    log.info("Saved voice settings for book {}: voice={}, speed={}",
+             book.getTitle(), settings.voice(), settings.speed());
+
+    return ResponseEntity.ok(settings);
+  }
+
+  @PostMapping("/speak")
+  public ResponseEntity<byte[]> speak(@RequestBody SpeakRequest request) {
+    if (!ttsService.isConfigured()) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+          .body("OpenAI API key not configured".getBytes());
+    }
+
+    String text = extractPlainText(request.text());
+    if (text.isBlank()) {
+      return ResponseEntity.badRequest().body("No text to speak".getBytes());
+    }
+
+    VoiceSettings settings = new VoiceSettings(
+        request.voice(),
+        request.speed() > 0 ? request.speed() : 1.0,
+        request.instructions(),
+        null
+    );
+
+    byte[] audio = ttsService.generateSpeech(text, settings);
+
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
+        .header(HttpHeaders.CACHE_CONTROL, "max-age=86400")
+        .body(audio);
+  }
+
+  @GetMapping("/speak/{bookId}/{chapterId}/{paragraphIndex}")
+  public ResponseEntity<byte[]> speakParagraph(
+      @PathVariable String bookId,
+      @PathVariable String chapterId,
+      @PathVariable int paragraphIndex,
+      @RequestParam(required = false) String voice,
+      @RequestParam(required = false, defaultValue = "1.0") double speed,
+      @RequestParam(required = false) String instructions) {
+
+    if (!ttsService.isConfigured()) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+          .body("OpenAI API key not configured".getBytes());
+    }
+
+    // Get paragraph text
+    Optional<ChapterEntity> chapterOpt = chapterRepository.findById(chapterId);
+    if (chapterOpt.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+
+    List<ParagraphEntity> paragraphs = paragraphRepository
+        .findByChapterIdOrderByParagraphIndex(chapterOpt.get().getId());
+
+    if (paragraphIndex < 0 || paragraphIndex >= paragraphs.size()) {
+      return ResponseEntity.notFound().build();
+    }
+
+    String text = extractPlainText(paragraphs.get(paragraphIndex).getContent());
+    if (text.isBlank()) {
+      // Return empty audio for blank paragraphs
+      return ResponseEntity.ok()
+          .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
+          .body(new byte[0]);
+    }
+
+    VoiceSettings settings = new VoiceSettings(voice, speed, instructions, null);
+    byte[] audio = ttsService.generateSpeechForParagraph(
+        bookId, chapterId, paragraphIndex, text, settings);
+
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
+        .header(HttpHeaders.CACHE_CONTROL, "max-age=604800")
+        .body(audio);
+  }
+
+  @GetMapping("/estimate/{bookId}")
+  public Map<String, Object> estimateCost(@PathVariable String bookId) {
+    Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
+    if (bookOpt.isEmpty()) {
+      return Map.of("error", "Book not found");
+    }
+
+    BookEntity book = bookOpt.get();
+    List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(book.getId());
+
+    int totalCharacters = 0;
+    int totalParagraphs = 0;
+
+    for (ChapterEntity chapter : chapters) {
+      List<ParagraphEntity> paragraphs = paragraphRepository
+          .findByChapterIdOrderByParagraphIndex(chapter.getId());
+      for (ParagraphEntity p : paragraphs) {
+        totalCharacters += extractPlainText(p.getContent()).length();
+        totalParagraphs++;
+      }
+    }
+
+    int costCents = ttsService.estimateCost(totalCharacters);
+
+    return Map.of(
+        "bookId", bookId,
+        "title", book.getTitle(),
+        "totalCharacters", totalCharacters,
+        "totalParagraphs", totalParagraphs,
+        "estimatedCostCents", costCents,
+        "estimatedCostDisplay", String.format("$%.2f", costCents / 100.0)
+    );
+  }
+
+  private String extractPlainText(String html) {
+    if (html == null) return "";
+    return Jsoup.parse(html).text();
+  }
+
+  public record SpeakRequest(
+      String text,
+      String voice,
+      double speed,
+      String instructions
+  ) {
+  }
+}

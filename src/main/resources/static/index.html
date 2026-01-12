@@ -42,6 +42,17 @@
                     <path d="M19 12H5M12 19l-7-7 7-7"/>
                 </svg>
             </button>
+            <div class="tts-container">
+                <button id="tts-toggle" class="header-btn" title="Read Aloud (p)">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                </button>
+                <span id="tts-speed" class="tts-speed"></span>
+                <span id="tts-mode" class="tts-mode"></span>
+            </div>
             <h1 id="book-title" class="book-title"></h1>
             <div class="search-container">
                 <input type="text" id="search-input" class="search-input" placeholder="Search... (press /)" />
@@ -71,6 +82,8 @@
                 <kbd>j</kbd>/<kbd>k</kbd> paragraph
                 <kbd>H</kbd>/<kbd>L</kbd> chapter
                 <kbd>c</kbd> chapters
+                <kbd>p</kbd> read
+                <kbd>s</kbd> speed
             </span>
             <span id="page-indicator" class="page-indicator"></span>
         </footer>
