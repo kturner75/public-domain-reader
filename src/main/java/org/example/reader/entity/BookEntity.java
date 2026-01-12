@@ -28,6 +28,14 @@ public class BookEntity {
 
     private String sourceId; // ID from the source (e.g., Gutenberg book number)
 
+    // TTS Voice Settings (persisted after LLM analysis)
+    private String ttsVoice;
+    private Double ttsSpeed;
+    @Column(length = 1000)
+    private String ttsInstructions;
+    @Column(length = 500)
+    private String ttsReasoning;
+
     @OneToMany(mappedBy = "book", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("chapterIndex")
     private List<ChapterEntity> chapters = new ArrayList<>();
@@ -64,6 +72,18 @@ public class BookEntity {
 
     public List<ChapterEntity> getChapters() { return chapters; }
     public void setChapters(List<ChapterEntity> chapters) { this.chapters = chapters; }
+
+    public String getTtsVoice() { return ttsVoice; }
+    public void setTtsVoice(String ttsVoice) { this.ttsVoice = ttsVoice; }
+
+    public Double getTtsSpeed() { return ttsSpeed; }
+    public void setTtsSpeed(Double ttsSpeed) { this.ttsSpeed = ttsSpeed; }
+
+    public String getTtsInstructions() { return ttsInstructions; }
+    public void setTtsInstructions(String ttsInstructions) { this.ttsInstructions = ttsInstructions; }
+
+    public String getTtsReasoning() { return ttsReasoning; }
+    public void setTtsReasoning(String ttsReasoning) { this.ttsReasoning = ttsReasoning; }
 
     public void addChapter(ChapterEntity chapter) {
         chapters.add(chapter);

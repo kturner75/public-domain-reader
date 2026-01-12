@@ -15,8 +15,14 @@
         pagesData: [],         // Array of { startParagraph, endParagraph } for each page
         isImporting: false,
         ttsEnabled: false,
-        ttsUtterance: null,
-        ttsWaitingForChapter: false
+        ttsAudio: null,
+        ttsWaitingForChapter: false,
+        ttsVoiceSettings: null,  // { voice, speed, instructions, reasoning }
+        ttsAvailable: false,
+        ttsOpenAIAvailable: false,
+        ttsBrowserAvailable: false,
+        ttsUsingBrowser: false,  // true when currently using browser fallback
+        ttsPlaybackRate: 1.0  // 1.0, 1.25, 1.5, 1.75, 2.0
     };
 
     // DOM Elements
@@ -39,7 +45,9 @@
         searchResults: document.getElementById('search-results'),
         chapterListOverlay: document.getElementById('chapter-list-overlay'),
         chapterList: document.getElementById('chapter-list'),
-        ttsToggle: document.getElementById('tts-toggle')
+        ttsToggle: document.getElementById('tts-toggle'),
+        ttsSpeed: document.getElementById('tts-speed'),
+        ttsMode: document.getElementById('tts-mode')
     };
 
     // Chapter list state
@@ -51,7 +59,8 @@
         LAST_CHAPTER: 'reader_lastChapter',
         LAST_PAGE: 'reader_lastPage',
         LAST_PARAGRAPH: 'reader_lastParagraph',
-        RECENTLY_READ: 'reader_recentlyRead'
+        RECENTLY_READ: 'reader_recentlyRead',
+        TTS_SPEED: 'reader_ttsSpeed'
     };
 
     const MAX_RECENTLY_READ = 5;
@@ -60,6 +69,13 @@
     async function init() {
         await loadLibrary();
         setupEventListeners();
+        await ttsCheckAvailability();
+
+        // Load saved TTS speed preference
+        const savedSpeed = parseFloat(localStorage.getItem(STORAGE_KEYS.TTS_SPEED));
+        if (savedSpeed && [1.0, 1.25, 1.5, 1.75, 2.0].includes(savedSpeed)) {
+            state.ttsPlaybackRate = savedSpeed;
+        }
 
         // Check for saved book
         const lastBookId = localStorage.getItem(STORAGE_KEYS.LAST_BOOK);
@@ -206,6 +222,11 @@
 
         // Load chapter
         await loadChapter(chapterIndex, pageIndex, paragraphIndex);
+
+        // Analyze book for voice settings (async, don't block)
+        if (state.ttsAvailable && !state.ttsVoiceSettings) {
+            ttsAnalyzeBook();
+        }
     }
 
     // Load chapter content
@@ -540,6 +561,7 @@
     // Back to library
     function backToLibrary() {
         ttsStop();
+        state.ttsVoiceSettings = null;  // Clear voice settings for next book
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
         elements.searchResults.classList.add('hidden');
@@ -602,10 +624,92 @@
         }
     }
 
-    // Text-to-Speech functions
+    // Text-to-Speech functions (using backend OpenAI TTS with browser fallback)
+    async function ttsCheckAvailability() {
+        // Check browser speech synthesis support
+        state.ttsBrowserAvailable = 'speechSynthesis' in window;
+
+        // Check OpenAI TTS availability
+        try {
+            const response = await fetch('/api/tts/status');
+            const status = await response.json();
+            state.ttsOpenAIAvailable = status.openaiConfigured;
+        } catch (error) {
+            console.warn('OpenAI TTS not available:', error);
+            state.ttsOpenAIAvailable = false;
+        }
+
+        // TTS is available if either OpenAI or browser is available
+        state.ttsAvailable = state.ttsOpenAIAvailable || state.ttsBrowserAvailable;
+
+        if (elements.ttsToggle) {
+            elements.ttsToggle.style.display = state.ttsAvailable ? '' : 'none';
+        }
+
+        console.log('TTS availability:', {
+            openai: state.ttsOpenAIAvailable,
+            browser: state.ttsBrowserAvailable,
+            available: state.ttsAvailable
+        });
+
+        return {
+            openaiConfigured: state.ttsOpenAIAvailable,
+            browserAvailable: state.ttsBrowserAvailable
+        };
+    }
+
+    async function ttsAnalyzeBook() {
+        if (!state.currentBook || !state.ttsAvailable) return;
+
+        try {
+            // First check if settings are already saved
+            const savedResponse = await fetch(`/api/tts/settings/${state.currentBook.id}`);
+            if (savedResponse.ok && savedResponse.status === 200) {
+                state.ttsVoiceSettings = await savedResponse.json();
+                console.log('Loaded saved voice settings:', state.ttsVoiceSettings);
+                return; // Don't show notification for saved settings
+            }
+
+            // No saved settings (204 or other), analyze with LLM
+            console.log('No saved settings, analyzing with LLM...');
+            const response = await fetch(`/api/tts/analyze/${state.currentBook.id}`, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                state.ttsVoiceSettings = await response.json();
+                console.log('Voice analysis complete:', state.ttsVoiceSettings);
+                showVoiceRecommendation();
+            }
+        } catch (error) {
+            console.warn('Voice analysis failed:', error);
+            state.ttsVoiceSettings = { voice: 'fable', speed: 1.0, instructions: null };
+        }
+    }
+
+    function showVoiceRecommendation() {
+        if (!state.ttsVoiceSettings || !state.ttsVoiceSettings.reasoning) return;
+
+        // Show a subtle notification about the voice recommendation
+        const notification = document.createElement('div');
+        notification.className = 'voice-notification';
+        notification.innerHTML = `
+            <div class="voice-notification-content">
+                <strong>AI Voice Selection:</strong> ${state.ttsVoiceSettings.voice}
+                <br><small>${state.ttsVoiceSettings.reasoning}</small>
+            </div>
+        `;
+        document.body.appendChild(notification);
+
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            notification.classList.add('fade-out');
+            setTimeout(() => notification.remove(), 500);
+        }, 5000);
+    }
+
     function ttsToggle() {
-        if (!window.speechSynthesis) {
-            console.warn('Speech synthesis not supported');
+        if (!state.ttsAvailable) {
+            console.warn('TTS not available');
             return;
         }
 
@@ -614,20 +718,31 @@
         } else {
             state.ttsEnabled = true;
             elements.ttsToggle.classList.add('active');
+            updateSpeedIndicator();
+            updateModeIndicator();
             ttsSpeakCurrent();
         }
     }
 
     function ttsStop() {
         state.ttsEnabled = false;
-        state.ttsUtterance = null;
-        speechSynthesis.cancel();
+        if (state.ttsAudio) {
+            state.ttsAudio.pause();
+            state.ttsAudio = null;
+        }
+        // Cancel browser speech synthesis if active
+        if (state.ttsBrowserAvailable) {
+            speechSynthesis.cancel();
+        }
+        state.ttsUsingBrowser = false;
         if (elements.ttsToggle) {
             elements.ttsToggle.classList.remove('active');
         }
+        updateSpeedIndicator();
+        updateModeIndicator();
     }
 
-    function ttsSpeakCurrent() {
+    async function ttsSpeakCurrent() {
         if (!state.ttsEnabled || state.paragraphs.length === 0 || state.ttsWaitingForChapter) {
             return;
         }
@@ -638,7 +753,7 @@
             return;
         }
 
-        // Extract plain text from HTML content
+        // Extract plain text to check if empty
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = paragraph.content;
         const text = tempDiv.textContent || tempDiv.innerText || '';
@@ -649,22 +764,69 @@
             return;
         }
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        state.ttsUtterance = utterance;
+        // If OpenAI is not available, use browser TTS directly
+        if (!state.ttsOpenAIAvailable) {
+            ttsSpeakBrowser(text);
+            return;
+        }
 
-        utterance.onend = () => {
-            if (state.ttsEnabled) {
-                ttsAdvanceAndContinue();
+        // Try OpenAI TTS first (includes server-side cache check)
+        state.ttsUsingBrowser = false;
+        updateModeIndicator();
+
+        // Build the URL with voice settings
+        const chapter = state.chapters[state.currentChapterIndex];
+        let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${state.currentParagraphIndex}`;
+
+        const params = new URLSearchParams();
+        if (state.ttsVoiceSettings) {
+            if (state.ttsVoiceSettings.voice) params.set('voice', state.ttsVoiceSettings.voice);
+            if (state.ttsVoiceSettings.speed) params.set('speed', state.ttsVoiceSettings.speed);
+            if (state.ttsVoiceSettings.instructions) params.set('instructions', state.ttsVoiceSettings.instructions);
+        }
+        if (params.toString()) url += '?' + params.toString();
+
+        try {
+            // Stop previous audio if any
+            if (state.ttsAudio) {
+                state.ttsAudio.pause();
             }
-        };
 
-        utterance.onerror = (event) => {
-            if (event.error !== 'interrupted') {
-                console.error('TTS error:', event.error);
+            const audio = new Audio(url);
+            state.ttsAudio = audio;
+
+            // Set playbackRate both immediately and after load to ensure it sticks
+            audio.playbackRate = state.ttsPlaybackRate;
+            audio.onloadeddata = () => {
+                audio.playbackRate = state.ttsPlaybackRate;
+            };
+
+            audio.onended = () => {
+                if (state.ttsEnabled) {
+                    ttsAdvanceAndContinue();
+                }
+            };
+
+            audio.onerror = (event) => {
+                console.error('OpenAI TTS audio error, falling back to browser:', event);
+                // Fall back to browser TTS
+                if (state.ttsEnabled && state.ttsBrowserAvailable) {
+                    ttsSpeakBrowser(text);
+                } else if (state.ttsEnabled) {
+                    setTimeout(() => ttsAdvanceAndContinue(), 500);
+                }
+            };
+
+            await audio.play();
+            // Also set after play starts to be extra sure
+            audio.playbackRate = state.ttsPlaybackRate;
+        } catch (error) {
+            console.error('OpenAI TTS playback error, falling back to browser:', error);
+            // Fall back to browser TTS
+            if (state.ttsEnabled && state.ttsBrowserAvailable) {
+                ttsSpeakBrowser(text);
             }
-        };
-
-        speechSynthesis.speak(utterance);
+        }
     }
 
     function ttsAdvanceAndContinue() {
@@ -679,7 +841,6 @@
 
         if (wasLastParagraph) {
             // Need to load next chapter - nextParagraph handles this
-            // We'll continue reading after chapter loads
             const prevChapter = state.currentChapterIndex;
             nextParagraph();
 
@@ -698,12 +859,131 @@
         }
     }
 
+    function ttsSpeakBrowser(text) {
+        // Use browser's built-in speech synthesis as fallback
+        if (!state.ttsBrowserAvailable) {
+            console.warn('Browser speech synthesis not available');
+            ttsStop();
+            return;
+        }
+
+        state.ttsUsingBrowser = true;
+        updateModeIndicator();
+
+        // Cancel any pending speech
+        speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+
+        // Map playback rate (our 1.0-2.0 range works well with utterance.rate)
+        utterance.rate = state.ttsPlaybackRate;
+
+        // Try to find a reasonable voice (prefer English)
+        const voices = speechSynthesis.getVoices();
+        const englishVoice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
+                             voices.find(v => v.lang.startsWith('en')) ||
+                             voices[0];
+        if (englishVoice) {
+            utterance.voice = englishVoice;
+        }
+
+        utterance.onend = () => {
+            if (state.ttsEnabled) {
+                ttsAdvanceAndContinue();
+            }
+        };
+
+        utterance.onerror = (event) => {
+            console.error('Browser TTS error:', event);
+            if (state.ttsEnabled && event.error !== 'interrupted') {
+                setTimeout(() => ttsAdvanceAndContinue(), 500);
+            }
+        };
+
+        speechSynthesis.speak(utterance);
+    }
+
     function ttsInterrupt() {
         // Called when user navigates manually while TTS is active
         if (state.ttsEnabled) {
-            speechSynthesis.cancel();
+            if (state.ttsAudio) {
+                state.ttsAudio.pause();
+                state.ttsAudio = null;
+            }
+            // Cancel browser speech synthesis if active
+            if (state.ttsBrowserAvailable) {
+                speechSynthesis.cancel();
+            }
             ttsSpeakCurrent();
         }
+    }
+
+    function ttsCycleSpeed() {
+        const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
+        const currentIndex = speeds.indexOf(state.ttsPlaybackRate);
+        const nextIndex = (currentIndex + 1) % speeds.length;
+        state.ttsPlaybackRate = speeds[nextIndex];
+
+        // Save preference
+        localStorage.setItem(STORAGE_KEYS.TTS_SPEED, state.ttsPlaybackRate);
+        console.log('Saved TTS speed:', state.ttsPlaybackRate);
+
+        // Update current audio if playing (OpenAI)
+        if (state.ttsAudio) {
+            state.ttsAudio.playbackRate = state.ttsPlaybackRate;
+        }
+
+        // For browser TTS, restart with new speed (can't change rate mid-utterance)
+        if (state.ttsUsingBrowser && state.ttsEnabled) {
+            ttsInterrupt();
+        }
+
+        updateSpeedIndicator();
+        showSpeedNotification();
+    }
+
+    function updateSpeedIndicator() {
+        if (elements.ttsSpeed) {
+            if (state.ttsEnabled && state.ttsPlaybackRate !== 1.0) {
+                elements.ttsSpeed.textContent = state.ttsPlaybackRate + 'x';
+            } else {
+                elements.ttsSpeed.textContent = '';
+            }
+        }
+    }
+
+    function updateModeIndicator() {
+        if (elements.ttsMode) {
+            if (state.ttsEnabled) {
+                if (state.ttsUsingBrowser) {
+                    elements.ttsMode.textContent = 'Browser';
+                    elements.ttsMode.className = 'tts-mode browser';
+                } else {
+                    elements.ttsMode.textContent = 'AI';
+                    elements.ttsMode.className = 'tts-mode openai';
+                }
+            } else {
+                elements.ttsMode.textContent = '';
+                elements.ttsMode.className = 'tts-mode';
+            }
+        }
+    }
+
+    function showSpeedNotification() {
+        // Remove existing notification
+        const existing = document.querySelector('.speed-notification');
+        if (existing) existing.remove();
+
+        const notification = document.createElement('div');
+        notification.className = 'speed-notification';
+        notification.textContent = state.ttsPlaybackRate + 'x';
+        document.body.appendChild(notification);
+
+        // Auto-dismiss after 1 second
+        setTimeout(() => {
+            notification.classList.add('fade-out');
+            setTimeout(() => notification.remove(), 300);
+        }, 1000);
     }
 
     // Import a book from Gutenberg and open it
@@ -948,6 +1228,10 @@
                 case 'p':
                     e.preventDefault();
                     ttsToggle();
+                    break;
+                case 's':
+                    e.preventDefault();
+                    ttsCycleSpeed();
                     break;
                 case 'Escape':
                     backToLibrary();

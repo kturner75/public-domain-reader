@@ -40,3 +40,7 @@ build/
 
 ### Database ###
 /data/
+
+### Environment files ###
+.env
+.env.local

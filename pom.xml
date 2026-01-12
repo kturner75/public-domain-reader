@@ -47,6 +47,12 @@
       <version>1.18.3</version>
     </dependency>
 
+    <!-- WebFlux for WebClient (OpenAI/Ollama API calls) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webflux</artifactId>
+    </dependency>
+
     <!-- Lucene for full-text search -->
     <dependency>
       <groupId>org.apache.lucene</groupId>
