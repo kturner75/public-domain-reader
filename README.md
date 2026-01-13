@@ -3,12 +3,12 @@
 A distraction-free, web reader for public domain literature.
 
 Core Purpose  
-Create the most focused, peaceful deep-reading experience possible for classic books — feeling like holding a beautiful physical volume in your hands.
+Create a focused deep-reading experience for classic books.
 
 Key Principles
-- Absolute minimalism: zero clutter, zero scrolling
+- Minimize ui controls, avoid scrolling
 - Dynamic viewport-fitted "pages" — exactly two columns, top-to-bottom flow
-- Calm, high-legibility typography (EB Garamond or similar serif)
+- High-legibility typography (EB Garamond or similar serif)
 - Seamless keyboard navigation and page turning
 - The text should be the focus. Everything else should be understated.
 
