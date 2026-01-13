@@ -610,3 +610,338 @@ kbd {
         transform: translate(-50%, -50%) scale(1);
     }
 }
+
+/* ========================================
+   Illustration Mode Styles
+   ======================================== */
+
+/* Illustration toggle button active state */
+.illustration-container .header-btn.active {
+    background: var(--highlight-color);
+}
+
+.illustration-container .header-btn.active svg {
+    fill: var(--text-color);
+    fill-opacity: 0.15;
+}
+
+/* Illustration column */
+.illustration-column {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    min-height: 0;
+}
+
+.illustration-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* Skeleton placeholder */
+.illustration-skeleton {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--highlight-color);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-shimmer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.4) 50%,
+        transparent 100%
+    );
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.skeleton-text {
+    position: relative;
+    z-index: 1;
+    color: var(--muted-color);
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+/* Illustration error state */
+.illustration-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    color: var(--muted-color);
+    font-style: italic;
+}
+
+.illustration-error svg {
+    opacity: 0.5;
+}
+
+/* Style notification (similar to voice notification) */
+.style-notification {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 1rem 1.25rem;
+    max-width: 350px;
+    z-index: 1001;
+    animation: slideIn 0.3s ease;
+}
+
+.style-notification-content {
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.style-notification-content small {
+    color: var(--muted-color);
+}
+
+.style-notification.fade-out {
+    opacity: 0;
+    transform: translateX(20px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+/* Make illustration image clickable when prompt editing is enabled */
+.illustration-image.editable {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.illustration-image.editable:hover {
+    transform: scale(1.02);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* ========================================
+   Prompt Editing Modal
+   ======================================== */
+
+.prompt-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prompt-modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.prompt-modal-container {
+    position: relative;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    animation: modalSlideIn 0.2s ease;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.prompt-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.prompt-modal-header h3 {
+    font-size: 1.2rem;
+    font-weight: 500;
+    margin: 0;
+}
+
+.prompt-modal-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted-color);
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.prompt-modal-close:hover {
+    color: var(--text-color);
+    background-color: var(--highlight-color);
+}
+
+.prompt-modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.prompt-modal-hint {
+    font-size: 0.9rem;
+    color: var(--muted-color);
+    margin-bottom: 1rem;
+    line-height: 1.5;
+}
+
+.prompt-textarea {
+    width: 100%;
+    padding: 1rem;
+    font-family: var(--font-serif);
+    font-size: 1rem;
+    line-height: 1.6;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: white;
+    color: var(--text-color);
+    resize: vertical;
+    min-height: 150px;
+    transition: border-color 0.2s;
+}
+
+.prompt-textarea:focus {
+    outline: none;
+    border-color: var(--muted-color);
+}
+
+.prompt-textarea::placeholder {
+    color: var(--muted-color);
+    font-style: italic;
+}
+
+.prompt-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.prompt-btn {
+    padding: 0.6rem 1.25rem;
+    font-family: var(--font-serif);
+    font-size: 0.95rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.prompt-btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--muted-color);
+}
+
+.prompt-btn-secondary:hover {
+    border-color: var(--muted-color);
+    color: var(--text-color);
+}
+
+.prompt-btn-primary {
+    background: var(--text-color);
+    border: 1px solid var(--text-color);
+    color: var(--bg-color);
+}
+
+.prompt-btn-primary:hover {
+    background: #1a1a1a;
+}
+
+.prompt-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Generating mode */
+.prompt-generating {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1rem;
+    gap: 1rem;
+    color: var(--muted-color);
+    font-style: italic;
+}
+
+.prompt-generating-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--text-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Preview mode */
+.prompt-preview-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    background: var(--highlight-color);
+    border-radius: 6px;
+    min-height: 200px;
+    max-height: 400px;
+}
+
+.prompt-preview-image {
+    max-width: 100%;
+    max-height: 380px;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}

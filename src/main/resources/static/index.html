@@ -53,6 +53,15 @@
                 <span id="tts-speed" class="tts-speed"></span>
                 <span id="tts-mode" class="tts-mode"></span>
             </div>
+            <div class="illustration-container">
+                <button id="illustration-toggle" class="header-btn" title="Illustration Mode (i)" style="display: none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                </button>
+            </div>
             <h1 id="book-title" class="book-title"></h1>
             <div class="search-container">
                 <input type="text" id="search-input" class="search-input" placeholder="Search... (press /)" />
@@ -73,6 +82,20 @@
         <main class="reader-content">
             <div id="column-left" class="column"></div>
             <div id="column-right" class="column"></div>
+            <div id="illustration-column" class="column illustration-column hidden">
+                <div id="illustration-skeleton" class="illustration-skeleton hidden">
+                    <div class="skeleton-shimmer"></div>
+                    <span class="skeleton-text">Generating illustration...</span>
+                </div>
+                <img id="illustration-image" class="illustration-image hidden" alt="Chapter illustration" />
+                <div id="illustration-error" class="illustration-error hidden">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <line x1="3" y1="3" x2="21" y2="21"/>
+                    </svg>
+                    <span>Illustration unavailable</span>
+                </div>
+            </div>
         </main>
 
         <!-- Footer with navigation hints -->
@@ -84,6 +107,7 @@
                 <kbd>c</kbd> chapters
                 <kbd>p</kbd> read
                 <kbd>s</kbd> speed
+                <kbd>i</kbd> illustration
             </span>
             <span id="page-indicator" class="page-indicator"></span>
         </footer>
@@ -96,6 +120,55 @@
                     <span class="chapter-list-hint">Arrow keys to navigate, Enter to select, Esc to close</span>
                 </div>
                 <ul id="chapter-list" class="chapter-list"></ul>
+            </div>
+        </div>
+
+        <!-- Illustration Prompt Modal -->
+        <div id="prompt-modal" class="prompt-modal hidden">
+            <div class="prompt-modal-backdrop"></div>
+            <div class="prompt-modal-container">
+                <div class="prompt-modal-header">
+                    <h3 id="prompt-modal-title">Edit Illustration Prompt</h3>
+                    <button id="prompt-modal-close" class="prompt-modal-close" title="Close (Esc)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="prompt-modal-body">
+                    <!-- Edit mode content -->
+                    <div id="prompt-edit-mode">
+                        <p class="prompt-modal-hint">Edit the prompt below and regenerate the illustration. The more descriptive and specific your prompt, the better the result.</p>
+                        <textarea id="prompt-textarea" class="prompt-textarea" rows="8" placeholder="Loading prompt..."></textarea>
+                    </div>
+                    <!-- Generating mode content -->
+                    <div id="prompt-generating-mode" class="hidden">
+                        <div class="prompt-generating">
+                            <div class="prompt-generating-spinner"></div>
+                            <span>Generating illustration...</span>
+                        </div>
+                    </div>
+                    <!-- Preview mode content -->
+                    <div id="prompt-preview-mode" class="hidden">
+                        <p class="prompt-modal-hint">Preview your new illustration. Accept to use it, or try again with a different prompt.</p>
+                        <div class="prompt-preview-container">
+                            <img id="prompt-preview-image" class="prompt-preview-image" alt="Preview illustration" />
+                        </div>
+                    </div>
+                </div>
+                <div class="prompt-modal-footer">
+                    <!-- Edit mode buttons -->
+                    <div id="prompt-edit-buttons">
+                        <button id="prompt-cancel" class="prompt-btn prompt-btn-secondary">Cancel</button>
+                        <button id="prompt-regenerate" class="prompt-btn prompt-btn-primary">Regenerate</button>
+                    </div>
+                    <!-- Preview mode buttons -->
+                    <div id="prompt-preview-buttons" class="hidden">
+                        <button id="prompt-try-again" class="prompt-btn prompt-btn-secondary">Try Again</button>
+                        <button id="prompt-accept" class="prompt-btn prompt-btn-primary">Accept</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
