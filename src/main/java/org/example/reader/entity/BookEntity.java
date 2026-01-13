@@ -40,7 +40,9 @@ public class BookEntity {
     private String illustrationStyle;
     @Column(length = 1000)
     private String illustrationPromptPrefix;
-    @Column(length = 500)
+    @Column(length = 1000)
+    private String illustrationSetting; // Cultural/geographic setting (e.g., "19th century Russia, Russian Orthodox")
+    @Column(length = 2000)
     private String illustrationStyleReasoning;
 
     @OneToMany(mappedBy = "book", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -97,6 +99,9 @@ public class BookEntity {
 
     public String getIllustrationPromptPrefix() { return illustrationPromptPrefix; }
     public void setIllustrationPromptPrefix(String illustrationPromptPrefix) { this.illustrationPromptPrefix = illustrationPromptPrefix; }
+
+    public String getIllustrationSetting() { return illustrationSetting; }
+    public void setIllustrationSetting(String illustrationSetting) { this.illustrationSetting = illustrationSetting; }
 
     public String getIllustrationStyleReasoning() { return illustrationStyleReasoning; }
     public void setIllustrationStyleReasoning(String illustrationStyleReasoning) { this.illustrationStyleReasoning = illustrationStyleReasoning; }

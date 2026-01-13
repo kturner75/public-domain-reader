@@ -210,6 +210,7 @@ public class IllustrationService {
             return new IllustrationSettings(
                     book.getIllustrationStyle(),
                     book.getIllustrationPromptPrefix(),
+                    book.getIllustrationSetting(),
                     book.getIllustrationStyleReasoning()
             );
         }
@@ -227,6 +228,7 @@ public class IllustrationService {
         // Save to book entity
         book.setIllustrationStyle(settings.style());
         book.setIllustrationPromptPrefix(settings.promptPrefix());
+        book.setIllustrationSetting(settings.setting());
         book.setIllustrationStyleReasoning(settings.reasoning());
         bookRepository.save(book);
 

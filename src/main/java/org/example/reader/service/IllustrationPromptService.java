@@ -53,12 +53,17 @@ public class IllustrationPromptService {
             String chapterContent,
             IllustrationSettings styleSettings) {
 
+        String settingContext = styleSettings.setting() != null
+                ? "Cultural/Geographic Setting: " + styleSettings.setting()
+                : "";
+
         String prompt = String.format("""
             You are creating a prompt for an AI image generator to illustrate a chapter from a classic book.
 
             Book: %s by %s
             Chapter: %s
             Illustration Style: %s
+            %s
 
             Chapter content excerpt:
             ---
@@ -67,7 +72,15 @@ public class IllustrationPromptService {
 
             Generate a single, detailed image prompt that captures the essence of this chapter.
 
-            IMPORTANT GUIDELINES:
+            CRITICAL REQUIREMENTS FOR CULTURAL ACCURACY:
+            - The illustration MUST accurately reflect the book's specific cultural and geographic setting
+            - Architecture, clothing, religious symbols, and landscapes must match the setting exactly
+            - For Russian literature: use Russian Orthodox churches (onion domes), Slavic architecture, Russian landscapes
+            - For English literature: use appropriate English/British architecture, countryside, weather
+            - For American literature: use regionally-appropriate American settings
+            - NEVER mix cultural elements (e.g., no Buddhist temples in Russian novels, no pagodas in English countryside)
+
+            OTHER GUIDELINES:
             - Focus on: setting, atmosphere, key objects, and mood
             - DO NOT include human faces or detailed character features (use silhouettes, back views, or distant figures)
             - Describe the scene as if it were a book illustration plate
@@ -82,6 +95,7 @@ public class IllustrationPromptService {
                 author,
                 chapterTitle,
                 styleSettings.style(),
+                settingContext,
                 truncateText(chapterContent, 2000),
                 styleSettings.promptPrefix());
 

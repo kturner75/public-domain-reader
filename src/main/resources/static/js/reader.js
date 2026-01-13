@@ -23,6 +23,11 @@
         ttsBrowserAvailable: false,
         ttsUsingBrowser: false,  // true when currently using browser fallback
         ttsPlaybackRate: 1.0,  // 1.0, 1.25, 1.5, 1.75, 2.0
+        ttsPrefetchedAudio: null,      // Pre-fetched Audio object for next paragraph
+        ttsPrefetchedIndex: -1,        // Paragraph index of pre-fetched audio
+        ttsPrefetchedChapter: null,    // Chapter ID of pre-fetched audio
+        ttsAbortController: null,      // AbortController for current audio request
+        ttsPrefetchAbortController: null,  // AbortController for prefetch request
         // Illustration mode state
         illustrationMode: false,
         illustrationAvailable: false,
@@ -796,14 +801,25 @@
 
     function ttsStop() {
         state.ttsEnabled = false;
+        // Abort any in-flight request
+        if (state.ttsAbortController) {
+            state.ttsAbortController.abort();
+            state.ttsAbortController = null;
+        }
         if (state.ttsAudio) {
             state.ttsAudio.pause();
+            // Clean up blob URL if exists
+            if (state.ttsAudio.src && state.ttsAudio.src.startsWith('blob:')) {
+                URL.revokeObjectURL(state.ttsAudio.src);
+            }
             state.ttsAudio = null;
         }
         // Cancel browser speech synthesis if active
         if (state.ttsBrowserAvailable) {
             speechSynthesis.cancel();
         }
+        // Clear any prefetched audio
+        ttsClearPrefetch();
         state.ttsUsingBrowser = false;
         if (elements.ttsToggle) {
             elements.ttsToggle.classList.remove('active');
@@ -849,24 +865,74 @@
             speechSynthesis.cancel();
         }
 
-        // Build the URL with voice settings
-        const chapter = state.chapters[state.currentChapterIndex];
-        let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${state.currentParagraphIndex}`;
-
-        const params = new URLSearchParams();
-        if (state.ttsVoiceSettings) {
-            if (state.ttsVoiceSettings.voice) params.set('voice', state.ttsVoiceSettings.voice);
-            if (state.ttsVoiceSettings.speed) params.set('speed', state.ttsVoiceSettings.speed);
-            if (state.ttsVoiceSettings.instructions) params.set('instructions', state.ttsVoiceSettings.instructions);
+        // Abort any previous in-flight request
+        if (state.ttsAbortController) {
+            state.ttsAbortController.abort();
+            state.ttsAbortController = null;
         }
-        if (params.toString()) url += '?' + params.toString();
 
         // Stop previous audio if any
         if (state.ttsAudio) {
             state.ttsAudio.pause();
+            // Clean up blob URL if it exists
+            if (state.ttsAudio.src && state.ttsAudio.src.startsWith('blob:')) {
+                URL.revokeObjectURL(state.ttsAudio.src);
+            }
         }
 
-        const audio = new Audio(url);
+        const chapter = state.chapters[state.currentChapterIndex];
+        let audio;
+        let blobUrl = null;
+
+        // Check if we have prefetched audio for this paragraph
+        if (state.ttsPrefetchedAudio &&
+            state.ttsPrefetchedIndex === state.currentParagraphIndex &&
+            state.ttsPrefetchedChapter === chapter.id) {
+            // Use prefetched audio (already has blob URL set)
+            audio = state.ttsPrefetchedAudio;
+            blobUrl = audio.src;  // Track for cleanup
+            state.ttsPrefetchedAudio = null;
+            state.ttsPrefetchedIndex = -1;
+            state.ttsPrefetchedChapter = null;
+            state.ttsPrefetchAbortController = null;  // Clear prefetch controller
+            console.log('Using prefetched audio for paragraph', state.currentParagraphIndex);
+        } else {
+            // Fetch audio with AbortController
+            const controller = new AbortController();
+            state.ttsAbortController = controller;
+
+            // Build the URL with voice settings
+            let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${state.currentParagraphIndex}`;
+
+            const params = new URLSearchParams();
+            if (state.ttsVoiceSettings) {
+                if (state.ttsVoiceSettings.voice) params.set('voice', state.ttsVoiceSettings.voice);
+                if (state.ttsVoiceSettings.speed) params.set('speed', state.ttsVoiceSettings.speed);
+                if (state.ttsVoiceSettings.instructions) params.set('instructions', state.ttsVoiceSettings.instructions);
+            }
+            if (params.toString()) url += '?' + params.toString();
+
+            try {
+                const response = await fetch(url, { signal: controller.signal });
+                if (!response.ok) {
+                    throw new Error(`TTS request failed: ${response.status}`);
+                }
+                const blob = await response.blob();
+                blobUrl = URL.createObjectURL(blob);
+                audio = new Audio(blobUrl);
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('TTS request aborted for paragraph', state.currentParagraphIndex);
+                    return;  // Request was cancelled, don't continue
+                }
+                console.error('OpenAI TTS fetch error, falling back to browser:', error);
+                if (state.ttsEnabled && state.ttsBrowserAvailable) {
+                    ttsSpeakBrowser(text);
+                }
+                return;
+            }
+        }
+
         state.ttsAudio = audio;
 
         // Set playbackRate both immediately and after load to ensure it sticks
@@ -879,6 +945,11 @@
             // Only handle if this is still the current audio (not replaced by navigation)
             if (state.ttsAudio !== audio) return;
 
+            // Clean up blob URL
+            if (blobUrl) {
+                URL.revokeObjectURL(blobUrl);
+            }
+
             if (state.ttsEnabled) {
                 ttsAdvanceAndContinue();
             }
@@ -887,6 +958,11 @@
         audio.onerror = (event) => {
             // Only handle error if this is still the current audio (not replaced by navigation)
             if (state.ttsAudio !== audio) return;
+
+            // Clean up blob URL
+            if (blobUrl) {
+                URL.revokeObjectURL(blobUrl);
+            }
 
             console.error('OpenAI TTS audio error, falling back to browser:', event);
             // Fall back to browser TTS
@@ -901,9 +977,16 @@
             await audio.play();
             // Also set after play starts to be extra sure
             audio.playbackRate = state.ttsPlaybackRate;
+            // Start prefetching next paragraph once playback begins
+            ttsPrefetchNext();
         } catch (error) {
             // Only fall back if this is still the current audio (not replaced by navigation)
             if (state.ttsAudio !== audio) return;
+
+            // Clean up blob URL
+            if (blobUrl) {
+                URL.revokeObjectURL(blobUrl);
+            }
 
             console.error('OpenAI TTS playback error, falling back to browser:', error);
             // Fall back to browser TTS
@@ -931,6 +1014,107 @@
             nextParagraph();
             ttsSpeakCurrent();
         }
+    }
+
+    async function ttsPrefetchNext() {
+        // Don't prefetch if OpenAI TTS is not available (browser TTS doesn't benefit from prefetch)
+        if (!state.ttsOpenAIAvailable || !state.ttsEnabled) return;
+
+        const nextIndex = state.currentParagraphIndex + 1;
+        const chapter = state.chapters[state.currentChapterIndex];
+
+        // Don't prefetch if at end of chapter (cross-chapter prefetch is complex)
+        if (nextIndex >= state.paragraphs.length) return;
+
+        // Don't prefetch if already have this one cached
+        if (state.ttsPrefetchedIndex === nextIndex &&
+            state.ttsPrefetchedChapter === chapter.id &&
+            state.ttsPrefetchedAudio) {
+            return;
+        }
+
+        const nextParagraph = state.paragraphs[nextIndex];
+        if (!nextParagraph) return;
+
+        // Extract plain text to check if empty
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = nextParagraph.content;
+        const text = tempDiv.textContent || tempDiv.innerText || '';
+
+        // Don't prefetch empty paragraphs
+        if (!text.trim()) return;
+
+        // Abort any existing prefetch request
+        if (state.ttsPrefetchAbortController) {
+            state.ttsPrefetchAbortController.abort();
+        }
+
+        // Clean up any existing prefetched audio blob URL
+        if (state.ttsPrefetchedAudio && state.ttsPrefetchedAudio.src &&
+            state.ttsPrefetchedAudio.src.startsWith('blob:')) {
+            URL.revokeObjectURL(state.ttsPrefetchedAudio.src);
+        }
+
+        // Build the URL with voice settings
+        let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${nextIndex}`;
+
+        const params = new URLSearchParams();
+        if (state.ttsVoiceSettings) {
+            if (state.ttsVoiceSettings.voice) params.set('voice', state.ttsVoiceSettings.voice);
+            if (state.ttsVoiceSettings.speed) params.set('speed', state.ttsVoiceSettings.speed);
+            if (state.ttsVoiceSettings.instructions) params.set('instructions', state.ttsVoiceSettings.instructions);
+        }
+        if (params.toString()) url += '?' + params.toString();
+
+        // Create AbortController for this prefetch
+        const controller = new AbortController();
+        state.ttsPrefetchAbortController = controller;
+
+        console.log('Prefetching audio for paragraph', nextIndex);
+
+        try {
+            const response = await fetch(url, { signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(`Prefetch request failed: ${response.status}`);
+            }
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+
+            // Only store if this prefetch wasn't cancelled
+            if (state.ttsPrefetchAbortController === controller) {
+                const prefetchAudio = new Audio(blobUrl);
+                state.ttsPrefetchedAudio = prefetchAudio;
+                state.ttsPrefetchedIndex = nextIndex;
+                state.ttsPrefetchedChapter = chapter.id;
+                console.log('Prefetch complete for paragraph', nextIndex);
+            } else {
+                // Prefetch was superseded, clean up
+                URL.revokeObjectURL(blobUrl);
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('Prefetch aborted for paragraph', nextIndex);
+            } else {
+                console.warn('Prefetch failed for paragraph', nextIndex, error);
+            }
+        }
+    }
+
+    function ttsClearPrefetch() {
+        // Abort any in-flight prefetch request
+        if (state.ttsPrefetchAbortController) {
+            state.ttsPrefetchAbortController.abort();
+            state.ttsPrefetchAbortController = null;
+        }
+        // Clean up blob URL if exists
+        if (state.ttsPrefetchedAudio) {
+            if (state.ttsPrefetchedAudio.src && state.ttsPrefetchedAudio.src.startsWith('blob:')) {
+                URL.revokeObjectURL(state.ttsPrefetchedAudio.src);
+            }
+            state.ttsPrefetchedAudio = null;
+        }
+        state.ttsPrefetchedIndex = -1;
+        state.ttsPrefetchedChapter = null;
     }
 
     function ttsSpeakBrowser(text) {
@@ -982,14 +1166,25 @@
     function ttsInterrupt() {
         // Called when user navigates manually while TTS is active
         if (state.ttsEnabled) {
+            // Abort any in-flight request
+            if (state.ttsAbortController) {
+                state.ttsAbortController.abort();
+                state.ttsAbortController = null;
+            }
             if (state.ttsAudio) {
                 state.ttsAudio.pause();
+                // Clean up blob URL if exists
+                if (state.ttsAudio.src && state.ttsAudio.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(state.ttsAudio.src);
+                }
                 state.ttsAudio = null;
             }
             // Cancel browser speech synthesis if active
             if (state.ttsBrowserAvailable) {
                 speechSynthesis.cancel();
             }
+            // Clear prefetch since user navigated away
+            ttsClearPrefetch();
             ttsSpeakCurrent();
         }
     }
@@ -1217,6 +1412,10 @@
         showIllustrationSkeleton();
 
         try {
+            // Always call request first - backend handles duplicates gracefully
+            // and will re-queue stuck PENDING illustrations older than 5 minutes
+            await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
+
             // Check status
             const statusResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/status`);
             const status = await statusResponse.json();
@@ -1224,12 +1423,8 @@
             if (status.ready) {
                 // Load the image
                 displayIllustration(chapter.id);
-            } else if (status.status === 'NOT_REQUESTED' || status.status === 'FAILED') {
-                // Request generation
-                await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
-                pollForIllustration(chapter.id);
             } else {
-                // Already generating (PENDING or GENERATING), poll for completion
+                // Still generating, poll for completion
                 pollForIllustration(chapter.id);
             }
 
