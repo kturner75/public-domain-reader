@@ -36,6 +36,13 @@ public class BookEntity {
     @Column(length = 500)
     private String ttsReasoning;
 
+    // Illustration Style Settings (persisted after LLM analysis)
+    private String illustrationStyle;
+    @Column(length = 1000)
+    private String illustrationPromptPrefix;
+    @Column(length = 500)
+    private String illustrationStyleReasoning;
+
     @OneToMany(mappedBy = "book", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("chapterIndex")
     private List<ChapterEntity> chapters = new ArrayList<>();
@@ -84,6 +91,15 @@ public class BookEntity {
 
     public String getTtsReasoning() { return ttsReasoning; }
     public void setTtsReasoning(String ttsReasoning) { this.ttsReasoning = ttsReasoning; }
+
+    public String getIllustrationStyle() { return illustrationStyle; }
+    public void setIllustrationStyle(String illustrationStyle) { this.illustrationStyle = illustrationStyle; }
+
+    public String getIllustrationPromptPrefix() { return illustrationPromptPrefix; }
+    public void setIllustrationPromptPrefix(String illustrationPromptPrefix) { this.illustrationPromptPrefix = illustrationPromptPrefix; }
+
+    public String getIllustrationStyleReasoning() { return illustrationStyleReasoning; }
+    public void setIllustrationStyleReasoning(String illustrationStyleReasoning) { this.illustrationStyleReasoning = illustrationStyleReasoning; }
 
     public void addChapter(ChapterEntity chapter) {
         chapters.add(chapter);

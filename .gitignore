@@ -9,6 +9,9 @@ target/
 .idea/jarRepositories.xml
 .idea/compiler.xml
 .idea/libraries/
+.idea/dataSources*.xml
+.idea/data_source_mapping.xml
+.idea/db-forest-config.xml
 *.iws
 *.iml
 *.ipr

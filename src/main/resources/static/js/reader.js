@@ -22,7 +22,19 @@
         ttsOpenAIAvailable: false,
         ttsBrowserAvailable: false,
         ttsUsingBrowser: false,  // true when currently using browser fallback
-        ttsPlaybackRate: 1.0  // 1.0, 1.25, 1.5, 1.75, 2.0
+        ttsPlaybackRate: 1.0,  // 1.0, 1.25, 1.5, 1.75, 2.0
+        // Illustration mode state
+        illustrationMode: false,
+        illustrationAvailable: false,
+        illustrationSettings: null,  // { style, promptPrefix, reasoning }
+        illustrationPolling: null,   // polling interval ID
+        allowPromptEditing: false,   // whether prompt editing is enabled
+        // Modal/overlay state
+        ttsWasPlayingBeforeModal: false,  // track TTS state when modal opens
+        // Prompt modal state
+        promptModalChapterId: null,       // chapter being edited in modal
+        promptModalPolling: null,         // polling interval for regeneration
+        promptModalLastPrompt: ''         // last prompt used (for try again)
     };
 
     // DOM Elements
@@ -47,7 +59,29 @@
         chapterList: document.getElementById('chapter-list'),
         ttsToggle: document.getElementById('tts-toggle'),
         ttsSpeed: document.getElementById('tts-speed'),
-        ttsMode: document.getElementById('tts-mode')
+        ttsMode: document.getElementById('tts-mode'),
+        // Illustration elements
+        illustrationToggle: document.getElementById('illustration-toggle'),
+        illustrationColumn: document.getElementById('illustration-column'),
+        illustrationSkeleton: document.getElementById('illustration-skeleton'),
+        illustrationImage: document.getElementById('illustration-image'),
+        illustrationError: document.getElementById('illustration-error'),
+        // Prompt editing modal elements
+        promptModal: document.getElementById('prompt-modal'),
+        promptModalBackdrop: document.querySelector('.prompt-modal-backdrop'),
+        promptModalClose: document.getElementById('prompt-modal-close'),
+        promptModalTitle: document.getElementById('prompt-modal-title'),
+        promptTextarea: document.getElementById('prompt-textarea'),
+        promptEditMode: document.getElementById('prompt-edit-mode'),
+        promptGeneratingMode: document.getElementById('prompt-generating-mode'),
+        promptPreviewMode: document.getElementById('prompt-preview-mode'),
+        promptPreviewImage: document.getElementById('prompt-preview-image'),
+        promptEditButtons: document.getElementById('prompt-edit-buttons'),
+        promptPreviewButtons: document.getElementById('prompt-preview-buttons'),
+        promptCancel: document.getElementById('prompt-cancel'),
+        promptRegenerate: document.getElementById('prompt-regenerate'),
+        promptTryAgain: document.getElementById('prompt-try-again'),
+        promptAccept: document.getElementById('prompt-accept')
     };
 
     // Chapter list state
@@ -60,7 +94,8 @@
         LAST_PAGE: 'reader_lastPage',
         LAST_PARAGRAPH: 'reader_lastParagraph',
         RECENTLY_READ: 'reader_recentlyRead',
-        TTS_SPEED: 'reader_ttsSpeed'
+        TTS_SPEED: 'reader_ttsSpeed',
+        ILLUSTRATION_MODE: 'reader_illustrationMode'
     };
 
     const MAX_RECENTLY_READ = 5;
@@ -70,11 +105,21 @@
         await loadLibrary();
         setupEventListeners();
         await ttsCheckAvailability();
+        await illustrationCheckAvailability();
 
         // Load saved TTS speed preference
         const savedSpeed = parseFloat(localStorage.getItem(STORAGE_KEYS.TTS_SPEED));
         if (savedSpeed && [1.0, 1.25, 1.5, 1.75, 2.0].includes(savedSpeed)) {
             state.ttsPlaybackRate = savedSpeed;
+        }
+
+        // Load saved illustration mode preference
+        const savedIllustrationMode = localStorage.getItem(STORAGE_KEYS.ILLUSTRATION_MODE);
+        if (savedIllustrationMode === 'true' && state.illustrationAvailable) {
+            state.illustrationMode = true;
+            if (elements.illustrationToggle) {
+                elements.illustrationToggle.classList.add('active');
+            }
         }
 
         // Check for saved book
@@ -220,12 +265,22 @@
         // Update title
         elements.bookTitle.textContent = book.title;
 
+        // Apply illustration mode layout if enabled
+        if (state.illustrationMode) {
+            updateColumnLayout();
+        }
+
         // Load chapter
         await loadChapter(chapterIndex, pageIndex, paragraphIndex);
 
         // Analyze book for voice settings (async, don't block)
         if (state.ttsAvailable && !state.ttsVoiceSettings) {
             ttsAnalyzeBook();
+        }
+
+        // Analyze book for illustration style (async, don't block)
+        if (state.illustrationAvailable && !state.illustrationSettings) {
+            illustrationAnalyzeBook();
         }
     }
 
@@ -258,6 +313,11 @@
             if (state.ttsEnabled) {
                 ttsSpeakCurrent();
             }
+
+            // Load illustration if mode is enabled
+            if (state.illustrationMode) {
+                loadChapterIllustration();
+            }
         } catch (error) {
             state.ttsWaitingForChapter = false;
             console.error('Failed to load chapter:', error);
@@ -280,6 +340,9 @@
         const contentArea = document.querySelector('.reader-content');
         const columnHeight = contentArea.clientHeight;
         const columnWidth = elements.columnLeft.clientWidth;
+
+        // In illustration mode, only use single column
+        const useSecondColumn = !state.illustrationMode;
 
         // Create a temporary measurement container
         const measureContainer = document.createElement('div');
@@ -306,7 +369,7 @@
 
             // Check if paragraph fits in current column
             if (currentHeight + paraHeight > columnHeight) {
-                if (columnCount === 0) {
+                if (columnCount === 0 && useSecondColumn) {
                     // Move to second column
                     columnCount = 1;
                     currentHeight = paraHeight;
@@ -357,6 +420,9 @@
         const columnHeight = contentArea.clientHeight;
         const columnWidth = elements.columnLeft.clientWidth;
 
+        // In illustration mode, only use left column
+        const useSecondColumn = !state.illustrationMode;
+
         // Build HTML for both columns
         let leftHtml = '';
         let rightHtml = '';
@@ -387,12 +453,12 @@
             measureContainer.innerHTML = `<p class="paragraph" style="text-indent: ${isFirst ? '0' : '1.5em'}; text-align: justify;">${para.content}</p>`;
             const paraHeight = measureContainer.firstChild.offsetHeight;
 
-            if (!inRightColumn && currentHeight + paraHeight > columnHeight) {
+            if (!inRightColumn && currentHeight + paraHeight > columnHeight && useSecondColumn) {
                 inRightColumn = true;
                 currentHeight = 0;
             }
 
-            if (inRightColumn) {
+            if (inRightColumn && useSecondColumn) {
                 rightHtml += paraHtml;
             } else {
                 leftHtml += paraHtml;
@@ -403,7 +469,9 @@
         document.body.removeChild(measureContainer);
 
         elements.columnLeft.innerHTML = leftHtml || '';
-        elements.columnRight.innerHTML = rightHtml || '';
+        if (useSecondColumn) {
+            elements.columnRight.innerHTML = rightHtml || '';
+        }
 
         // Update page indicator
         elements.pageIndicator.textContent = `Page ${state.currentPage + 1} of ${state.totalPages}`;
@@ -573,6 +641,7 @@
 
     // Chapter list
     function showChapterList() {
+        ttsPauseForModal();
         chapterListSelectedIndex = state.currentChapterIndex;
         renderChapterList();
         elements.chapterListOverlay.classList.remove('hidden');
@@ -581,6 +650,7 @@
 
     function hideChapterList() {
         elements.chapterListOverlay.classList.add('hidden');
+        ttsResumeAfterModal();
     }
 
     function isChapterListVisible() {
@@ -774,6 +844,11 @@
         state.ttsUsingBrowser = false;
         updateModeIndicator();
 
+        // Cancel any browser TTS that might still be playing
+        if (state.ttsBrowserAvailable) {
+            speechSynthesis.cancel();
+        }
+
         // Build the URL with voice settings
         const chapter = state.chapters[state.currentChapterIndex];
         let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${state.currentParagraphIndex}`;
@@ -786,41 +861,50 @@
         }
         if (params.toString()) url += '?' + params.toString();
 
-        try {
-            // Stop previous audio if any
-            if (state.ttsAudio) {
-                state.ttsAudio.pause();
-            }
+        // Stop previous audio if any
+        if (state.ttsAudio) {
+            state.ttsAudio.pause();
+        }
 
-            const audio = new Audio(url);
-            state.ttsAudio = audio;
+        const audio = new Audio(url);
+        state.ttsAudio = audio;
 
-            // Set playbackRate both immediately and after load to ensure it sticks
+        // Set playbackRate both immediately and after load to ensure it sticks
+        audio.playbackRate = state.ttsPlaybackRate;
+        audio.onloadeddata = () => {
             audio.playbackRate = state.ttsPlaybackRate;
-            audio.onloadeddata = () => {
-                audio.playbackRate = state.ttsPlaybackRate;
-            };
+        };
 
-            audio.onended = () => {
-                if (state.ttsEnabled) {
-                    ttsAdvanceAndContinue();
-                }
-            };
+        audio.onended = () => {
+            // Only handle if this is still the current audio (not replaced by navigation)
+            if (state.ttsAudio !== audio) return;
 
-            audio.onerror = (event) => {
-                console.error('OpenAI TTS audio error, falling back to browser:', event);
-                // Fall back to browser TTS
-                if (state.ttsEnabled && state.ttsBrowserAvailable) {
-                    ttsSpeakBrowser(text);
-                } else if (state.ttsEnabled) {
-                    setTimeout(() => ttsAdvanceAndContinue(), 500);
-                }
-            };
+            if (state.ttsEnabled) {
+                ttsAdvanceAndContinue();
+            }
+        };
 
+        audio.onerror = (event) => {
+            // Only handle error if this is still the current audio (not replaced by navigation)
+            if (state.ttsAudio !== audio) return;
+
+            console.error('OpenAI TTS audio error, falling back to browser:', event);
+            // Fall back to browser TTS
+            if (state.ttsEnabled && state.ttsBrowserAvailable) {
+                ttsSpeakBrowser(text);
+            } else if (state.ttsEnabled) {
+                setTimeout(() => ttsAdvanceAndContinue(), 500);
+            }
+        };
+
+        try {
             await audio.play();
             // Also set after play starts to be extra sure
             audio.playbackRate = state.ttsPlaybackRate;
         } catch (error) {
+            // Only fall back if this is still the current audio (not replaced by navigation)
+            if (state.ttsAudio !== audio) return;
+
             console.error('OpenAI TTS playback error, falling back to browser:', error);
             // Fall back to browser TTS
             if (state.ttsEnabled && state.ttsBrowserAvailable) {
@@ -841,18 +925,8 @@
 
         if (wasLastParagraph) {
             // Need to load next chapter - nextParagraph handles this
-            const prevChapter = state.currentChapterIndex;
+            // loadChapter will call ttsSpeakCurrent() when it finishes loading
             nextParagraph();
-
-            // Wait for chapter to load, then continue
-            const checkAndContinue = () => {
-                if (state.currentChapterIndex !== prevChapter && state.paragraphs.length > 0) {
-                    ttsSpeakCurrent();
-                } else if (state.ttsEnabled) {
-                    setTimeout(checkAndContinue, 100);
-                }
-            };
-            setTimeout(checkAndContinue, 100);
         } else {
             nextParagraph();
             ttsSpeakCurrent();
@@ -888,14 +962,16 @@
         }
 
         utterance.onend = () => {
-            if (state.ttsEnabled) {
+            // Only advance if still using browser TTS (not switched to OpenAI)
+            if (state.ttsEnabled && state.ttsUsingBrowser) {
                 ttsAdvanceAndContinue();
             }
         };
 
         utterance.onerror = (event) => {
             console.error('Browser TTS error:', event);
-            if (state.ttsEnabled && event.error !== 'interrupted') {
+            // Only handle if still using browser TTS and not interrupted by cancel
+            if (state.ttsEnabled && state.ttsUsingBrowser && event.error !== 'interrupted') {
                 setTimeout(() => ttsAdvanceAndContinue(), 500);
             }
         };
@@ -985,6 +1061,470 @@
             setTimeout(() => notification.remove(), 300);
         }, 1000);
     }
+
+    // Pause TTS when opening modals/overlays (saves state for resume)
+    function ttsPauseForModal() {
+        if (state.ttsEnabled) {
+            state.ttsWasPlayingBeforeModal = true;
+            // Pause without fully stopping (don't clear ttsEnabled)
+            if (state.ttsAudio) {
+                state.ttsAudio.pause();
+            }
+            if (state.ttsBrowserAvailable) {
+                speechSynthesis.cancel();
+            }
+        } else {
+            state.ttsWasPlayingBeforeModal = false;
+        }
+    }
+
+    // Resume TTS after closing modals/overlays (if it was playing before)
+    function ttsResumeAfterModal() {
+        if (state.ttsWasPlayingBeforeModal && state.ttsEnabled) {
+            state.ttsWasPlayingBeforeModal = false;
+            ttsSpeakCurrent();
+        }
+    }
+
+    // ========================================
+    // Illustration Mode Functions
+    // ========================================
+
+    async function illustrationCheckAvailability() {
+        try {
+            const response = await fetch('/api/illustrations/status');
+            const status = await response.json();
+            state.illustrationAvailable = status.comfyuiAvailable && status.ollamaAvailable;
+            state.allowPromptEditing = status.allowPromptEditing || false;
+        } catch (error) {
+            console.warn('Illustration service not available:', error);
+            state.illustrationAvailable = false;
+            state.allowPromptEditing = false;
+        }
+
+        if (elements.illustrationToggle) {
+            elements.illustrationToggle.style.display = state.illustrationAvailable ? '' : 'none';
+        }
+
+        console.log('Illustration availability:', state.illustrationAvailable, 'Prompt editing:', state.allowPromptEditing);
+    }
+
+    async function illustrationAnalyzeBook() {
+        if (!state.currentBook || !state.illustrationAvailable) return;
+
+        try {
+            // First check if settings are already saved
+            const savedResponse = await fetch(`/api/illustrations/settings/${state.currentBook.id}`);
+            if (savedResponse.ok && savedResponse.status === 200) {
+                state.illustrationSettings = await savedResponse.json();
+                console.log('Loaded saved illustration settings:', state.illustrationSettings);
+                return;
+            }
+
+            // No saved settings, analyze with LLM
+            console.log('Analyzing book for illustration style...');
+            const response = await fetch(`/api/illustrations/analyze/${state.currentBook.id}`, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                state.illustrationSettings = await response.json();
+                console.log('Illustration style analysis complete:', state.illustrationSettings);
+                showStyleNotification();
+            }
+        } catch (error) {
+            console.warn('Illustration style analysis failed:', error);
+        }
+    }
+
+    function showStyleNotification() {
+        if (!state.illustrationSettings || !state.illustrationSettings.reasoning) return;
+
+        const notification = document.createElement('div');
+        notification.className = 'style-notification';
+        notification.innerHTML = `
+            <div class="style-notification-content">
+                <strong>AI Illustration Style:</strong> ${state.illustrationSettings.style}
+                <br><small>${state.illustrationSettings.reasoning}</small>
+            </div>
+        `;
+        document.body.appendChild(notification);
+
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            notification.classList.add('fade-out');
+            setTimeout(() => notification.remove(), 500);
+        }, 5000);
+    }
+
+    function illustrationToggle() {
+        if (!state.illustrationAvailable) {
+            console.warn('Illustration mode not available');
+            return;
+        }
+
+        state.illustrationMode = !state.illustrationMode;
+        localStorage.setItem(STORAGE_KEYS.ILLUSTRATION_MODE, state.illustrationMode);
+
+        if (elements.illustrationToggle) {
+            elements.illustrationToggle.classList.toggle('active', state.illustrationMode);
+        }
+
+        updateColumnLayout();
+
+        if (state.illustrationMode) {
+            loadChapterIllustration();
+        } else {
+            // Stop any polling
+            if (state.illustrationPolling) {
+                clearInterval(state.illustrationPolling);
+                state.illustrationPolling = null;
+            }
+        }
+
+        // Recalculate pages for the new layout
+        calculatePages();
+        // Keep current position but adjust page if needed
+        state.currentPage = Math.min(state.currentPage, state.totalPages - 1);
+        state.currentPage = Math.max(0, state.currentPage);
+        renderPage();
+    }
+
+    function updateColumnLayout() {
+        const contentArea = document.querySelector('.reader-content');
+
+        if (state.illustrationMode) {
+            contentArea.classList.add('illustration-mode');
+            elements.columnRight.classList.add('hidden');
+            elements.illustrationColumn.classList.remove('hidden');
+        } else {
+            contentArea.classList.remove('illustration-mode');
+            elements.columnRight.classList.remove('hidden');
+            elements.illustrationColumn.classList.add('hidden');
+            // Hide all illustration states
+            elements.illustrationSkeleton.classList.add('hidden');
+            elements.illustrationImage.classList.add('hidden');
+            elements.illustrationError.classList.add('hidden');
+        }
+    }
+
+    async function loadChapterIllustration() {
+        if (!state.illustrationMode || !state.currentBook) return;
+
+        const chapter = state.chapters[state.currentChapterIndex];
+        if (!chapter) return;
+
+        // Show skeleton placeholder
+        showIllustrationSkeleton();
+
+        try {
+            // Check status
+            const statusResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/status`);
+            const status = await statusResponse.json();
+
+            if (status.ready) {
+                // Load the image
+                displayIllustration(chapter.id);
+            } else if (status.status === 'NOT_REQUESTED' || status.status === 'FAILED') {
+                // Request generation
+                await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
+                pollForIllustration(chapter.id);
+            } else {
+                // Already generating (PENDING or GENERATING), poll for completion
+                pollForIllustration(chapter.id);
+            }
+
+            // Pre-fetch next chapter
+            fetch(`/api/illustrations/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+
+        } catch (error) {
+            console.error('Failed to load illustration:', error);
+            showIllustrationError();
+        }
+    }
+
+    function pollForIllustration(chapterId) {
+        // Clear any existing polling
+        if (state.illustrationPolling) {
+            clearInterval(state.illustrationPolling);
+        }
+
+        let attempts = 0;
+        const maxAttempts = 90; // 3 minutes at 2-second intervals
+
+        state.illustrationPolling = setInterval(async () => {
+            attempts++;
+
+            // Check if we're still on the same chapter and illustration mode is on
+            const currentChapter = state.chapters[state.currentChapterIndex];
+            if (!currentChapter || currentChapter.id !== chapterId || !state.illustrationMode) {
+                clearInterval(state.illustrationPolling);
+                state.illustrationPolling = null;
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(state.illustrationPolling);
+                state.illustrationPolling = null;
+                showIllustrationError();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/illustrations/chapter/${chapterId}/status`);
+                const status = await response.json();
+
+                if (status.ready) {
+                    clearInterval(state.illustrationPolling);
+                    state.illustrationPolling = null;
+                    displayIllustration(chapterId);
+                } else if (status.status === 'FAILED') {
+                    clearInterval(state.illustrationPolling);
+                    state.illustrationPolling = null;
+                    showIllustrationError();
+                }
+                // Otherwise keep polling
+            } catch (error) {
+                console.error('Polling error:', error);
+                // Continue polling on network errors
+            }
+        }, 2000);
+    }
+
+    function displayIllustration(chapterId) {
+        hideIllustrationSkeleton();
+        elements.illustrationError.classList.add('hidden');
+        elements.illustrationImage.src = `/api/illustrations/chapter/${chapterId}?t=${Date.now()}`;
+        elements.illustrationImage.classList.remove('hidden');
+
+        // Make image clickable if prompt editing is enabled
+        if (state.allowPromptEditing) {
+            elements.illustrationImage.classList.add('editable');
+        } else {
+            elements.illustrationImage.classList.remove('editable');
+        }
+    }
+
+    function showIllustrationSkeleton() {
+        elements.illustrationSkeleton.classList.remove('hidden');
+        elements.illustrationImage.classList.add('hidden');
+        elements.illustrationError.classList.add('hidden');
+    }
+
+    function hideIllustrationSkeleton() {
+        elements.illustrationSkeleton.classList.add('hidden');
+    }
+
+    function showIllustrationError() {
+        hideIllustrationSkeleton();
+        elements.illustrationImage.classList.add('hidden');
+        elements.illustrationError.classList.remove('hidden');
+    }
+
+    // ========================================
+    // Prompt Editing Modal Functions
+    // ========================================
+
+    async function openPromptModal() {
+        if (!state.allowPromptEditing || !state.illustrationMode) return;
+
+        const chapter = state.chapters[state.currentChapterIndex];
+        if (!chapter) return;
+
+        // Pause TTS while modal is open
+        ttsPauseForModal();
+
+        // Store chapter ID
+        state.promptModalChapterId = chapter.id;
+
+        // Show modal in edit mode
+        showPromptEditMode();
+        elements.promptModal.classList.remove('hidden');
+        elements.promptTextarea.value = 'Loading prompt...';
+        elements.promptTextarea.disabled = true;
+        elements.promptRegenerate.disabled = true;
+
+        try {
+            const response = await fetch(`/api/illustrations/chapter/${chapter.id}/prompt`);
+            if (response.ok) {
+                const data = await response.json();
+                elements.promptTextarea.value = data.prompt || '';
+                state.promptModalLastPrompt = data.prompt || '';
+                elements.promptTextarea.disabled = false;
+                elements.promptRegenerate.disabled = false;
+            } else if (response.status === 404) {
+                elements.promptTextarea.value = 'No prompt available for this illustration.';
+            } else {
+                elements.promptTextarea.value = 'Failed to load prompt.';
+            }
+        } catch (error) {
+            console.error('Failed to load prompt:', error);
+            elements.promptTextarea.value = 'Failed to load prompt.';
+        }
+    }
+
+    function closePromptModal() {
+        // Stop any polling
+        if (state.promptModalPolling) {
+            clearInterval(state.promptModalPolling);
+            state.promptModalPolling = null;
+        }
+
+        elements.promptModal.classList.add('hidden');
+        elements.promptTextarea.value = '';
+        state.promptModalChapterId = null;
+        state.promptModalLastPrompt = '';
+        ttsResumeAfterModal();
+    }
+
+    function isPromptModalVisible() {
+        return !elements.promptModal.classList.contains('hidden');
+    }
+
+    function showPromptEditMode() {
+        elements.promptModalTitle.textContent = 'Edit Illustration Prompt';
+        elements.promptEditMode.classList.remove('hidden');
+        elements.promptGeneratingMode.classList.add('hidden');
+        elements.promptPreviewMode.classList.add('hidden');
+        elements.promptEditButtons.classList.remove('hidden');
+        elements.promptPreviewButtons.classList.add('hidden');
+    }
+
+    function showPromptGeneratingMode() {
+        elements.promptModalTitle.textContent = 'Generating Illustration';
+        elements.promptEditMode.classList.add('hidden');
+        elements.promptGeneratingMode.classList.remove('hidden');
+        elements.promptPreviewMode.classList.add('hidden');
+        elements.promptEditButtons.classList.add('hidden');
+        elements.promptPreviewButtons.classList.add('hidden');
+    }
+
+    function showPromptPreviewMode(imageUrl) {
+        elements.promptModalTitle.textContent = 'Preview Illustration';
+        elements.promptPreviewImage.src = imageUrl;
+        elements.promptEditMode.classList.add('hidden');
+        elements.promptGeneratingMode.classList.add('hidden');
+        elements.promptPreviewMode.classList.remove('hidden');
+        elements.promptEditButtons.classList.add('hidden');
+        elements.promptPreviewButtons.classList.remove('hidden');
+    }
+
+    async function regenerateIllustration() {
+        const chapterId = state.promptModalChapterId;
+        if (!chapterId) return;
+
+        const newPrompt = elements.promptTextarea.value.trim();
+        if (!newPrompt) {
+            alert('Please enter a prompt.');
+            return;
+        }
+
+        // Save the prompt for "try again"
+        state.promptModalLastPrompt = newPrompt;
+
+        // Disable button while submitting
+        elements.promptRegenerate.disabled = true;
+
+        try {
+            const response = await fetch(`/api/illustrations/chapter/${chapterId}/regenerate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: newPrompt })
+            });
+
+            if (response.ok) {
+                // Switch to generating mode and poll for completion
+                showPromptGeneratingMode();
+                pollForRegeneratedIllustration(chapterId);
+            } else {
+                alert('Failed to regenerate illustration. Please try again.');
+                elements.promptRegenerate.disabled = false;
+            }
+        } catch (error) {
+            console.error('Failed to regenerate:', error);
+            alert('Failed to regenerate illustration. Please try again.');
+            elements.promptRegenerate.disabled = false;
+        }
+    }
+
+    function pollForRegeneratedIllustration(chapterId) {
+        // Clear any existing polling
+        if (state.promptModalPolling) {
+            clearInterval(state.promptModalPolling);
+        }
+
+        let attempts = 0;
+        const maxAttempts = 90; // 3 minutes at 2-second intervals
+
+        state.promptModalPolling = setInterval(async () => {
+            attempts++;
+
+            // Check if modal was closed
+            if (!isPromptModalVisible() || state.promptModalChapterId !== chapterId) {
+                clearInterval(state.promptModalPolling);
+                state.promptModalPolling = null;
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(state.promptModalPolling);
+                state.promptModalPolling = null;
+                alert('Generation timed out. Please try again.');
+                showPromptEditMode();
+                elements.promptTextarea.value = state.promptModalLastPrompt;
+                elements.promptTextarea.disabled = false;
+                elements.promptRegenerate.disabled = false;
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/illustrations/chapter/${chapterId}/status`);
+                const status = await response.json();
+
+                if (status.ready) {
+                    clearInterval(state.promptModalPolling);
+                    state.promptModalPolling = null;
+                    // Show preview with cache-busting timestamp
+                    const imageUrl = `/api/illustrations/chapter/${chapterId}?t=${Date.now()}`;
+                    showPromptPreviewMode(imageUrl);
+                } else if (status.status === 'FAILED') {
+                    clearInterval(state.promptModalPolling);
+                    state.promptModalPolling = null;
+                    alert('Generation failed. Please try again.');
+                    showPromptEditMode();
+                    elements.promptTextarea.value = state.promptModalLastPrompt;
+                    elements.promptTextarea.disabled = false;
+                    elements.promptRegenerate.disabled = false;
+                }
+                // Otherwise keep polling (PENDING or GENERATING)
+            } catch (error) {
+                console.error('Polling error:', error);
+                // Continue polling on network errors
+            }
+        }, 2000);
+    }
+
+    function acceptRegeneration() {
+        const chapterId = state.promptModalChapterId;
+        if (!chapterId) return;
+
+        // Update the main illustration display
+        displayIllustration(chapterId);
+
+        // Close the modal
+        closePromptModal();
+    }
+
+    function tryAgainRegeneration() {
+        // Switch back to edit mode with the last prompt
+        showPromptEditMode();
+        elements.promptTextarea.value = state.promptModalLastPrompt;
+        elements.promptTextarea.disabled = false;
+        elements.promptRegenerate.disabled = false;
+    }
+
+    // ========================================
+    // End Illustration Mode Functions
+    // ========================================
 
     // Import a book from Gutenberg and open it
     async function importAndOpenBook(gutenbergId) {
@@ -1102,12 +1642,54 @@
             elements.ttsToggle.addEventListener('click', ttsToggle);
         }
 
+        // Illustration toggle
+        if (elements.illustrationToggle) {
+            elements.illustrationToggle.addEventListener('click', illustrationToggle);
+        }
+
+        // Illustration image click (opens prompt modal)
+        if (elements.illustrationImage) {
+            elements.illustrationImage.addEventListener('click', () => {
+                if (state.allowPromptEditing && elements.illustrationImage.classList.contains('editable')) {
+                    openPromptModal();
+                }
+            });
+        }
+
+        // Prompt modal event listeners
+        if (elements.promptModalClose) {
+            elements.promptModalClose.addEventListener('click', closePromptModal);
+        }
+        if (elements.promptCancel) {
+            elements.promptCancel.addEventListener('click', closePromptModal);
+        }
+        if (elements.promptRegenerate) {
+            elements.promptRegenerate.addEventListener('click', regenerateIllustration);
+        }
+        if (elements.promptModalBackdrop) {
+            elements.promptModalBackdrop.addEventListener('click', closePromptModal);
+        }
+        if (elements.promptTryAgain) {
+            elements.promptTryAgain.addEventListener('click', tryAgainRegeneration);
+        }
+        if (elements.promptAccept) {
+            elements.promptAccept.addEventListener('click', acceptRegeneration);
+        }
+
         // Search input
         elements.searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
                 performSearch(e.target.value);
             }, 300);
+        });
+
+        elements.searchInput.addEventListener('focus', () => {
+            ttsPauseForModal();
+        });
+
+        elements.searchInput.addEventListener('blur', () => {
+            ttsResumeAfterModal();
         });
 
         elements.searchInput.addEventListener('keydown', (e) => {
@@ -1146,6 +1728,16 @@
 
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
+            // Handle prompt modal keyboard
+            if (isPromptModalVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closePromptModal();
+                }
+                // Don't process other shortcuts when modal is open
+                return;
+            }
+
             // Skip if typing in search
             if (document.activeElement === elements.searchInput) {
                 return;
@@ -1232,6 +1824,10 @@
                 case 's':
                     e.preventDefault();
                     ttsCycleSpeed();
+                    break;
+                case 'i':
+                    e.preventDefault();
+                    illustrationToggle();
                     break;
                 case 'Escape':
                     backToLibrary();
