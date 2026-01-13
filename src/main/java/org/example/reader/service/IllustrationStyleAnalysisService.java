@@ -88,10 +88,18 @@ public class IllustrationStyleAnalysisService {
             - Narrative style and atmosphere
             - Visual imagery in the text
 
+            IMPORTANT: You must also identify the book's cultural and geographic setting. This is CRITICAL for accurate illustrations.
+            Examples:
+            - "19th century Russia, Russian Orthodox Christian culture, Slavic architecture"
+            - "Victorian England, English countryside and London, Anglican/Protestant culture"
+            - "Ancient Greece, Mediterranean, Greek mythology and temples"
+            - "1920s American South, rural Georgia, African American community"
+
             Respond with ONLY valid JSON in this exact format, no other text:
             {
               "style": "style_name",
               "promptPrefix": "A detailed prompt prefix describing the visual style, e.g., 'vintage watercolor illustration, soft pastels, romantic atmosphere,'",
+              "setting": "The specific cultural, geographic, and historical setting (country, time period, religion/culture, architectural style)",
               "reasoning": "Brief explanation of why this style fits the book"
             }
             """, title, author, truncateText(openingText, 1500));
@@ -125,6 +133,7 @@ public class IllustrationStyleAnalysisService {
             return new IllustrationSettings(
                     settingsNode.get("style").asText("pen-and-ink"),
                     settingsNode.has("promptPrefix") ? settingsNode.get("promptPrefix").asText() : "detailed book illustration,",
+                    settingsNode.has("setting") ? settingsNode.get("setting").asText() : null,
                     settingsNode.has("reasoning") ? settingsNode.get("reasoning").asText() : "AI recommended"
             );
 

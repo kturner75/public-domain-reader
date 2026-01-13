@@ -72,6 +72,7 @@ public class IllustrationController {
             IllustrationSettings settings = new IllustrationSettings(
                     book.getIllustrationStyle(),
                     book.getIllustrationPromptPrefix(),
+                    book.getIllustrationSetting(),
                     book.getIllustrationStyleReasoning()
             );
             return ResponseEntity.ok(settings);
