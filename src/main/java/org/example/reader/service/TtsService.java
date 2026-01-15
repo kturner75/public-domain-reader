@@ -135,8 +135,10 @@ public class TtsService {
 
         // Check cache
         Path cachedFile = bookCachePath.resolve(paragraphIndex + ".mp3");
+        String textPreview = truncateForLog(text);
         if (Files.exists(cachedFile)) {
-            log.debug("Cache hit for paragraph {}", paragraphIndex);
+            log.info("TTS cache HIT: book={}, chapter={}, paragraph={}, text=\"{}\"",
+                     bookId, chapterId, paragraphIndex, textPreview);
             try {
                 return Files.readAllBytes(cachedFile);
             } catch (IOException e) {
@@ -144,8 +146,9 @@ public class TtsService {
             }
         }
 
-        // Generate
-        log.info("Generating TTS for book={}, chapter={}, paragraph={}", bookId, chapterId, paragraphIndex);
+        // Generate - this means we're calling OpenAI API
+        log.info("TTS cache MISS - calling OpenAI: book={}, chapter={}, paragraph={}, text=\"{}\"",
+                 bookId, chapterId, paragraphIndex, textPreview);
 
         Map<String, Object> requestBody = new java.util.HashMap<>();
         requestBody.put("model", model);
@@ -193,5 +196,20 @@ public class TtsService {
         } catch (NoSuchAlgorithmException e) {
             return String.valueOf(text.hashCode());
         }
+    }
+
+    private String truncateForLog(String text) {
+        if (text == null) return "";
+        // Get first ~50 chars or first 8 words, whichever is shorter
+        String[] words = text.split("\\s+", 9);
+        if (words.length <= 8) {
+            return text.length() <= 50 ? text : text.substring(0, 50) + "...";
+        }
+        StringBuilder preview = new StringBuilder();
+        for (int i = 0; i < 8; i++) {
+            if (i > 0) preview.append(" ");
+            preview.append(words[i]);
+        }
+        return preview + "...";
     }
 }
