@@ -25,6 +25,9 @@ public class IllustrationPromptService {
     @Value("${ollama.model}")
     private String ollamaModel;
 
+    @Value("${ollama.timeout-seconds:180}")
+    private int timeoutSeconds;
+
     private WebClient webClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -115,7 +118,7 @@ public class IllustrationPromptService {
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(60))
+                    .timeout(Duration.ofSeconds(timeoutSeconds))
                     .block();
 
             JsonNode responseNode = objectMapper.readTree(response);
