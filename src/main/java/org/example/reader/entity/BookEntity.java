@@ -45,6 +45,9 @@ public class BookEntity {
     @Column(length = 2000)
     private String illustrationStyleReasoning;
 
+    // Character Prefetch Tracking
+    private Boolean characterPrefetchCompleted = false;
+
     @OneToMany(mappedBy = "book", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("chapterIndex")
     private List<ChapterEntity> chapters = new ArrayList<>();
@@ -105,6 +108,9 @@ public class BookEntity {
 
     public String getIllustrationStyleReasoning() { return illustrationStyleReasoning; }
     public void setIllustrationStyleReasoning(String illustrationStyleReasoning) { this.illustrationStyleReasoning = illustrationStyleReasoning; }
+
+    public Boolean getCharacterPrefetchCompleted() { return characterPrefetchCompleted; }
+    public void setCharacterPrefetchCompleted(Boolean characterPrefetchCompleted) { this.characterPrefetchCompleted = characterPrefetchCompleted; }
 
     public void addChapter(ChapterEntity chapter) {
         chapters.add(chapter);

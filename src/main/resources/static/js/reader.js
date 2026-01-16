@@ -39,7 +39,23 @@
         // Prompt modal state
         promptModalChapterId: null,       // chapter being edited in modal
         promptModalPolling: null,         // polling interval for regeneration
-        promptModalLastPrompt: ''         // last prompt used (for try again)
+        promptModalLastPrompt: '',        // last prompt used (for try again)
+        // Character feature state
+        characterAvailable: false,
+        characters: [],                   // Characters met so far
+        characterLastCheck: 0,            // Timestamp of last new character check
+        characterPollingInterval: null,   // Interval for checking new characters
+        newCharacterQueue: [],            // Queue of characters to show toasts for
+        currentToastCharacter: null,      // Character currently showing in toast
+        // Character browser modal state
+        characterBrowserOpen: false,
+        selectedCharacterId: null,
+        // Character chat modal state
+        characterChatOpen: false,
+        chatCharacterId: null,
+        chatCharacter: null,              // Current character being chatted with
+        chatHistory: [],                  // Loaded from localStorage
+        chatLoading: false
     };
 
     // DOM Elements
@@ -86,7 +102,34 @@
         promptCancel: document.getElementById('prompt-cancel'),
         promptRegenerate: document.getElementById('prompt-regenerate'),
         promptTryAgain: document.getElementById('prompt-try-again'),
-        promptAccept: document.getElementById('prompt-accept')
+        promptAccept: document.getElementById('prompt-accept'),
+        // Character elements
+        characterToggle: document.getElementById('character-toggle'),
+        characterToast: document.getElementById('character-toast'),
+        characterToastImage: document.getElementById('character-toast-image'),
+        characterToastName: document.getElementById('character-toast-name'),
+        characterToastDesc: document.getElementById('character-toast-desc'),
+        characterToastClose: document.getElementById('character-toast-close'),
+        characterBrowserModal: document.getElementById('character-browser-modal'),
+        characterBrowserClose: document.getElementById('character-browser-close'),
+        characterListView: document.getElementById('character-list-view'),
+        characterListEmpty: document.getElementById('character-list-empty'),
+        characterList: document.getElementById('character-list'),
+        characterDetailView: document.getElementById('character-detail-view'),
+        characterBackBtn: document.getElementById('character-back-btn'),
+        characterDetailPortrait: document.getElementById('character-detail-portrait'),
+        characterDetailName: document.getElementById('character-detail-name'),
+        characterDetailDesc: document.getElementById('character-detail-desc'),
+        characterDetailLink: document.getElementById('character-detail-link'),
+        characterDetailChapter: document.getElementById('character-detail-chapter'),
+        characterChatBtn: document.getElementById('character-chat-btn'),
+        characterChatModal: document.getElementById('character-chat-modal'),
+        characterChatClose: document.getElementById('character-chat-close'),
+        chatCharacterPortrait: document.getElementById('chat-character-portrait'),
+        chatCharacterName: document.getElementById('chat-character-name'),
+        chatMessages: document.getElementById('chat-messages'),
+        chatInput: document.getElementById('chat-input'),
+        chatSendBtn: document.getElementById('chat-send-btn')
     };
 
     // Chapter list state
@@ -100,7 +143,8 @@
         LAST_PARAGRAPH: 'reader_lastParagraph',
         RECENTLY_READ: 'reader_recentlyRead',
         TTS_SPEED: 'reader_ttsSpeed',
-        ILLUSTRATION_MODE: 'reader_illustrationMode'
+        ILLUSTRATION_MODE: 'reader_illustrationMode',
+        CHARACTER_CHAT_PREFIX: 'reader_characterChat_'
     };
 
     const MAX_RECENTLY_READ = 5;
@@ -111,6 +155,7 @@
         setupEventListeners();
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
+        await characterCheckAvailability();
 
         // Load saved TTS speed preference
         const savedSpeed = parseFloat(localStorage.getItem(STORAGE_KEYS.TTS_SPEED));
@@ -287,6 +332,11 @@
         if (state.illustrationAvailable && !state.illustrationSettings) {
             illustrationAnalyzeBook();
         }
+
+        // Prefetch main characters for the book (async, don't block)
+        if (state.characterAvailable) {
+            fetch(`/api/characters/book/${book.id}/prefetch`, { method: 'POST' });
+        }
     }
 
     // Load chapter content
@@ -323,6 +373,9 @@
             if (state.illustrationMode) {
                 loadChapterIllustration();
             }
+
+            // Analyze chapter for characters
+            loadChapterCharacters();
         } catch (error) {
             state.ttsWaitingForChapter = false;
             console.error('Failed to load chapter:', error);
@@ -1721,6 +1774,423 @@
     // End Illustration Mode Functions
     // ========================================
 
+    // ========================================
+    // Character Feature Functions
+    // ========================================
+
+    async function characterCheckAvailability() {
+        try {
+            const response = await fetch('/api/characters/status');
+            const status = await response.json();
+            state.characterAvailable = status.available;
+
+            console.log('Character status response:', status);
+            console.log('Character toggle element:', elements.characterToggle);
+
+            if (elements.characterToggle) {
+                elements.characterToggle.style.display = state.characterAvailable ? '' : 'none';
+                console.log('Character toggle display set to:', elements.characterToggle.style.display);
+            }
+            console.log('Character feature available:', state.characterAvailable);
+        } catch (error) {
+            console.error('Failed to check character availability:', error);
+            state.characterAvailable = false;
+        }
+    }
+
+    function isCharacterBrowserVisible() {
+        return elements.characterBrowserModal && !elements.characterBrowserModal.classList.contains('hidden');
+    }
+
+    function isCharacterChatVisible() {
+        return elements.characterChatModal && !elements.characterChatModal.classList.contains('hidden');
+    }
+
+    async function loadChapterCharacters() {
+        console.log('loadChapterCharacters called, available:', state.characterAvailable, 'book:', state.currentBook?.id);
+        if (!state.characterAvailable || !state.currentBook) return;
+
+        const chapter = state.chapters[state.currentChapterIndex];
+        if (!chapter) return;
+
+        console.log('Requesting character analysis for chapter:', chapter.id);
+        try {
+            // Request character analysis for current chapter
+            await fetch(`/api/characters/chapter/${chapter.id}/analyze`, { method: 'POST' });
+
+            // Prefetch next chapter analysis
+            fetch(`/api/characters/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+
+            // Start polling for new characters
+            startCharacterPolling();
+        } catch (error) {
+            console.error('Failed to request character analysis:', error);
+        }
+    }
+
+    function startCharacterPolling() {
+        // Clear existing polling
+        if (state.characterPollingInterval) {
+            clearInterval(state.characterPollingInterval);
+        }
+
+        state.characterLastCheck = Date.now();
+
+        // Poll every 3 seconds for new characters
+        state.characterPollingInterval = setInterval(async () => {
+            if (!state.currentBook) {
+                clearInterval(state.characterPollingInterval);
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/characters/book/${state.currentBook.id}/new-since?sinceTimestamp=${state.characterLastCheck}`
+                );
+                const newCharacters = await response.json();
+
+                if (newCharacters.length > 0) {
+                    state.characterLastCheck = Date.now();
+                    // Add to queue
+                    state.newCharacterQueue.push(...newCharacters);
+                    // Show next toast if not already showing one
+                    if (!state.currentToastCharacter) {
+                        showNextCharacterToast();
+                    }
+                }
+            } catch (error) {
+                console.debug('Character poll failed:', error);
+            }
+        }, 3000);
+    }
+
+    function stopCharacterPolling() {
+        if (state.characterPollingInterval) {
+            clearInterval(state.characterPollingInterval);
+            state.characterPollingInterval = null;
+        }
+    }
+
+    function showNextCharacterToast() {
+        if (state.newCharacterQueue.length === 0) {
+            state.currentToastCharacter = null;
+            return;
+        }
+
+        const character = state.newCharacterQueue.shift();
+        state.currentToastCharacter = character;
+
+        elements.characterToastName.textContent = character.name;
+        elements.characterToastDesc.textContent = character.description || '';
+        elements.characterToastImage.src = `/api/characters/${character.id}/portrait?t=${Date.now()}`;
+        elements.characterToast.classList.remove('hidden', 'fade-out');
+
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => {
+            dismissCharacterToast();
+        }, 8000);
+    }
+
+    function dismissCharacterToast() {
+        elements.characterToast.classList.add('fade-out');
+        setTimeout(() => {
+            elements.characterToast.classList.add('hidden');
+            elements.characterToast.classList.remove('fade-out');
+            state.currentToastCharacter = null;
+            // Show next if queued
+            showNextCharacterToast();
+        }, 400);
+    }
+
+    function characterBrowserToggle() {
+        console.log('characterBrowserToggle called, available:', state.characterAvailable);
+        if (!state.characterAvailable) {
+            console.log('Character feature not available, returning');
+            return;
+        }
+
+        if (isCharacterBrowserVisible()) {
+            closeCharacterBrowser();
+        } else {
+            openCharacterBrowser();
+        }
+    }
+
+    async function openCharacterBrowser() {
+        if (!state.currentBook) return;
+
+        ttsPauseForModal();
+        state.characterBrowserOpen = true;
+
+        // Load characters up to current reading position
+        const chapterIndex = state.currentChapterIndex;
+        const paragraphIndex = state.currentParagraphIndex;
+
+        try {
+            const response = await fetch(
+                `/api/characters/book/${state.currentBook.id}/up-to?chapterIndex=${chapterIndex}&paragraphIndex=${paragraphIndex}`
+            );
+            state.characters = await response.json();
+        } catch (error) {
+            console.error('Failed to load characters:', error);
+            state.characters = [];
+        }
+
+        showCharacterListView();
+        elements.characterBrowserModal.classList.remove('hidden');
+    }
+
+    function openCharacterBrowserToCharacter(characterId) {
+        if (!characterId) return;
+        dismissCharacterToast();
+        openCharacterBrowser().then(() => {
+            showCharacterDetail(characterId);
+        });
+    }
+
+    function closeCharacterBrowser(skipAudioResume = false) {
+        elements.characterBrowserModal.classList.add('hidden');
+        state.characterBrowserOpen = false;
+        state.selectedCharacterId = null;
+        if (!skipAudioResume) {
+            ttsResumeAfterModal();
+        }
+    }
+
+    function showCharacterListView() {
+        elements.characterDetailView.classList.add('hidden');
+        elements.characterListView.classList.remove('hidden');
+        renderCharacterList();
+    }
+
+    function renderCharacterCard(char, isLarge) {
+        const sizeClass = isLarge ? 'character-card-large' : 'character-card-small';
+        const iconSize = isLarge ? 32 : 24;
+        return `
+            <div class="character-card ${sizeClass}" data-character-id="${char.id}">
+                <div class="character-card-portrait ${char.portraitReady ? '' : 'pending'}">
+                    ${char.portraitReady
+                        ? `<img src="/api/characters/${char.id}/portrait" alt="${char.name}" />`
+                        : `<svg width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                          </svg>`
+                    }
+                </div>
+                <div class="character-card-name">${char.name}</div>
+            </div>
+        `;
+    }
+
+    function renderCharacterList() {
+        if (state.characters.length === 0) {
+            elements.characterListEmpty.classList.remove('hidden');
+            elements.characterList.innerHTML = '';
+            return;
+        }
+
+        elements.characterListEmpty.classList.add('hidden');
+
+        // Separate characters by type - primary first, then secondary
+        const primaryCharacters = state.characters.filter(c => c.characterType === 'PRIMARY');
+        const secondaryCharacters = state.characters.filter(c => c.characterType === 'SECONDARY');
+
+        // Single flowing layout: primary (large) cards first, then secondary (small) cards
+        const html = `<div class="character-flow">
+            ${primaryCharacters.map(char => renderCharacterCard(char, true)).join('')}
+            ${secondaryCharacters.map(char => renderCharacterCard(char, false)).join('')}
+        </div>`;
+
+        elements.characterList.innerHTML = html;
+
+        // Add click handlers
+        elements.characterList.querySelectorAll('.character-card').forEach(card => {
+            card.addEventListener('click', () => {
+                showCharacterDetail(card.dataset.characterId);
+            });
+        });
+    }
+
+    function showCharacterDetail(characterId) {
+        const character = state.characters.find(c => c.id === characterId);
+        if (!character) return;
+
+        state.selectedCharacterId = characterId;
+
+        elements.characterDetailName.textContent = character.name;
+        elements.characterDetailDesc.textContent = character.description || '';
+        elements.characterDetailChapter.textContent = character.firstChapterTitle || `Chapter ${character.firstChapterIndex + 1}`;
+
+        if (character.portraitReady) {
+            elements.characterDetailPortrait.src = `/api/characters/${characterId}/portrait?t=${Date.now()}`;
+        } else {
+            elements.characterDetailPortrait.src = '';
+        }
+
+        // Show/hide chat button based on character type (only PRIMARY can chat)
+        if (elements.characterChatBtn) {
+            if (character.characterType === 'PRIMARY') {
+                elements.characterChatBtn.classList.remove('hidden');
+            } else {
+                elements.characterChatBtn.classList.add('hidden');
+            }
+        }
+
+        elements.characterListView.classList.add('hidden');
+        elements.characterDetailView.classList.remove('hidden');
+    }
+
+    function navigateToCharacterAppearance() {
+        const character = state.characters.find(c => c.id === state.selectedCharacterId);
+        if (!character) return;
+
+        closeCharacterBrowser();
+
+        // Find chapter by id
+        const chapterIndex = state.chapters.findIndex(c => c.id === character.firstChapterId);
+        if (chapterIndex >= 0) {
+            loadChapter(chapterIndex, character.firstParagraphIndex);
+        }
+    }
+
+    async function openCharacterChat(characterId) {
+        if (!characterId) return;
+
+        const character = state.characters.find(c => c.id === characterId);
+        if (!character) return;
+
+        state.chatCharacterId = characterId;
+        state.chatCharacter = character;
+
+        // Load chat history from localStorage
+        state.chatHistory = loadChatHistory(characterId);
+
+        // Update UI
+        elements.chatCharacterName.textContent = character.name;
+        if (character.portraitReady) {
+            elements.chatCharacterPortrait.src = `/api/characters/${characterId}/portrait`;
+        }
+
+        // Render existing messages
+        renderChatMessages();
+
+        // Close browser, open chat (skip audio resume since chat modal keeps it paused)
+        closeCharacterBrowser(true);
+        elements.characterChatModal.classList.remove('hidden');
+        state.characterChatOpen = true;
+
+        // Focus input
+        elements.chatInput.focus();
+    }
+
+    function closeCharacterChat() {
+        elements.characterChatModal.classList.add('hidden');
+        state.characterChatOpen = false;
+        state.chatCharacterId = null;
+        state.chatCharacter = null;
+        state.chatHistory = [];
+        elements.chatMessages.innerHTML = '';
+        elements.chatInput.value = '';
+        ttsResumeAfterModal();
+    }
+
+    function loadChatHistory(characterId) {
+        const key = STORAGE_KEYS.CHARACTER_CHAT_PREFIX + state.currentBook.id + '_' + characterId;
+        const stored = localStorage.getItem(key);
+        return stored ? JSON.parse(stored) : [];
+    }
+
+    function saveChatHistory(characterId, history) {
+        const key = STORAGE_KEYS.CHARACTER_CHAT_PREFIX + state.currentBook.id + '_' + characterId;
+        // Limit history to last 50 messages
+        const limited = history.slice(-50);
+        localStorage.setItem(key, JSON.stringify(limited));
+    }
+
+    function renderChatMessages() {
+        elements.chatMessages.innerHTML = state.chatHistory.map(msg => `
+            <div class="chat-message ${msg.role}">
+                ${escapeHtml(msg.content)}
+            </div>
+        `).join('');
+
+        // Scroll to bottom
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async function sendChatMessage() {
+        const message = elements.chatInput.value.trim();
+        if (!message || state.chatLoading || !state.chatCharacterId) return;
+
+        // Add user message to history
+        const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+        state.chatHistory.push(userMsg);
+        renderChatMessages();
+
+        // Clear input
+        elements.chatInput.value = '';
+
+        // Show loading
+        state.chatLoading = true;
+        elements.chatSendBtn.disabled = true;
+
+        // Add loading message
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'chat-message character loading';
+        loadingDiv.textContent = 'Thinking';
+        elements.chatMessages.appendChild(loadingDiv);
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+
+        try {
+            const response = await fetch(`/api/characters/${state.chatCharacterId}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: message,
+                    conversationHistory: state.chatHistory.slice(-10),
+                    readerChapterIndex: state.currentChapterIndex,
+                    readerParagraphIndex: state.currentParagraphIndex
+                })
+            });
+
+            const data = await response.json();
+
+            // Remove loading message
+            loadingDiv.remove();
+
+            // Add character response
+            const charMsg = { role: 'character', content: data.response, timestamp: Date.now() };
+            state.chatHistory.push(charMsg);
+            renderChatMessages();
+
+            // Save history
+            saveChatHistory(state.chatCharacterId, state.chatHistory);
+
+        } catch (error) {
+            console.error('Chat failed:', error);
+            loadingDiv.remove();
+
+            // Add error message
+            const errorMsg = { role: 'character', content: "I... I'm not sure how to answer that.", timestamp: Date.now() };
+            state.chatHistory.push(errorMsg);
+            renderChatMessages();
+        } finally {
+            state.chatLoading = false;
+            elements.chatSendBtn.disabled = false;
+            elements.chatInput.focus();
+        }
+    }
+
+    // ========================================
+    // End Character Feature Functions
+    // ========================================
+
     // Import a book from Gutenberg and open it
     async function importAndOpenBook(gutenbergId) {
         if (state.isImporting) return;
@@ -1921,6 +2391,48 @@
             }
         });
 
+        // Character feature event listeners
+        if (elements.characterToggle) {
+            elements.characterToggle.addEventListener('click', characterBrowserToggle);
+        }
+        if (elements.characterToastClose) {
+            elements.characterToastClose.addEventListener('click', dismissCharacterToast);
+        }
+        if (elements.characterToast) {
+            elements.characterToast.addEventListener('click', (e) => {
+                if (e.target !== elements.characterToastClose) {
+                    openCharacterBrowserToCharacter(state.currentToastCharacter?.id);
+                }
+            });
+        }
+        if (elements.characterBrowserClose) {
+            elements.characterBrowserClose.addEventListener('click', closeCharacterBrowser);
+        }
+        if (elements.characterBrowserModal) {
+            elements.characterBrowserModal.querySelector('.character-modal-backdrop')?.addEventListener('click', closeCharacterBrowser);
+        }
+        if (elements.characterBackBtn) {
+            elements.characterBackBtn.addEventListener('click', showCharacterListView);
+        }
+        if (elements.characterChatBtn) {
+            elements.characterChatBtn.addEventListener('click', () => openCharacterChat(state.selectedCharacterId));
+        }
+        if (elements.characterDetailLink) {
+            elements.characterDetailLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                navigateToCharacterAppearance();
+            });
+        }
+        if (elements.characterChatClose) {
+            elements.characterChatClose.addEventListener('click', closeCharacterChat);
+        }
+        if (elements.characterChatModal) {
+            elements.characterChatModal.querySelector('.character-modal-backdrop')?.addEventListener('click', closeCharacterChat);
+        }
+        if (elements.chatSendBtn) {
+            elements.chatSendBtn.addEventListener('click', sendChatMessage);
+        }
+
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
             // Handle prompt modal keyboard
@@ -1930,6 +2442,29 @@
                     closePromptModal();
                 }
                 // Don't process other shortcuts when modal is open
+                return;
+            }
+
+            // Handle character browser modal keyboard
+            if (isCharacterBrowserVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeCharacterBrowser();
+                }
+                return;
+            }
+
+            // Handle character chat modal keyboard
+            if (isCharacterChatVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeCharacterChat();
+                }
+                // Allow Enter to send chat if not shift+enter
+                if (e.key === 'Enter' && !e.shiftKey && document.activeElement === elements.chatInput) {
+                    e.preventDefault();
+                    sendChatMessage();
+                }
                 return;
             }
 
@@ -2023,6 +2558,11 @@
                 case 'i':
                     e.preventDefault();
                     illustrationToggle();
+                    break;
+                case 'm':
+                    console.log('M key pressed');
+                    e.preventDefault();
+                    characterBrowserToggle();
                     break;
                 case 'Escape':
                     backToLibrary();
