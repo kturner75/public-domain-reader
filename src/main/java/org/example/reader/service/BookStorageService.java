@@ -91,6 +91,7 @@ public class BookStorageService {
         return bookRepository.existsBySourceAndSourceId(source, sourceId);
     }
 
+    @Transactional(readOnly = true)
     public Optional<Book> findBySource(String source, String sourceId) {
         return bookRepository.findBySourceAndSourceId(source, sourceId)
             .map(this::toBookDto);

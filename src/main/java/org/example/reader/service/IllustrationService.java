@@ -467,6 +467,57 @@ public class IllustrationService {
         }
     }
 
+    /**
+     * Force re-queue all pending illustrations for a specific book.
+     * Used by pre-generation to ensure all items get processed.
+     */
+    @Transactional(readOnly = true)
+    public int forceQueuePendingForBook(String bookId) {
+        List<IllustrationEntity> pendingIllustrations = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.PENDING);
+        int queued = 0;
+        for (IllustrationEntity illustration : pendingIllustrations) {
+            String chapterId = illustration.getChapter().getId();
+            if (generationQueue.offer(new IllustrationRequest(chapterId))) {
+                queued++;
+            }
+        }
+        log.info("Force-queued {} pending illustrations for book {}", queued, bookId);
+        return queued;
+    }
+
+    /**
+     * Reset stuck GENERATING illustrations back to PENDING and re-queue them.
+     * Used when generation appears stalled.
+     */
+    @Transactional
+    public int resetAndRequeueStuckForBook(String bookId) {
+        List<IllustrationEntity> stuckGenerating = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.GENERATING);
+        List<IllustrationEntity> stuckPending = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.PENDING);
+
+        int reset = 0;
+        for (IllustrationEntity illustration : stuckGenerating) {
+            illustration.setStatus(IllustrationStatus.PENDING);
+            illustrationRepository.save(illustration);
+            reset++;
+        }
+
+        // Re-queue all pending (including just-reset ones)
+        int queued = 0;
+        for (IllustrationEntity illustration : stuckGenerating) {
+            if (generationQueue.offer(new IllustrationRequest(illustration.getChapter().getId()))) {
+                queued++;
+            }
+        }
+        for (IllustrationEntity illustration : stuckPending) {
+            if (generationQueue.offer(new IllustrationRequest(illustration.getChapter().getId()))) {
+                queued++;
+            }
+        }
+
+        log.info("Reset {} stuck GENERATING illustrations and queued {} total for book {}", reset, queued, bookId);
+        return reset + stuckPending.size();
+    }
+
     private sealed interface GenerationRequest permits IllustrationRequest, RegenerateRequest {
         String chapterId();
     }

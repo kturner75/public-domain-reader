@@ -21,12 +21,24 @@ public class ChapterAnalysisEntity {
     @Column(nullable = false)
     private int characterCount;
 
+    @Enumerated(EnumType.STRING)
+    @Column
+    private ChapterAnalysisStatus status;
+
     public ChapterAnalysisEntity() {}
 
     public ChapterAnalysisEntity(ChapterEntity chapter) {
         this.chapter = chapter;
         this.analyzedAt = LocalDateTime.now();
         this.characterCount = 0;
+        this.status = ChapterAnalysisStatus.PENDING;
+    }
+
+    @PrePersist
+    void ensureStatus() {
+        if (status == null) {
+            status = ChapterAnalysisStatus.PENDING;
+        }
     }
 
     // Getters and setters
@@ -41,4 +53,7 @@ public class ChapterAnalysisEntity {
 
     public int getCharacterCount() { return characterCount; }
     public void setCharacterCount(int characterCount) { this.characterCount = characterCount; }
+
+    public ChapterAnalysisStatus getStatus() { return status; }
+    public void setStatus(ChapterAnalysisStatus status) { this.status = status; }
 }
