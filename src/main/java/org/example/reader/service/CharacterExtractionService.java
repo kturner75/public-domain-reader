@@ -13,13 +13,21 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class CharacterExtractionService {
 
     private static final Logger log = LoggerFactory.getLogger(CharacterExtractionService.class);
+    private static final Set<String> NAME_TITLES = Set.of(
+            "mr", "mrs", "ms", "miss", "lady", "lord", "sir", "madam", "madame",
+            "mme", "mlle", "dr", "doctor", "prof", "professor", "rev", "reverend",
+            "capt", "captain", "col", "colonel", "major"
+    );
 
     @Value("${ollama.base-url}")
     private String ollamaBaseUrl;
@@ -81,9 +89,9 @@ public class CharacterExtractionService {
         String prompt = String.format("""
             Analyze this chapter and identify any NEW characters that are introduced.
             A character is someone who:
-            - Has a name (or a clear designation like "the old woman" or "the stranger")
+            - Has a clear, specific name (no generic roles like "the maid" or "a stranger")
             - Appears as a distinct person in the narrative
-            - Has at least one line of dialogue OR plays a meaningful role in the scene
+            - Engages in non-trivial dialogue (more than a one-line exchange)
             - Is NOT already in the known characters list below
 
             Book: %s by %s
@@ -99,6 +107,9 @@ public class CharacterExtractionService {
 
             IMPORTANT:
             - Only include genuinely NEW characters not in the list above
+            - Do not add alternate forms of existing names (e.g., titles, last-name-only variants)
+            - If a name could be confused with an existing character, omit it
+            - Be conservative: if you're unsure, leave the character out
             - Maximum %d new characters per chapter
             - Do not include historical figures mentioned in passing
             - Do not include groups of people (e.g., "the crowd") unless one individual stands out
@@ -145,6 +156,11 @@ public class CharacterExtractionService {
             String json = extractJsonArray(generatedText);
             JsonNode charactersArray = objectMapper.readTree(json);
 
+            Set<String> normalizedExisting = existingCharacterNames.stream()
+                    .map(this::normalizeName)
+                    .filter(normalized -> !normalized.isBlank())
+                    .collect(Collectors.toSet());
+
             List<ExtractedCharacter> characters = new ArrayList<>();
             for (JsonNode charNode : charactersArray) {
                 String name = charNode.get("name").asText();
@@ -156,8 +172,8 @@ public class CharacterExtractionService {
                         : 0;
 
                 // Skip if name matches existing character (case-insensitive)
-                boolean isDuplicate = existingCharacterNames.stream()
-                        .anyMatch(existing -> existing.equalsIgnoreCase(name));
+                String normalizedName = normalizeName(name);
+                boolean isDuplicate = normalizedName.isBlank() || normalizedExisting.contains(normalizedName);
                 if (!isDuplicate && !name.isBlank()) {
                     characters.add(new ExtractedCharacter(name, description, paragraphIndex));
                 }
@@ -195,5 +211,26 @@ public class CharacterExtractionService {
         }
         log.warn("No JSON array found in response, returning empty: {}", text);
         return "[]";
+    }
+
+    private String normalizeName(String name) {
+        if (name == null) {
+            return "";
+        }
+        String cleaned = name.toLowerCase()
+                .replaceAll("[^a-z\\s-]", " ")
+                .replace("-", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (cleaned.isEmpty()) {
+            return "";
+        }
+        List<String> parts = Arrays.stream(cleaned.split(" "))
+                .filter(part -> !part.isBlank())
+                .collect(Collectors.toList());
+        while (!parts.isEmpty() && NAME_TITLES.contains(parts.get(0))) {
+            parts.remove(0);
+        }
+        return String.join(" ", parts).trim();
     }
 }

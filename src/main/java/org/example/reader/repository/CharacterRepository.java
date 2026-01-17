@@ -2,6 +2,7 @@ package org.example.reader.repository;
 
 import org.example.reader.entity.CharacterEntity;
 import org.example.reader.entity.CharacterStatus;
+import org.example.reader.entity.CharacterType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -24,6 +25,8 @@ public interface CharacterRepository extends JpaRepository<CharacterEntity, Stri
     List<CharacterEntity> findByBookIdAndStatus(String bookId, CharacterStatus status);
 
     List<CharacterEntity> findByStatus(CharacterStatus status);
+
+    long countByBookIdAndCharacterType(String bookId, CharacterType characterType);
 
     @Query("SELECT c FROM CharacterEntity c WHERE c.book.id = :bookId " +
            "AND c.firstChapter.chapterIndex <= :chapterIndex " +
