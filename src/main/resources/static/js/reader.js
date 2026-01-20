@@ -56,6 +56,7 @@
         characterPollingInterval: null,   // Interval for checking new characters
         newCharacterQueue: [],            // Queue of characters to show toasts for
         discoveredCharacterIds: new Set(), // Per-book discovery tracking
+        discoveredCharacterDetails: new Map(),
         characterDiscoveryTimeout: null,
         currentToastCharacter: null,      // Character currently showing in toast
         // Character browser modal state
@@ -173,7 +174,8 @@
         SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
         CHARACTER_CHAT_PREFIX: 'reader_characterChat_',
-        DISCOVERED_CHARACTERS_PREFIX: 'reader_discoveredCharacters_'
+        DISCOVERED_CHARACTERS_PREFIX: 'reader_discoveredCharacters_',
+        DISCOVERED_CHARACTER_DETAILS_PREFIX: 'reader_discoveredCharacterDetails_'
     };
 
     const MAX_RECENTLY_READ = 5;
@@ -392,6 +394,7 @@
         state.newCharacterQueue = [];
         state.currentToastCharacter = null;
         state.discoveredCharacterIds = loadDiscoveredCharacters(book.id);
+        state.discoveredCharacterDetails = loadDiscoveredCharacterDetails(book.id);
 
         // Save to localStorage and recently read
         localStorage.setItem(STORAGE_KEYS.LAST_BOOK, book.id);
@@ -2165,6 +2168,10 @@
         return STORAGE_KEYS.DISCOVERED_CHARACTERS_PREFIX + bookId;
     }
 
+    function getDiscoveredCharacterDetailsKey(bookId) {
+        return STORAGE_KEYS.DISCOVERED_CHARACTER_DETAILS_PREFIX + bookId;
+    }
+
     function loadDiscoveredCharacters(bookId) {
         if (!bookId) return new Set();
         const stored = localStorage.getItem(getDiscoveredCharactersKey(bookId));
@@ -2180,10 +2187,43 @@
         return new Set();
     }
 
+    function loadDiscoveredCharacterDetails(bookId) {
+        if (!bookId) return new Map();
+        const stored = localStorage.getItem(getDiscoveredCharacterDetailsKey(bookId));
+        if (!stored) return new Map();
+        try {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+                const map = new Map();
+                parsed.forEach(character => {
+                    if (character && character.id) {
+                        map.set(character.id, character);
+                    }
+                });
+                return map;
+            }
+        } catch (error) {
+            console.debug('Failed to parse discovered character details', error);
+        }
+        return new Map();
+    }
+
     function saveDiscoveredCharacters() {
         if (!state.currentBook) return;
         const key = getDiscoveredCharactersKey(state.currentBook.id);
         localStorage.setItem(key, JSON.stringify(Array.from(state.discoveredCharacterIds)));
+    }
+
+    function saveDiscoveredCharacterDetails() {
+        if (!state.currentBook) return;
+        const key = getDiscoveredCharacterDetailsKey(state.currentBook.id);
+        localStorage.setItem(key, JSON.stringify(Array.from(state.discoveredCharacterDetails.values())));
+    }
+
+    function recordDiscoveredCharacter(character) {
+        if (!character || !character.id) return;
+        state.discoveredCharacterIds.add(character.id);
+        state.discoveredCharacterDetails.set(character.id, character);
     }
 
     function isCharacterWithinCurrentPosition(character) {
@@ -2195,6 +2235,25 @@
             return false;
         }
         return character.firstParagraphIndex <= state.currentParagraphIndex;
+    }
+
+    function sortCharacters(characters) {
+        return characters.slice().sort((a, b) => {
+            if (a.characterType !== b.characterType) {
+                return a.characterType.localeCompare(b.characterType);
+            }
+            if (a.firstChapterIndex !== b.firstChapterIndex) {
+                return a.firstChapterIndex - b.firstChapterIndex;
+            }
+            return a.firstParagraphIndex - b.firstParagraphIndex;
+        });
+    }
+
+    function mergeCharacterLists(primaryList, secondaryList) {
+        const byId = new Map();
+        primaryList.forEach(character => byId.set(character.id, character));
+        secondaryList.forEach(character => byId.set(character.id, character));
+        return Array.from(byId.values());
     }
 
     function scheduleCharacterDiscoveryCheck() {
@@ -2224,9 +2283,10 @@
             );
 
             if (newDiscoveries.length > 0) {
-                newDiscoveries.forEach(c => state.discoveredCharacterIds.add(c.id));
+                newDiscoveries.forEach(recordDiscoveredCharacter);
                 state.newCharacterQueue.push(...newDiscoveries);
                 saveDiscoveredCharacters();
+                saveDiscoveredCharacterDetails();
                 if (!state.currentToastCharacter) {
                     showNextCharacterToast();
                 }
@@ -2319,9 +2379,10 @@
 
                 if (filtered.length > 0) {
                     // Add to queue
-                    filtered.forEach(c => state.discoveredCharacterIds.add(c.id));
+                    filtered.forEach(recordDiscoveredCharacter);
                     state.newCharacterQueue.push(...filtered);
                     saveDiscoveredCharacters();
+                    saveDiscoveredCharacterDetails();
                     // Show next toast if not already showing one
                     if (!state.currentToastCharacter) {
                         showNextCharacterToast();
@@ -2399,7 +2460,28 @@
             const response = await fetch(
                 `/api/characters/book/${state.currentBook.id}/up-to?chapterIndex=${chapterIndex}&paragraphIndex=${paragraphIndex}`
             );
-            state.characters = await response.json();
+            const upToCharacters = await response.json();
+            let mergedCharacters = upToCharacters;
+
+            if (state.discoveredCharacterIds.size > 0) {
+                const cachedDiscovered = Array.from(state.discoveredCharacterDetails.values());
+                const cachedIds = new Set(cachedDiscovered.map(c => c.id));
+                const missingIds = Array.from(state.discoveredCharacterIds).filter(id => !cachedIds.has(id));
+                let discoveredCharacters = cachedDiscovered;
+
+                if (missingIds.length > 0) {
+                    const allResponse = await fetch(`/api/characters/book/${state.currentBook.id}`);
+                    const allCharacters = await allResponse.json();
+                    const missingCharacters = allCharacters.filter(c => missingIds.includes(c.id));
+                    missingCharacters.forEach(recordDiscoveredCharacter);
+                    saveDiscoveredCharacterDetails();
+                    discoveredCharacters = mergeCharacterLists(cachedDiscovered, missingCharacters);
+                }
+
+                mergedCharacters = mergeCharacterLists(upToCharacters, discoveredCharacters);
+            }
+
+            state.characters = sortCharacters(mergedCharacters);
         } catch (error) {
             console.error('Failed to load characters:', error);
             state.characters = [];
