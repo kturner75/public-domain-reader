@@ -45,6 +45,12 @@ public class PreGenerationService {
     @Value("${pregen.max-wait-minutes:120}")
     private int maxWaitMinutes;
 
+    @Value("${pregen.cooldown-every-images:100}")
+    private int cooldownEveryImages;
+
+    @Value("${pregen.image-cooldown-minutes:3}")
+    private int imageCooldownMinutes;
+
     public PreGenerationService(
             BookImportService bookImportService,
             BookStorageService bookStorageService,
@@ -167,6 +173,9 @@ public class PreGenerationService {
         // Step 4: Wait for all generation to complete
         log.info("[4/4] Waiting for generation to complete (polling every {}s, max {}min)...",
                 pollIntervalSeconds, maxWaitMinutes);
+        if (cooldownEveryImages > 0 && imageCooldownMinutes > 0) {
+            log.info("  Periodic cooldown: {}min every {} images", imageCooldownMinutes, cooldownEveryImages);
+        }
 
         long startTime = System.currentTimeMillis();
         long maxWaitMs = maxWaitMinutes * 60 * 1000L;
@@ -176,6 +185,10 @@ public class PreGenerationService {
         int lastAnalysesPending = -1;
         int stallCount = 0;
         final int stallThreshold = 6; // After 6 unchanged polls (60s), consider it stalled
+
+        // Track images completed for periodic cooldown
+        int imagesSinceLastCooldown = 0;
+        int lastTotalCompleted = preIllustrationsTotal + prePortraitsTotal;
 
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             // Count pending/generating illustrations
@@ -224,6 +237,31 @@ public class PreGenerationService {
             if (totalPending == 0) {
                 log.info("All generation tasks completed!");
                 break;
+            }
+
+            // Check for periodic cooldown based on images completed
+            if (cooldownEveryImages > 0 && imageCooldownMinutes > 0) {
+                int currentCompleted = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.COMPLETED).size()
+                        + illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.FAILED).size()
+                        + characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.COMPLETED).size()
+                        + characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.FAILED).size();
+                int newlyCompleted = currentCompleted - lastTotalCompleted;
+                imagesSinceLastCooldown += newlyCompleted;
+                lastTotalCompleted = currentCompleted;
+
+                if (imagesSinceLastCooldown >= cooldownEveryImages && totalPending > 0) {
+                    log.info("Cooldown triggered: {} images completed since last cooldown (threshold: {})",
+                            imagesSinceLastCooldown, cooldownEveryImages);
+                    log.info("Cooling down for {} minutes to prevent API overheating...", imageCooldownMinutes);
+                    try {
+                        Thread.sleep(imageCooldownMinutes * 60 * 1000L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Cooldown interrupted");
+                    }
+                    imagesSinceLastCooldown = 0;
+                    log.info("Cooldown complete, resuming generation...");
+                }
             }
 
             try {

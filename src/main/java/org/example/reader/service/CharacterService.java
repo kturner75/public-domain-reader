@@ -43,6 +43,14 @@ public class CharacterService {
             "butler", "sailor", "soldier", "officer", "guard", "driver", "porter",
             "passerby", "gentleman", "lady", "visitor", "neighbor"
     );
+    private static final Set<String> GENERIC_DESCRIPTOR_TOKENS = Set.of(
+            "man", "men", "woman", "women", "boy", "boys", "girl", "girls", "child", "children",
+            "stranger", "strangers", "servant", "servants", "maid", "maids", "butler", "butlers",
+            "sailor", "sailors", "soldier", "soldiers", "officer", "officers", "guard", "guards",
+            "driver", "drivers", "porter", "porters", "passerby", "passersby", "gentleman",
+            "gentlemen", "lady", "ladies", "visitor", "visitors", "neighbor", "neighbors",
+            "people", "folk"
+    );
     private static final Set<String> LEADING_ARTICLES = Set.of(
             "the ", "a ", "an ", "some ", "another ", "any "
     );
@@ -475,6 +483,9 @@ public class CharacterService {
                 return false;
             }
         }
+        if (isGenericDescriptorPhrase(trimmed)) {
+            return false;
+        }
         String normalized = normalizeName(name);
         if (normalized.isBlank()) {
             return false;
@@ -482,6 +493,47 @@ public class CharacterService {
         if (normalized.split(" ").length == 1 && GENERIC_DESCRIPTORS.contains(normalized)) {
             return false;
         }
+        return true;
+    }
+
+    private boolean isGenericDescriptorPhrase(String name) {
+        String normalized = normalizeName(name);
+        if (normalized.isBlank()) {
+            return true;
+        }
+        String[] normalizedTokens = normalized.split(" ");
+        String lastToken = normalizedTokens[normalizedTokens.length - 1];
+        if (!GENERIC_DESCRIPTOR_TOKENS.contains(lastToken)) {
+            return false;
+        }
+
+        String[] originalTokens = name.trim().split("\\s+");
+        int uppercaseTokens = 0;
+        int uppercaseNonGenericTokens = 0;
+        boolean firstTokenHasUppercase = false;
+        for (int i = 0; i < originalTokens.length; i++) {
+            String token = originalTokens[i];
+            boolean hasUppercase = token.chars().anyMatch(Character::isUpperCase);
+            if (!hasUppercase) {
+                continue;
+            }
+            uppercaseTokens++;
+            if (i == 0) {
+                firstTokenHasUppercase = true;
+            }
+            String normalizedToken = normalizeName(token);
+            if (!normalizedToken.isBlank() && !GENERIC_DESCRIPTOR_TOKENS.contains(normalizedToken)) {
+                uppercaseNonGenericTokens++;
+            }
+        }
+
+        if (uppercaseNonGenericTokens >= 2) {
+            return false;
+        }
+        if (uppercaseNonGenericTokens == 1 && !(uppercaseTokens == 1 && firstTokenHasUppercase)) {
+            return false;
+        }
+
         return true;
     }
 

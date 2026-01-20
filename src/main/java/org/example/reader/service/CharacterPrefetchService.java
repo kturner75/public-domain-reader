@@ -7,9 +7,11 @@ import org.example.reader.entity.BookEntity;
 import org.example.reader.entity.CharacterEntity;
 import org.example.reader.entity.CharacterType;
 import org.example.reader.entity.ChapterEntity;
+import org.example.reader.entity.ParagraphEntity;
 import org.example.reader.repository.BookRepository;
 import org.example.reader.repository.CharacterRepository;
 import org.example.reader.repository.ChapterRepository;
+import org.example.reader.repository.ParagraphRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 @Service
 public class CharacterPrefetchService {
@@ -33,6 +36,7 @@ public class CharacterPrefetchService {
     private final BookRepository bookRepository;
     private final ChapterRepository chapterRepository;
     private final CharacterRepository characterRepository;
+    private final ParagraphRepository paragraphRepository;
     private final CharacterService characterService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -51,10 +55,12 @@ public class CharacterPrefetchService {
             BookRepository bookRepository,
             ChapterRepository chapterRepository,
             CharacterRepository characterRepository,
+            ParagraphRepository paragraphRepository,
             CharacterService characterService) {
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
         this.characterRepository = characterRepository;
+        this.paragraphRepository = paragraphRepository;
         this.characterService = characterService;
     }
 
@@ -87,6 +93,7 @@ public class CharacterPrefetchService {
         // Check if already prefetched
         if (Boolean.TRUE.equals(book.getCharacterPrefetchCompleted())) {
             log.debug("Characters already prefetched for book: {}", book.getTitle());
+            refreshPrimaryCharacterPositions(book);
             return;
         }
 
@@ -105,11 +112,15 @@ public class CharacterPrefetchService {
         int promoted = 0;
 
         for (PrefetchedCharacter pc : mainCharacters) {
-            ChapterEntity chapter = findChapterByNumber(bookId, pc.firstChapterNumber());
+            FirstAppearance appearance = findFirstAppearance(bookId, pc.name());
+            ChapterEntity chapter = appearance != null
+                    ? appearance.chapter()
+                    : findChapterByNumber(bookId, pc.firstChapterNumber());
             if (chapter == null) {
                 log.warn("Could not find chapter {} for character '{}', skipping", pc.firstChapterNumber(), pc.name());
                 continue;
             }
+            int paragraphIndex = appearance != null ? appearance.paragraphIndex() : 0;
 
             // Check for existing character with same name (case-insensitive)
             Optional<CharacterEntity> existing = characterRepository
@@ -133,7 +144,7 @@ public class CharacterPrefetchService {
             } else {
                 // Create new PRIMARY character
                 CharacterEntity character = new CharacterEntity(
-                        book, pc.name(), pc.description(), chapter, 0
+                        book, pc.name(), pc.description(), chapter, paragraphIndex
                 );
                 character.setCharacterType(CharacterType.PRIMARY);
                 characterRepository.save(character);
@@ -149,6 +160,56 @@ public class CharacterPrefetchService {
         bookRepository.save(book);
         log.info("Character prefetch completed for '{}' - {} created, {} promoted",
                 book.getTitle(), created, promoted);
+    }
+
+    public int refreshPrimaryCharacterPositionsForBook(String bookId) {
+        BookEntity book = bookRepository.findById(bookId).orElse(null);
+        if (book == null) {
+            log.warn("Book not found for character reindex: {}", bookId);
+            return 0;
+        }
+        return refreshPrimaryCharacterPositions(book);
+    }
+
+    public int refreshPrimaryCharacterPositionsForAll() {
+        int updated = 0;
+        List<BookEntity> books = bookRepository.findAll();
+        for (BookEntity book : books) {
+            updated += refreshPrimaryCharacterPositions(book);
+        }
+        return updated;
+    }
+
+    private int refreshPrimaryCharacterPositions(BookEntity book) {
+        List<CharacterEntity> existingCharacters = characterRepository.findByBookIdOrderByCreatedAt(book.getId());
+        int updated = 0;
+
+        for (CharacterEntity character : existingCharacters) {
+            if (character.getCharacterType() != CharacterType.PRIMARY) {
+                continue;
+            }
+
+            FirstAppearance appearance = findFirstAppearance(book.getId(), character.getName());
+            ChapterEntity foundChapter = appearance != null
+                    ? appearance.chapter()
+                    : findChapterByNumber(book.getId(), 1);
+            int foundParagraph = appearance != null ? appearance.paragraphIndex() : 0;
+            if (character.getFirstChapter().getId().equals(foundChapter.getId()) &&
+                    character.getFirstParagraphIndex() == foundParagraph) {
+                continue;
+            }
+
+            character.setFirstChapter(foundChapter);
+            character.setFirstParagraphIndex(foundParagraph);
+            characterRepository.save(character);
+            updated++;
+        }
+
+        if (updated > 0) {
+            log.info("Refreshed first appearances for {} primary characters in '{}'",
+                    updated, book.getTitle());
+        }
+        return updated;
     }
 
     private List<PrefetchedCharacter> queryMainCharacters(String title, String author) {
@@ -250,6 +311,43 @@ public class CharacterPrefetchService {
                     log.debug("Chapter {} not found for book {}, falling back to chapter 1", chapterNumber, bookId);
                     return chapterRepository.findByBookIdAndChapterIndex(bookId, 0).orElse(null);
                 });
+    }
+
+    private record FirstAppearance(ChapterEntity chapter, int paragraphIndex) {}
+
+    private FirstAppearance findFirstAppearance(String bookId, String characterName) {
+        if (characterName == null || characterName.isBlank()) {
+            return null;
+        }
+
+        Pattern pattern = buildNamePattern(characterName);
+        List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(bookId);
+        for (ChapterEntity chapter : chapters) {
+            List<ParagraphEntity> paragraphs = paragraphRepository.findByChapterIdOrderByParagraphIndex(chapter.getId());
+            for (ParagraphEntity paragraph : paragraphs) {
+                String content = paragraph.getContent();
+                if (content != null && pattern.matcher(content).find()) {
+                    return new FirstAppearance(chapter, paragraph.getParagraphIndex());
+                }
+            }
+        }
+        return null;
+    }
+
+    private Pattern buildNamePattern(String name) {
+        String trimmed = name.trim();
+        String[] parts = trimmed.split("\\s+");
+        if (parts.length == 1) {
+            return Pattern.compile("\\b" + Pattern.quote(trimmed) + "\\b", Pattern.CASE_INSENSITIVE);
+        }
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) {
+                regex.append("\\s+");
+            }
+            regex.append(Pattern.quote(parts[i]));
+        }
+        return Pattern.compile("\\b" + regex + "\\b", Pattern.CASE_INSENSITIVE);
     }
 
     private String extractJsonArray(String text) {

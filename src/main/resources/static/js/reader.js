@@ -28,6 +28,15 @@
         ttsPrefetchedChapter: null,    // Chapter ID of pre-fetched audio
         ttsAbortController: null,      // AbortController for current audio request
         ttsPrefetchAbortController: null,  // AbortController for prefetch request
+        // Speed reading state
+        speedReadingEnabled: true,
+        speedReadingRestoreIllustration: false,
+        speedReadingActive: false,
+        speedReadingPlaying: false,
+        speedReadingWpm: 300,
+        speedReadingTimer: null,
+        speedReadingTokens: [],
+        speedReadingTokenIndex: 0,
         // Illustration mode state
         illustrationMode: false,
         illustrationAvailable: false,
@@ -46,6 +55,8 @@
         characterLastCheck: 0,            // Timestamp of last new character check
         characterPollingInterval: null,   // Interval for checking new characters
         newCharacterQueue: [],            // Queue of characters to show toasts for
+        discoveredCharacterIds: new Set(), // Per-book discovery tracking
+        characterDiscoveryTimeout: null,
         currentToastCharacter: null,      // Character currently showing in toast
         // Character browser modal state
         characterBrowserOpen: false,
@@ -81,6 +92,19 @@
         ttsToggle: document.getElementById('tts-toggle'),
         ttsSpeed: document.getElementById('tts-speed'),
         ttsMode: document.getElementById('tts-mode'),
+        speedReadingContainer: document.getElementById('speed-reading-container'),
+        speedReadingToggle: document.getElementById('speed-reading-toggle'),
+        speedReadingOverlay: document.getElementById('speed-reading-overlay'),
+        speedReadingWord: document.getElementById('speed-reading-word'),
+        speedReadingPlay: document.getElementById('speed-reading-play'),
+        speedReadingExitInline: document.getElementById('speed-reading-exit-inline'),
+        speedReadingSlider: document.getElementById('speed-reading-slider'),
+        speedReadingWpm: document.getElementById('speed-reading-wpm'),
+        speedReadingChapterOverlay: document.getElementById('speed-reading-chapter-overlay'),
+        speedReadingChapterTitle: document.getElementById('speed-reading-chapter-title'),
+        speedReadingContinue: document.getElementById('speed-reading-continue'),
+        speedReadingExit: document.getElementById('speed-reading-exit'),
+        speedReadingHint: document.getElementById('speed-reading-hint'),
         // Illustration elements
         illustrationToggle: document.getElementById('illustration-toggle'),
         illustrationColumn: document.getElementById('illustration-column'),
@@ -143,8 +167,10 @@
         LAST_PARAGRAPH: 'reader_lastParagraph',
         RECENTLY_READ: 'reader_recentlyRead',
         TTS_SPEED: 'reader_ttsSpeed',
+        SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
-        CHARACTER_CHAT_PREFIX: 'reader_characterChat_'
+        CHARACTER_CHAT_PREFIX: 'reader_characterChat_',
+        DISCOVERED_CHARACTERS_PREFIX: 'reader_discoveredCharacters_'
     };
 
     const MAX_RECENTLY_READ = 5;
@@ -152,6 +178,7 @@
     // Initialize
     async function init() {
         await loadLibrary();
+        await speedReadingCheckAvailability();
         setupEventListeners();
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
@@ -163,6 +190,12 @@
             state.ttsPlaybackRate = savedSpeed;
         }
 
+        // Load saved speed reading preference
+        const savedWpm = parseInt(localStorage.getItem(STORAGE_KEYS.SPEED_READING_WPM), 10);
+        if (!Number.isNaN(savedWpm) && savedWpm >= 150 && savedWpm <= 800) {
+            state.speedReadingWpm = savedWpm;
+        }
+
         // Load saved illustration mode preference
         const savedIllustrationMode = localStorage.getItem(STORAGE_KEYS.ILLUSTRATION_MODE);
         if (savedIllustrationMode === 'true' && state.illustrationAvailable) {
@@ -171,6 +204,8 @@
                 elements.illustrationToggle.classList.add('active');
             }
         }
+
+        updateSpeedReadingControls();
 
         // Check for saved book
         const lastBookId = localStorage.getItem(STORAGE_KEYS.LAST_BOOK);
@@ -199,6 +234,54 @@
             renderLibrary();
         } catch (error) {
             console.error('Failed to load library:', error);
+        }
+    }
+
+    async function speedReadingCheckAvailability() {
+        try {
+            const response = await fetch('/api/features');
+            if (response.ok) {
+                const features = await response.json();
+                state.speedReadingEnabled = features.speedReadingEnabled !== false;
+            }
+        } catch (error) {
+            console.warn('Speed reading feature check failed:', error);
+        }
+
+        applySpeedReadingAvailability();
+    }
+
+    function applySpeedReadingAvailability() {
+        if (state.speedReadingEnabled) {
+            if (elements.speedReadingContainer) {
+                elements.speedReadingContainer.style.display = '';
+            }
+            if (elements.speedReadingHint) {
+                elements.speedReadingHint.style.display = '';
+            }
+            if (elements.speedReadingOverlay) {
+                elements.speedReadingOverlay.style.display = '';
+            }
+            if (elements.speedReadingChapterOverlay) {
+                elements.speedReadingChapterOverlay.style.display = '';
+            }
+            return;
+        }
+
+        exitSpeedReading(true);
+        if (elements.speedReadingContainer) {
+            elements.speedReadingContainer.style.display = 'none';
+        }
+        if (elements.speedReadingHint) {
+            elements.speedReadingHint.style.display = 'none';
+        }
+        if (elements.speedReadingOverlay) {
+            elements.speedReadingOverlay.classList.add('hidden');
+            elements.speedReadingOverlay.style.display = 'none';
+        }
+        if (elements.speedReadingChapterOverlay) {
+            elements.speedReadingChapterOverlay.classList.add('hidden');
+            elements.speedReadingChapterOverlay.style.display = 'none';
         }
     }
 
@@ -303,6 +386,9 @@
         state.currentBook = book;
         state.chapters = book.chapters;
         state.currentChapterIndex = chapterIndex;
+        state.newCharacterQueue = [];
+        state.currentToastCharacter = null;
+        state.discoveredCharacterIds = loadDiscoveredCharacters(book.id);
 
         // Save to localStorage and recently read
         localStorage.setItem(STORAGE_KEYS.LAST_BOOK, book.id);
@@ -538,6 +624,8 @@
         if (state.currentParagraphIndex < pageData.startParagraph || state.currentParagraphIndex > pageData.endParagraph) {
             state.currentParagraphIndex = pageData.startParagraph;
         }
+
+        scheduleCharacterDiscoveryCheck();
     }
 
     // Navigation functions
@@ -687,6 +775,12 @@
     // Back to library
     function backToLibrary() {
         ttsStop();
+        if (state.speedReadingActive) {
+            exitSpeedReading(true);
+        }
+        stopCharacterPolling();
+        state.newCharacterQueue = [];
+        state.currentToastCharacter = null;
         state.ttsVoiceSettings = null;  // Clear voice settings for next book
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
@@ -836,6 +930,9 @@
     }
 
     function ttsToggle() {
+        if (state.speedReadingActive) {
+            return;
+        }
         if (!state.ttsAvailable) {
             console.warn('TTS not available');
             return;
@@ -1335,6 +1432,273 @@
     }
 
     // ========================================
+    // Speed Reading Mode Functions
+    // ========================================
+
+    function speedReadingToggle() {
+        if (!state.speedReadingEnabled) {
+            return;
+        }
+        if (state.speedReadingActive) {
+            exitSpeedReading();
+        } else {
+            enterSpeedReading();
+        }
+    }
+
+    function enterSpeedReading() {
+        if (!state.speedReadingEnabled) {
+            return;
+        }
+        if (!state.currentBook || state.paragraphs.length === 0) return;
+
+        if (state.ttsEnabled) {
+            ttsStop();
+        }
+
+        if (state.illustrationMode) {
+            state.speedReadingRestoreIllustration = true;
+            illustrationToggle();
+        } else {
+            state.speedReadingRestoreIllustration = false;
+        }
+
+        state.speedReadingActive = true;
+        state.speedReadingPlaying = true;
+        elements.readerView.classList.add('speed-reading-active');
+        elements.speedReadingOverlay.classList.remove('hidden');
+        elements.speedReadingChapterOverlay.classList.add('hidden');
+        elements.speedReadingToggle.classList.add('active');
+        if (elements.ttsToggle) {
+            elements.ttsToggle.disabled = true;
+        }
+        if (elements.illustrationToggle) {
+            elements.illustrationToggle.disabled = true;
+        }
+
+        updateSpeedReadingControls();
+        prepareSpeedReadingTokens(state.currentParagraphIndex);
+        state.speedReadingTokenIndex = 0;
+        speedReadingStep();
+    }
+
+    function exitSpeedReading(skipRender = false) {
+        clearSpeedReadingTimer();
+        state.speedReadingActive = false;
+        state.speedReadingPlaying = false;
+        updateSpeedReadingControls();
+        elements.readerView.classList.remove('speed-reading-active');
+        elements.speedReadingOverlay.classList.add('hidden');
+        elements.speedReadingChapterOverlay.classList.add('hidden');
+        elements.speedReadingToggle.classList.remove('active');
+        if (elements.ttsToggle) {
+            elements.ttsToggle.disabled = false;
+        }
+        if (elements.illustrationToggle) {
+            elements.illustrationToggle.disabled = false;
+        }
+
+        let restoredIllustration = false;
+        if (state.speedReadingRestoreIllustration && !state.illustrationMode && state.illustrationAvailable) {
+            illustrationToggle();
+            restoredIllustration = true;
+        }
+        state.speedReadingRestoreIllustration = false;
+
+        if (!skipRender && !restoredIllustration) {
+            syncPageToParagraph();
+        }
+    }
+
+    function speedReadingPause() {
+        state.speedReadingPlaying = false;
+        clearSpeedReadingTimer();
+        updateSpeedReadingControls();
+    }
+
+    function speedReadingStart() {
+        if (state.speedReadingPlaying) return;
+        state.speedReadingPlaying = true;
+        updateSpeedReadingControls();
+        speedReadingStep();
+    }
+
+    function speedReadingStep() {
+        if (!state.speedReadingActive || !state.speedReadingPlaying) return;
+
+        const token = state.speedReadingTokens[state.speedReadingTokenIndex];
+        if (!token) {
+            handleSpeedReadingParagraphEnd();
+            return;
+        }
+
+        renderSpeedReadingToken(token.text);
+        state.speedReadingTokenIndex += 1;
+
+        const delay = getSpeedReadingDelay(token);
+        state.speedReadingTimer = setTimeout(speedReadingStep, delay);
+    }
+
+    function clearSpeedReadingTimer() {
+        if (state.speedReadingTimer) {
+            clearTimeout(state.speedReadingTimer);
+            state.speedReadingTimer = null;
+        }
+    }
+
+    function getSpeedReadingDelay(token) {
+        const baseDelay = Math.max(40, Math.round(60000 / state.speedReadingWpm));
+        return token.hasPunctuation ? baseDelay * 2 : baseDelay;
+    }
+
+    function handleSpeedReadingParagraphEnd() {
+        clearSpeedReadingTimer();
+
+        if (state.currentParagraphIndex < state.paragraphs.length - 1) {
+            const nextIndex = findNextReadableParagraph(state.currentParagraphIndex + 1);
+            if (nextIndex === -1) {
+                showSpeedReadingChapterPause();
+                return;
+            }
+            state.currentParagraphIndex = nextIndex;
+            localStorage.setItem(STORAGE_KEYS.LAST_PARAGRAPH, state.currentParagraphIndex);
+            scheduleCharacterDiscoveryCheck();
+            prepareSpeedReadingTokens(state.currentParagraphIndex);
+            state.speedReadingTokenIndex = 0;
+            speedReadingStep();
+        } else {
+            showSpeedReadingChapterPause();
+        }
+    }
+
+    function findNextReadableParagraph(startIndex) {
+        for (let i = startIndex; i < state.paragraphs.length; i++) {
+            const tokens = tokenizeParagraph(state.paragraphs[i]);
+            if (tokens.length > 0) {
+                state.speedReadingTokens = tokens;
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    function prepareSpeedReadingTokens(paragraphIndex) {
+        const paragraph = state.paragraphs[paragraphIndex];
+        state.speedReadingTokens = tokenizeParagraph(paragraph);
+        if (state.speedReadingTokens.length === 0) {
+            const nextIndex = findNextReadableParagraph(paragraphIndex + 1);
+            if (nextIndex !== -1) {
+                state.currentParagraphIndex = nextIndex;
+                localStorage.setItem(STORAGE_KEYS.LAST_PARAGRAPH, state.currentParagraphIndex);
+                scheduleCharacterDiscoveryCheck();
+            }
+        }
+    }
+
+    function tokenizeParagraph(paragraph) {
+        if (!paragraph) return [];
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = paragraph.content || '';
+        const text = (tempDiv.textContent || tempDiv.innerText || '').trim();
+        if (!text) return [];
+        return text.split(/\s+/).map(token => ({
+            text: token,
+            hasPunctuation: /[.,;:!?]+$/.test(token)
+        }));
+    }
+
+    function renderSpeedReadingToken(tokenText) {
+        if (!elements.speedReadingWord) return;
+        elements.speedReadingWord.innerHTML = '';
+
+        const pivotIndex = findPivotIndex(tokenText);
+        if (pivotIndex === -1) {
+            elements.speedReadingWord.textContent = tokenText;
+            return;
+        }
+
+        const left = document.createElement('span');
+        left.textContent = tokenText.slice(0, pivotIndex);
+
+        const pivot = document.createElement('span');
+        pivot.className = 'pivot';
+        pivot.textContent = tokenText[pivotIndex];
+
+        const right = document.createElement('span');
+        right.textContent = tokenText.slice(pivotIndex + 1);
+
+        elements.speedReadingWord.append(left, pivot, right);
+    }
+
+    function findPivotIndex(tokenText) {
+        const letterIndices = [];
+        for (let i = 0; i < tokenText.length; i++) {
+            if (/[A-Za-z]/.test(tokenText[i])) {
+                letterIndices.push(i);
+            }
+        }
+        if (letterIndices.length === 0) {
+            return -1;
+        }
+        const pivotOffset = Math.floor((letterIndices.length - 1) * 0.4);
+        return letterIndices[pivotOffset];
+    }
+
+    function updateSpeedReadingControls() {
+        if (elements.speedReadingSlider) {
+            elements.speedReadingSlider.value = state.speedReadingWpm;
+        }
+        if (elements.speedReadingWpm) {
+            elements.speedReadingWpm.textContent = `${state.speedReadingWpm} wpm`;
+        }
+        if (elements.speedReadingPlay) {
+            elements.speedReadingPlay.textContent = state.speedReadingPlaying ? 'Pause' : 'Play';
+        }
+    }
+
+    function showSpeedReadingChapterPause() {
+        speedReadingPause();
+
+        const nextChapterIndex = state.currentChapterIndex + 1;
+        if (nextChapterIndex < state.chapters.length) {
+            elements.speedReadingChapterTitle.textContent = `Next Chapter: ${state.chapters[nextChapterIndex].title}`;
+            elements.speedReadingContinue.disabled = false;
+        } else {
+            elements.speedReadingChapterTitle.textContent = 'End of book';
+            elements.speedReadingContinue.disabled = true;
+        }
+
+        elements.speedReadingChapterOverlay.classList.remove('hidden');
+    }
+
+    async function continueSpeedReading() {
+        const nextChapterIndex = state.currentChapterIndex + 1;
+        if (nextChapterIndex >= state.chapters.length) {
+            exitSpeedReading();
+            return;
+        }
+
+        elements.speedReadingChapterOverlay.classList.add('hidden');
+        await loadChapter(nextChapterIndex, 0, 0);
+        prepareSpeedReadingTokens(state.currentParagraphIndex);
+        state.speedReadingTokenIndex = 0;
+        speedReadingStart();
+    }
+
+    function syncPageToParagraph() {
+        if (state.pagesData.length === 0) return;
+        const index = state.currentParagraphIndex;
+        for (let i = 0; i < state.pagesData.length; i++) {
+            const page = state.pagesData[i];
+            if (index >= page.startParagraph && index <= page.endParagraph) {
+                state.currentPage = i;
+                break;
+            }
+        }
+        renderPage();
+    }
+
+    // ========================================
     // Illustration Mode Functions
     // ========================================
 
@@ -1405,6 +1769,9 @@
     }
 
     function illustrationToggle() {
+        if (state.speedReadingActive) {
+            return;
+        }
         if (!state.illustrationAvailable) {
             console.warn('Illustration mode not available');
             return;
@@ -1429,12 +1796,9 @@
             }
         }
 
-        // Recalculate pages for the new layout
+        // Recalculate pages for the new layout and keep paragraph position.
         calculatePages();
-        // Keep current position but adjust page if needed
-        state.currentPage = Math.min(state.currentPage, state.totalPages - 1);
-        state.currentPage = Math.max(0, state.currentPage);
-        renderPage();
+        syncPageToParagraph();
     }
 
     function updateColumnLayout() {
@@ -1778,6 +2142,81 @@
     // Character Feature Functions
     // ========================================
 
+    function getDiscoveredCharactersKey(bookId) {
+        return STORAGE_KEYS.DISCOVERED_CHARACTERS_PREFIX + bookId;
+    }
+
+    function loadDiscoveredCharacters(bookId) {
+        if (!bookId) return new Set();
+        const stored = localStorage.getItem(getDiscoveredCharactersKey(bookId));
+        if (!stored) return new Set();
+        try {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+                return new Set(parsed);
+            }
+        } catch (error) {
+            console.debug('Failed to parse discovered characters', error);
+        }
+        return new Set();
+    }
+
+    function saveDiscoveredCharacters() {
+        if (!state.currentBook) return;
+        const key = getDiscoveredCharactersKey(state.currentBook.id);
+        localStorage.setItem(key, JSON.stringify(Array.from(state.discoveredCharacterIds)));
+    }
+
+    function isCharacterWithinCurrentPosition(character) {
+        if (!character) return false;
+        if (character.firstChapterIndex < state.currentChapterIndex) {
+            return true;
+        }
+        if (character.firstChapterIndex > state.currentChapterIndex) {
+            return false;
+        }
+        return character.firstParagraphIndex <= state.currentParagraphIndex;
+    }
+
+    function scheduleCharacterDiscoveryCheck() {
+        if (!state.characterAvailable || !state.currentBook) return;
+        if (state.characterDiscoveryTimeout) {
+            clearTimeout(state.characterDiscoveryTimeout);
+        }
+        state.characterDiscoveryTimeout = setTimeout(() => {
+            state.characterDiscoveryTimeout = null;
+            checkForDiscoveredCharacters();
+        }, 300);
+    }
+
+    async function checkForDiscoveredCharacters() {
+        if (!state.currentBook || !state.characterAvailable) return;
+
+        const chapterIndex = state.currentChapterIndex;
+        const paragraphIndex = state.currentParagraphIndex;
+
+        try {
+            const response = await fetch(
+                `/api/characters/book/${state.currentBook.id}/up-to?chapterIndex=${chapterIndex}&paragraphIndex=${paragraphIndex}`
+            );
+            const characters = await response.json();
+            const newDiscoveries = characters.filter(c =>
+                c.portraitReady && !state.discoveredCharacterIds.has(c.id)
+            );
+
+            if (newDiscoveries.length > 0) {
+                newDiscoveries.forEach(c => state.discoveredCharacterIds.add(c.id));
+                state.newCharacterQueue.push(...newDiscoveries);
+                saveDiscoveredCharacters();
+                if (!state.currentToastCharacter) {
+                    showNextCharacterToast();
+                }
+            }
+        } catch (error) {
+            console.debug('Failed to check discovered characters:', error);
+        }
+    }
+
     async function characterCheckAvailability() {
         try {
             const response = await fetch('/api/characters/status');
@@ -1851,8 +2290,19 @@
 
                 if (newCharacters.length > 0) {
                     state.characterLastCheck = Date.now();
+                }
+
+                const filtered = newCharacters.filter(c =>
+                    c.portraitReady &&
+                    isCharacterWithinCurrentPosition(c) &&
+                    !state.discoveredCharacterIds.has(c.id)
+                );
+
+                if (filtered.length > 0) {
                     // Add to queue
-                    state.newCharacterQueue.push(...newCharacters);
+                    filtered.forEach(c => state.discoveredCharacterIds.add(c.id));
+                    state.newCharacterQueue.push(...filtered);
+                    saveDiscoveredCharacters();
                     // Show next toast if not already showing one
                     if (!state.currentToastCharacter) {
                         showNextCharacterToast();
@@ -2307,6 +2757,45 @@
             elements.ttsToggle.addEventListener('click', ttsToggle);
         }
 
+        // Speed reading toggle
+        if (state.speedReadingEnabled) {
+            if (elements.speedReadingToggle) {
+                elements.speedReadingToggle.addEventListener('click', speedReadingToggle);
+            }
+            if (elements.speedReadingPlay) {
+                elements.speedReadingPlay.addEventListener('click', () => {
+                    if (state.speedReadingPlaying) {
+                        speedReadingPause();
+                    } else {
+                        speedReadingStart();
+                    }
+                });
+            }
+            if (elements.speedReadingExitInline) {
+                elements.speedReadingExitInline.addEventListener('click', () => exitSpeedReading());
+            }
+            if (elements.speedReadingSlider) {
+                elements.speedReadingSlider.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value, 10);
+                    if (!Number.isNaN(value)) {
+                        state.speedReadingWpm = value;
+                        localStorage.setItem(STORAGE_KEYS.SPEED_READING_WPM, value);
+                        updateSpeedReadingControls();
+                        if (state.speedReadingActive && state.speedReadingPlaying) {
+                            clearSpeedReadingTimer();
+                            speedReadingStep();
+                        }
+                    }
+                });
+            }
+            if (elements.speedReadingContinue) {
+                elements.speedReadingContinue.addEventListener('click', continueSpeedReading);
+            }
+            if (elements.speedReadingExit) {
+                elements.speedReadingExit.addEventListener('click', () => exitSpeedReading());
+            }
+        }
+
         // Illustration toggle
         if (elements.illustrationToggle) {
             elements.illustrationToggle.addEventListener('click', illustrationToggle);
@@ -2478,6 +2967,40 @@
                 return;
             }
 
+            if (state.speedReadingEnabled && state.speedReadingActive) {
+                if (!elements.speedReadingChapterOverlay.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        exitSpeedReading();
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        continueSpeedReading();
+                    }
+                    return;
+                }
+
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    exitSpeedReading();
+                    return;
+                }
+                if (e.key === 'r') {
+                    e.preventDefault();
+                    speedReadingToggle();
+                    return;
+                }
+                if (e.key === ' ') {
+                    e.preventDefault();
+                    if (state.speedReadingPlaying) {
+                        speedReadingPause();
+                    } else {
+                        speedReadingStart();
+                    }
+                    return;
+                }
+                return;
+            }
+
             // Handle chapter list keyboard navigation
             if (isChapterListVisible()) {
                 switch (e.key) {
@@ -2554,6 +3077,12 @@
                 case 's':
                     e.preventDefault();
                     ttsCycleSpeed();
+                    break;
+                case 'r':
+                    if (state.speedReadingEnabled) {
+                        e.preventDefault();
+                        speedReadingToggle();
+                    }
                     break;
                 case 'i':
                     e.preventDefault();

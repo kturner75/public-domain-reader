@@ -104,6 +104,33 @@ public class CharacterController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/reindex")
+    public ResponseEntity<Map<String, Object>> reindexPrimaryCharacters() {
+        if (!characterEnabled) {
+            return ResponseEntity.status(403).build();
+        }
+
+        int updatedCount = prefetchService.refreshPrimaryCharacterPositionsForAll();
+        Map<String, Object> response = new HashMap<>();
+        response.put("updatedCount", updatedCount);
+        response.put("message", "Primary character first appearances refreshed.");
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/book/{bookId}/reindex")
+    public ResponseEntity<Map<String, Object>> reindexPrimaryCharactersForBook(@PathVariable String bookId) {
+        if (!characterEnabled) {
+            return ResponseEntity.status(403).build();
+        }
+
+        int updatedCount = prefetchService.refreshPrimaryCharacterPositionsForBook(bookId);
+        Map<String, Object> response = new HashMap<>();
+        response.put("bookId", bookId);
+        response.put("updatedCount", updatedCount);
+        response.put("message", "Primary character first appearances refreshed for book.");
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{characterId}")
     public ResponseEntity<CharacterInfo> getCharacter(@PathVariable String characterId) {
         Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);

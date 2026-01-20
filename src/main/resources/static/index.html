@@ -53,6 +53,15 @@
                 <span id="tts-speed" class="tts-speed"></span>
                 <span id="tts-mode" class="tts-mode"></span>
             </div>
+            <div id="speed-reading-container" class="speed-reading-container">
+                <button id="speed-reading-toggle" class="header-btn" title="Speed Reading (r)">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h9"/>
+                        <path d="M12 8l4 4-4 4"/>
+                        <path d="M16 12h5"/>
+                    </svg>
+                </button>
+            </div>
             <div class="illustration-container">
                 <button id="illustration-toggle" class="header-btn" title="Illustration Mode (i)" style="display: none;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,6 +115,22 @@
             </div>
         </main>
 
+        <!-- Speed Reading Overlay -->
+        <div id="speed-reading-overlay" class="speed-reading-overlay hidden">
+            <div class="speed-reading-stage">
+                <div id="speed-reading-word" class="speed-reading-word"></div>
+            </div>
+            <div class="speed-reading-controls">
+                <button id="speed-reading-play" class="speed-reading-play">Pause</button>
+                <button id="speed-reading-exit-inline" class="speed-reading-exit">Exit</button>
+                <div class="speed-reading-slider">
+                    <label for="speed-reading-slider">Speed</label>
+                    <input id="speed-reading-slider" type="range" min="150" max="800" step="10" value="300" />
+                    <span id="speed-reading-wpm" class="speed-reading-wpm">300 wpm</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Footer with navigation hints -->
         <footer class="reader-footer">
             <span class="nav-hint">
@@ -115,11 +140,23 @@
                 <kbd>c</kbd> chapters
                 <kbd>p</kbd> read
                 <kbd>s</kbd> speed
+                <span id="speed-reading-hint"><kbd>r</kbd> speed read</span>
                 <kbd>i</kbd> illustration
                 <kbd>m</kbd> characters
             </span>
             <span id="page-indicator" class="page-indicator"></span>
         </footer>
+
+        <!-- Speed Reading Chapter Pause -->
+        <div id="speed-reading-chapter-overlay" class="speed-reading-chapter-overlay hidden">
+            <div class="speed-reading-chapter-card">
+                <h3 id="speed-reading-chapter-title"></h3>
+                <div class="speed-reading-chapter-actions">
+                    <button id="speed-reading-continue" class="speed-reading-btn speed-reading-btn-primary">Continue</button>
+                    <button id="speed-reading-exit" class="speed-reading-btn speed-reading-btn-secondary">Exit Speed Reading</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Chapter List Overlay -->
         <div id="chapter-list-overlay" class="chapter-list-overlay hidden">
