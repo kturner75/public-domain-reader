@@ -96,24 +96,28 @@
         <h2 id="chapter-title" class="chapter-title"></h2>
 
         <!-- Two-column reading area -->
-        <main class="reader-content">
-            <div id="column-left" class="column"></div>
-            <div id="column-right" class="column"></div>
-            <div id="illustration-column" class="column illustration-column hidden">
-                <div id="illustration-skeleton" class="illustration-skeleton hidden">
-                    <div class="skeleton-shimmer"></div>
-                    <span class="skeleton-text">Generating illustration...</span>
+        <div class="reader-stage">
+            <button id="gutter-left" class="reader-gutter reader-gutter-left" type="button" title="Previous page" aria-label="Previous page"></button>
+            <main class="reader-content">
+                <div id="column-left" class="column"></div>
+                <div id="column-right" class="column"></div>
+                <div id="illustration-column" class="column illustration-column hidden">
+                    <div id="illustration-skeleton" class="illustration-skeleton hidden">
+                        <div class="skeleton-shimmer"></div>
+                        <span class="skeleton-text">Generating illustration...</span>
+                    </div>
+                    <img id="illustration-image" class="illustration-image hidden" alt="Chapter illustration" />
+                    <div id="illustration-error" class="illustration-error hidden">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <line x1="3" y1="3" x2="21" y2="21"/>
+                        </svg>
+                        <span>Illustration unavailable</span>
+                    </div>
                 </div>
-                <img id="illustration-image" class="illustration-image hidden" alt="Chapter illustration" />
-                <div id="illustration-error" class="illustration-error hidden">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                        <line x1="3" y1="3" x2="21" y2="21"/>
-                    </svg>
-                    <span>Illustration unavailable</span>
-                </div>
-            </div>
-        </main>
+            </main>
+            <button id="gutter-right" class="reader-gutter reader-gutter-right" type="button" title="Next page" aria-label="Next page"></button>
+        </div>
 
         <!-- Speed Reading Overlay -->
         <div id="speed-reading-overlay" class="speed-reading-overlay hidden">

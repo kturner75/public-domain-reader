@@ -15,6 +15,7 @@
     --line-height: 1.7;
     --column-gap: 4rem;
     --page-padding: 3rem;
+    --gutter-width: clamp(2.5rem, 6vw, 6rem);
 }
 
 html, body {
@@ -167,6 +168,10 @@ html, body {
     display: none;
 }
 
+#reader-view.speed-reading-active .reader-gutter {
+    display: none;
+}
+
 .header-btn {
     background: none;
     border: none;
@@ -287,6 +292,39 @@ html, body {
 }
 
 /* Two-column reading area */
+.reader-stage {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+.reader-gutter {
+    width: var(--gutter-width);
+    border: none;
+    background: linear-gradient(90deg, rgba(245, 240, 230, 0.65), rgba(245, 240, 230, 0));
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.2s, opacity 0.2s;
+}
+
+.reader-gutter-left {
+    background: linear-gradient(90deg, rgba(245, 240, 230, 0.65), rgba(245, 240, 230, 0));
+}
+
+.reader-gutter-right {
+    background: linear-gradient(270deg, rgba(245, 240, 230, 0.65), rgba(245, 240, 230, 0));
+}
+
+.reader-gutter:hover,
+.reader-gutter:focus-visible {
+    background-color: var(--highlight-color);
+    outline: none;
+}
+
+.reader-gutter:active {
+    opacity: 0.8;
+}
+
 .reader-content {
     flex: 1;
     display: flex;
@@ -305,6 +343,7 @@ html, body {
     margin-bottom: 0;
     text-align: justify;
     hyphens: auto;
+    cursor: pointer;
 }
 
 .paragraph:first-child {
