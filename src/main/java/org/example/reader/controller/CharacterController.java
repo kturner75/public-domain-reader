@@ -1,10 +1,13 @@
 package org.example.reader.controller;
 
+import org.example.reader.entity.BookEntity;
 import org.example.reader.entity.CharacterEntity;
 import org.example.reader.entity.CharacterStatus;
 import org.example.reader.entity.CharacterType;
 import org.example.reader.model.CharacterInfo;
 import org.example.reader.model.ChatMessage;
+import org.example.reader.repository.BookRepository;
+import org.example.reader.repository.ChapterRepository;
 import org.example.reader.service.CharacterChatService;
 import org.example.reader.service.CharacterExtractionService;
 import org.example.reader.service.CharacterPrefetchService;
@@ -14,8 +17,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -34,23 +39,32 @@ public class CharacterController {
     @Value("${character.enabled:true}")
     private boolean characterEnabled;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     private final CharacterService characterService;
     private final CharacterChatService chatService;
     private final CharacterExtractionService extractionService;
     private final CharacterPrefetchService prefetchService;
     private final ComfyUIService comfyUIService;
+    private final BookRepository bookRepository;
+    private final ChapterRepository chapterRepository;
 
     public CharacterController(
             CharacterService characterService,
             CharacterChatService chatService,
             CharacterExtractionService extractionService,
             CharacterPrefetchService prefetchService,
-            ComfyUIService comfyUIService) {
+            ComfyUIService comfyUIService,
+            BookRepository bookRepository,
+            ChapterRepository chapterRepository) {
         this.characterService = characterService;
         this.chatService = chatService;
         this.extractionService = extractionService;
         this.prefetchService = prefetchService;
         this.comfyUIService = comfyUIService;
+        this.bookRepository = bookRepository;
+        this.chapterRepository = chapterRepository;
     }
 
     @GetMapping("/status")
@@ -60,11 +74,13 @@ public class CharacterController {
         status.put("ollamaAvailable", extractionService.isOllamaAvailable());
         status.put("comfyuiAvailable", comfyUIService.isAvailable());
         status.put("available", characterEnabled && characterService.isAvailable());
+        status.put("cacheOnly", cacheOnly);
         return status;
     }
 
     @GetMapping("/book/{bookId}")
     public List<CharacterInfo> getCharactersForBook(@PathVariable String bookId) {
+        requireCharacterEnabledBook(bookId);
         return characterService.getCharactersForBook(bookId);
     }
 
@@ -73,6 +89,7 @@ public class CharacterController {
             @PathVariable String bookId,
             @RequestParam int chapterIndex,
             @RequestParam int paragraphIndex) {
+        requireCharacterEnabledBook(bookId);
         return characterService.getCharactersUpToPosition(bookId, chapterIndex, paragraphIndex);
     }
 
@@ -80,6 +97,7 @@ public class CharacterController {
     public List<CharacterInfo> getNewCharactersSince(
             @PathVariable String bookId,
             @RequestParam long sinceTimestamp) {
+        requireCharacterEnabledBook(bookId);
         LocalDateTime sinceTime = LocalDateTime.ofInstant(
                 Instant.ofEpochMilli(sinceTimestamp),
                 ZoneId.systemDefault()
@@ -92,6 +110,7 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        requireCharacterEnabledBook(bookId);
 
         log.info("Deleting all characters for book: {}", bookId);
         int deletedCount = characterService.deleteCharactersForBook(bookId);
@@ -122,6 +141,7 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        requireCharacterEnabledBook(bookId);
 
         int updatedCount = prefetchService.refreshPrimaryCharacterPositionsForBook(bookId);
         Map<String, Object> response = new HashMap<>();
@@ -134,6 +154,9 @@ public class CharacterController {
     @GetMapping("/{characterId}")
     public ResponseEntity<CharacterInfo> getCharacter(@PathVariable String characterId) {
         Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);
+        if (characterOpt.isPresent() && !isCharacterEnabled(characterOpt.get().getBook())) {
+            return ResponseEntity.status(403).build();
+        }
         return characterOpt
                 .map(c -> ResponseEntity.ok(CharacterInfo.from(c)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
@@ -141,7 +164,11 @@ public class CharacterController {
 
     @GetMapping("/{characterId}/portrait")
     public ResponseEntity<byte[]> getPortrait(@PathVariable String characterId) {
-        byte[] image = characterService.getPortrait(characterId);
+        Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);
+        if (characterOpt.isPresent() && !isCharacterEnabled(characterOpt.get().getBook())) {
+            return ResponseEntity.status(403).build();
+        }
+        byte[] image = characterOpt.map(c -> characterService.getPortrait(c.getId())).orElse(null);
         if (image == null) {
             return ResponseEntity.notFound().build();
         }
@@ -154,7 +181,17 @@ public class CharacterController {
 
     @GetMapping("/{characterId}/portrait/status")
     public Map<String, Object> getPortraitStatus(@PathVariable String characterId) {
-        CharacterStatus status = characterService.getPortraitStatus(characterId);
+        Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);
+        if (characterOpt.isPresent() && !isCharacterEnabled(characterOpt.get().getBook())) {
+            return Map.of(
+                    "characterId", characterId,
+                    "status", "DISABLED",
+                    "ready", false
+            );
+        }
+        CharacterStatus status = characterOpt
+                .map(character -> characterService.getPortraitStatus(character.getId()))
+                .orElse(null);
 
         Map<String, Object> response = new HashMap<>();
         response.put("characterId", characterId);
@@ -169,6 +206,10 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        requireCharacterEnabledChapter(chapterId);
         characterService.requestChapterAnalysis(chapterId);
         return ResponseEntity.accepted().build();
     }
@@ -178,6 +219,10 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        requireCharacterEnabledChapter(chapterId);
         characterService.prefetchNextChapter(chapterId);
         return ResponseEntity.accepted().build();
     }
@@ -187,6 +232,10 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        requireCharacterEnabledBook(bookId);
         // Run asynchronously to not block book opening
         java.util.concurrent.CompletableFuture.runAsync(() ->
             prefetchService.prefetchCharactersForBook(bookId)
@@ -202,6 +251,9 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
 
         // Check character type - only PRIMARY characters can chat
         Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);
@@ -210,6 +262,9 @@ public class CharacterController {
         }
 
         CharacterEntity character = characterOpt.get();
+        if (!isCharacterEnabled(character.getBook())) {
+            return ResponseEntity.status(403).build();
+        }
         if (character.getCharacterType() != CharacterType.PRIMARY) {
             return ResponseEntity.ok(new ChatResponse(
                     "Chat is only available for main characters.",
@@ -249,4 +304,31 @@ public class CharacterController {
             String characterId,
             long timestamp
     ) {}
+
+    private void requireCharacterEnabledBook(String bookId) {
+        if (!characterEnabled) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Character feature disabled");
+        }
+        BookEntity book = bookRepository.findById(bookId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Book not found"));
+        if (!isCharacterEnabled(book)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Character mode disabled for book");
+        }
+    }
+
+    private void requireCharacterEnabledChapter(String chapterId) {
+        if (!characterEnabled) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Character feature disabled");
+        }
+        BookEntity book = chapterRepository.findById(chapterId)
+                .map(chapter -> chapter.getBook())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Chapter not found"));
+        if (!isCharacterEnabled(book)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Character mode disabled for book");
+        }
+    }
+
+    private boolean isCharacterEnabled(BookEntity book) {
+        return characterEnabled && Boolean.TRUE.equals(book.getCharacterEnabled());
+    }
 }

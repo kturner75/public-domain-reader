@@ -16,6 +16,7 @@ import java.util.Optional;
 import static org.hamcrest.Matchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(LibraryController.class)
@@ -30,8 +31,8 @@ class LibraryControllerTest {
     @Test
     void listBooks_returnsAllBooks() throws Exception {
         List<Book> books = List.of(
-            new Book("book-1", "Pride and Prejudice", "Jane Austen", "A romantic novel.", null, List.of()),
-            new Book("book-2", "Moby Dick", "Herman Melville", "A whale tale.", null, List.of())
+            new Book("book-1", "Pride and Prejudice", "Jane Austen", "A romantic novel.", null, List.of(), false, false, false),
+            new Book("book-2", "Moby Dick", "Herman Melville", "A whale tale.", null, List.of(), false, false, false)
         );
         when(bookStorageService.getAllBooks()).thenReturn(books);
 
@@ -53,7 +54,7 @@ class LibraryControllerTest {
             new Book.Chapter("ch-3", "Chapter 3")
         );
         List<Book> books = List.of(
-            new Book("book-1", "Pride and Prejudice", "Jane Austen", null, null, chapters)
+            new Book("book-1", "Pride and Prejudice", "Jane Austen", null, null, chapters, false, false, false)
         );
         when(bookStorageService.getAllBooks()).thenReturn(books);
 
@@ -67,7 +68,7 @@ class LibraryControllerTest {
     @Test
     void getBook_existingBook_returnsBook() throws Exception {
         Book book = new Book("book-1", "Pride and Prejudice", "Jane Austen",
-            "A romantic novel following the Bennet family.", null, List.of());
+            "A romantic novel following the Bennet family.", null, List.of(), false, false, false);
         when(bookStorageService.getBook("book-1")).thenReturn(Optional.of(book));
 
         mockMvc.perform(get("/api/library/book-1"))
@@ -146,5 +147,31 @@ class LibraryControllerTest {
         mockMvc.perform(get("/api/library/book-1/chapters/ch-2"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.paragraphs", hasSize(0)));
+    }
+
+    @Test
+    void updateBookFeatures_updatesFlags() throws Exception {
+        Book updated = new Book(
+            "book-1",
+            "Pride and Prejudice",
+            "Jane Austen",
+            "A romantic novel following the Bennet family.",
+            null,
+            List.of(),
+            true,
+            false,
+            true
+        );
+        when(bookStorageService.updateBookFeatures("book-1", true, false, true))
+            .thenReturn(Optional.of(updated));
+
+        mockMvc.perform(patch("/api/library/book-1/features")
+                .contentType("application/json")
+                .content("{\"ttsEnabled\":true,\"illustrationEnabled\":false,\"characterEnabled\":true}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id", is("book-1")))
+            .andExpect(jsonPath("$.ttsEnabled", is(true)))
+            .andExpect(jsonPath("$.illustrationEnabled", is(false)))
+            .andExpect(jsonPath("$.characterEnabled", is(true)));
     }
 }

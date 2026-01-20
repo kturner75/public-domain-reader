@@ -40,6 +40,7 @@
         // Illustration mode state
         illustrationMode: false,
         illustrationAvailable: false,
+        illustrationCacheOnly: false,
         illustrationSettings: null,  // { style, promptPrefix, reasoning }
         illustrationPolling: null,   // polling interval ID
         allowPromptEditing: false,   // whether prompt editing is enabled
@@ -51,6 +52,8 @@
         promptModalLastPrompt: '',        // last prompt used (for try again)
         // Character feature state
         characterAvailable: false,
+        characterCacheOnly: false,
+        characterChatAvailable: false,
         characters: [],                   // Characters met so far
         characterLastCheck: 0,            // Timestamp of last new character check
         characterPollingInterval: null,   // Interval for checking new characters
@@ -67,7 +70,8 @@
         chatCharacterId: null,
         chatCharacter: null,              // Current character being chatted with
         chatHistory: [],                  // Loaded from localStorage
-        chatLoading: false
+        chatLoading: false,
+        cacheOnly: false
     };
 
     // DOM Elements
@@ -91,11 +95,14 @@
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
+        cacheOnlyIndicator: document.getElementById('cache-only-indicator'),
         chapterListOverlay: document.getElementById('chapter-list-overlay'),
         chapterList: document.getElementById('chapter-list'),
         ttsToggle: document.getElementById('tts-toggle'),
         ttsSpeed: document.getElementById('tts-speed'),
         ttsMode: document.getElementById('tts-mode'),
+        ttsHint: document.getElementById('tts-hint'),
+        ttsSpeedHint: document.getElementById('tts-speed-hint'),
         speedReadingContainer: document.getElementById('speed-reading-container'),
         speedReadingToggle: document.getElementById('speed-reading-toggle'),
         speedReadingOverlay: document.getElementById('speed-reading-overlay'),
@@ -115,6 +122,7 @@
         illustrationSkeleton: document.getElementById('illustration-skeleton'),
         illustrationImage: document.getElementById('illustration-image'),
         illustrationError: document.getElementById('illustration-error'),
+        illustrationHint: document.getElementById('illustration-hint'),
         // Prompt editing modal elements
         promptModal: document.getElementById('prompt-modal'),
         promptModalBackdrop: document.querySelector('.prompt-modal-backdrop'),
@@ -133,6 +141,7 @@
         promptAccept: document.getElementById('prompt-accept'),
         // Character elements
         characterToggle: document.getElementById('character-toggle'),
+        characterHint: document.getElementById('character-hint'),
         characterToast: document.getElementById('character-toast'),
         characterToastImage: document.getElementById('character-toast-image'),
         characterToastName: document.getElementById('character-toast-name'),
@@ -179,6 +188,14 @@
     };
 
     const MAX_RECENTLY_READ = 5;
+    function isBookFeatureEnabled(flag) {
+        return !!(state.currentBook && state.currentBook[flag] === true);
+    }
+
+    function updateCacheOnlyIndicator() {
+        if (!elements.cacheOnlyIndicator) return;
+        elements.cacheOnlyIndicator.classList.toggle('hidden', !state.cacheOnly);
+    }
 
     // Initialize
     async function init() {
@@ -395,6 +412,9 @@
         state.currentToastCharacter = null;
         state.discoveredCharacterIds = loadDiscoveredCharacters(book.id);
         state.discoveredCharacterDetails = loadDiscoveredCharacterDetails(book.id);
+        state.ttsVoiceSettings = null;
+        state.illustrationSettings = null;
+        stopCharacterPolling();
 
         // Save to localStorage and recently read
         localStorage.setItem(STORAGE_KEYS.LAST_BOOK, book.id);
@@ -407,7 +427,18 @@
         // Update title
         elements.bookTitle.textContent = book.title;
 
-        // Apply illustration mode layout if enabled
+        await ttsCheckAvailability();
+        await illustrationCheckAvailability();
+        await characterCheckAvailability();
+
+        const savedIllustrationMode = localStorage.getItem(STORAGE_KEYS.ILLUSTRATION_MODE);
+        if (!state.illustrationMode && savedIllustrationMode === 'true' && state.illustrationAvailable) {
+            state.illustrationMode = true;
+            if (elements.illustrationToggle) {
+                elements.illustrationToggle.classList.add('active');
+            }
+            updateColumnLayout();
+        }
         if (state.illustrationMode) {
             updateColumnLayout();
         }
@@ -862,6 +893,7 @@
 
     // Text-to-Speech functions (using backend OpenAI TTS with browser fallback)
     async function ttsCheckAvailability() {
+        state.cacheOnly = false;
         // Check browser speech synthesis support
         state.ttsBrowserAvailable = 'speechSynthesis' in window;
 
@@ -870,16 +902,27 @@
             const response = await fetch('/api/tts/status');
             const status = await response.json();
             state.ttsOpenAIAvailable = status.openaiConfigured;
+            state.cacheOnly = status.cacheOnly === true;
         } catch (error) {
             console.warn('OpenAI TTS not available:', error);
             state.ttsOpenAIAvailable = false;
         }
 
-        // TTS is available if either OpenAI or browser is available
-        state.ttsAvailable = state.ttsOpenAIAvailable || state.ttsBrowserAvailable;
+        // TTS is available if either OpenAI or browser is available and the book allows it
+        state.ttsAvailable = isBookFeatureEnabled('ttsEnabled')
+            && (state.ttsOpenAIAvailable || state.ttsBrowserAvailable);
+        if (!state.ttsAvailable) {
+            ttsStop();
+        }
 
         if (elements.ttsToggle) {
             elements.ttsToggle.style.display = state.ttsAvailable ? '' : 'none';
+        }
+        if (elements.ttsHint) {
+            elements.ttsHint.style.display = state.ttsAvailable ? '' : 'none';
+        }
+        if (elements.ttsSpeedHint) {
+            elements.ttsSpeedHint.style.display = state.ttsAvailable ? '' : 'none';
         }
 
         console.log('TTS availability:', {
@@ -887,6 +930,7 @@
             browser: state.ttsBrowserAvailable,
             available: state.ttsAvailable
         });
+        updateCacheOnlyIndicator();
 
         return {
             openaiConfigured: state.ttsOpenAIAvailable,
@@ -903,23 +947,12 @@
             if (savedResponse.ok && savedResponse.status === 200) {
                 state.ttsVoiceSettings = await savedResponse.json();
                 console.log('Loaded saved voice settings:', state.ttsVoiceSettings);
-                return; // Don't show notification for saved settings
-            }
-
-            // No saved settings (204 or other), analyze with LLM
-            console.log('No saved settings, analyzing with LLM...');
-            const response = await fetch(`/api/tts/analyze/${state.currentBook.id}`, {
-                method: 'POST'
-            });
-            if (response.ok) {
-                state.ttsVoiceSettings = await response.json();
-                console.log('Voice analysis complete:', state.ttsVoiceSettings);
-                showVoiceRecommendation();
+                return;
             }
         } catch (error) {
             console.warn('Voice analysis failed:', error);
-            state.ttsVoiceSettings = { voice: 'fable', speed: 1.0, instructions: null };
         }
+        state.ttsVoiceSettings = { voice: 'fable', speed: 1.0, instructions: null };
     }
 
     function showVoiceRecommendation() {
@@ -1728,19 +1761,34 @@
         try {
             const response = await fetch('/api/illustrations/status');
             const status = await response.json();
-            state.illustrationAvailable = status.comfyuiAvailable && status.ollamaAvailable;
-            state.allowPromptEditing = status.allowPromptEditing || false;
+            state.illustrationAvailable = isBookFeatureEnabled('illustrationEnabled');
+            state.allowPromptEditing = state.illustrationAvailable && (status.allowPromptEditing || false);
+            state.illustrationCacheOnly = status.cacheOnly === true;
+            state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.warn('Illustration service not available:', error);
             state.illustrationAvailable = false;
             state.allowPromptEditing = false;
+            state.illustrationCacheOnly = false;
         }
 
         if (elements.illustrationToggle) {
             elements.illustrationToggle.style.display = state.illustrationAvailable ? '' : 'none';
         }
+        if (elements.illustrationHint) {
+            elements.illustrationHint.style.display = state.illustrationAvailable ? '' : 'none';
+        }
+
+        if (!state.illustrationAvailable && state.illustrationMode) {
+            state.illustrationMode = false;
+            if (elements.illustrationToggle) {
+                elements.illustrationToggle.classList.remove('active');
+            }
+            updateColumnLayout();
+        }
 
         console.log('Illustration availability:', state.illustrationAvailable, 'Prompt editing:', state.allowPromptEditing);
+        updateCacheOnlyIndicator();
     }
 
     async function illustrationAnalyzeBook() {
@@ -1752,18 +1800,6 @@
             if (savedResponse.ok && savedResponse.status === 200) {
                 state.illustrationSettings = await savedResponse.json();
                 console.log('Loaded saved illustration settings:', state.illustrationSettings);
-                return;
-            }
-
-            // No saved settings, analyze with LLM
-            console.log('Analyzing book for illustration style...');
-            const response = await fetch(`/api/illustrations/analyze/${state.currentBook.id}`, {
-                method: 'POST'
-            });
-            if (response.ok) {
-                state.illustrationSettings = await response.json();
-                console.log('Illustration style analysis complete:', state.illustrationSettings);
-                showStyleNotification();
             }
         } catch (error) {
             console.warn('Illustration style analysis failed:', error);
@@ -1851,10 +1887,6 @@
         showIllustrationSkeleton();
 
         try {
-            // Always call request first - backend handles duplicates gracefully
-            // and will re-queue stuck PENDING illustrations older than 5 minutes
-            await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
-
             // Check status
             const statusResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/status`);
             const status = await statusResponse.json();
@@ -1862,13 +1894,20 @@
             if (status.ready) {
                 // Load the image
                 displayIllustration(chapter.id);
+            } else if (state.illustrationCacheOnly) {
+                showIllustrationError();
             } else {
+                // Always call request first - backend handles duplicates gracefully
+                // and will re-queue stuck PENDING illustrations older than 5 minutes
+                await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
                 // Still generating, poll for completion
                 pollForIllustration(chapter.id);
             }
 
             // Pre-fetch next chapter
-            fetch(`/api/illustrations/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+            if (!state.illustrationCacheOnly) {
+                fetch(`/api/illustrations/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+            }
 
         } catch (error) {
             console.error('Failed to load illustration:', error);
@@ -2300,7 +2339,10 @@
         try {
             const response = await fetch('/api/characters/status');
             const status = await response.json();
-            state.characterAvailable = status.available;
+            state.characterAvailable = status.enabled && isBookFeatureEnabled('characterEnabled');
+            state.characterCacheOnly = status.cacheOnly === true;
+            state.characterChatAvailable = state.characterAvailable && !state.characterCacheOnly;
+            state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
 
             console.log('Character status response:', status);
             console.log('Character toggle element:', elements.characterToggle);
@@ -2309,11 +2351,26 @@
                 elements.characterToggle.style.display = state.characterAvailable ? '' : 'none';
                 console.log('Character toggle display set to:', elements.characterToggle.style.display);
             }
+            if (elements.characterHint) {
+                elements.characterHint.style.display = state.characterAvailable ? '' : 'none';
+            }
             console.log('Character feature available:', state.characterAvailable);
         } catch (error) {
             console.error('Failed to check character availability:', error);
             state.characterAvailable = false;
+            state.characterCacheOnly = false;
+            state.characterChatAvailable = false;
         }
+
+        if (!state.characterAvailable) {
+            stopCharacterPolling();
+            state.newCharacterQueue = [];
+            state.currentToastCharacter = null;
+        }
+        if (!state.characterAvailable || state.characterCacheOnly) {
+            state.characterChatAvailable = false;
+        }
+        updateCacheOnlyIndicator();
     }
 
     function isCharacterBrowserVisible() {
@@ -2327,6 +2384,7 @@
     async function loadChapterCharacters() {
         console.log('loadChapterCharacters called, available:', state.characterAvailable, 'book:', state.currentBook?.id);
         if (!state.characterAvailable || !state.currentBook) return;
+        if (state.characterCacheOnly) return;
 
         const chapter = state.chapters[state.currentChapterIndex];
         if (!chapter) return;
@@ -2580,7 +2638,7 @@
 
         // Show/hide chat button based on character type (only PRIMARY can chat)
         if (elements.characterChatBtn) {
-            if (character.characterType === 'PRIMARY') {
+            if (character.characterType === 'PRIMARY' && state.characterChatAvailable) {
                 elements.characterChatBtn.classList.remove('hidden');
             } else {
                 elements.characterChatBtn.classList.add('hidden');
@@ -2606,6 +2664,7 @@
 
     async function openCharacterChat(characterId) {
         if (!characterId) return;
+        if (!state.characterChatAvailable) return;
 
         const character = state.characters.find(c => c.id === characterId);
         if (!character) return;

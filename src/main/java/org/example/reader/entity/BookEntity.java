@@ -35,6 +35,7 @@ public class BookEntity {
     private String ttsInstructions;
     @Column(length = 500)
     private String ttsReasoning;
+    private Boolean ttsEnabled = false;
 
     // Illustration Style Settings (persisted after LLM analysis)
     private String illustrationStyle;
@@ -44,9 +45,11 @@ public class BookEntity {
     private String illustrationSetting; // Cultural/geographic setting (e.g., "19th century Russia, Russian Orthodox")
     @Column(length = 2000)
     private String illustrationStyleReasoning;
+    private Boolean illustrationEnabled = false;
 
     // Character Prefetch Tracking
     private Boolean characterPrefetchCompleted = false;
+    private Boolean characterEnabled = false;
 
     @OneToMany(mappedBy = "book", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("chapterIndex")
@@ -97,6 +100,9 @@ public class BookEntity {
     public String getTtsReasoning() { return ttsReasoning; }
     public void setTtsReasoning(String ttsReasoning) { this.ttsReasoning = ttsReasoning; }
 
+    public Boolean getTtsEnabled() { return ttsEnabled; }
+    public void setTtsEnabled(Boolean ttsEnabled) { this.ttsEnabled = ttsEnabled; }
+
     public String getIllustrationStyle() { return illustrationStyle; }
     public void setIllustrationStyle(String illustrationStyle) { this.illustrationStyle = illustrationStyle; }
 
@@ -109,8 +115,14 @@ public class BookEntity {
     public String getIllustrationStyleReasoning() { return illustrationStyleReasoning; }
     public void setIllustrationStyleReasoning(String illustrationStyleReasoning) { this.illustrationStyleReasoning = illustrationStyleReasoning; }
 
+    public Boolean getIllustrationEnabled() { return illustrationEnabled; }
+    public void setIllustrationEnabled(Boolean illustrationEnabled) { this.illustrationEnabled = illustrationEnabled; }
+
     public Boolean getCharacterPrefetchCompleted() { return characterPrefetchCompleted; }
     public void setCharacterPrefetchCompleted(Boolean characterPrefetchCompleted) { this.characterPrefetchCompleted = characterPrefetchCompleted; }
+
+    public Boolean getCharacterEnabled() { return characterEnabled; }
+    public void setCharacterEnabled(Boolean characterEnabled) { this.characterEnabled = characterEnabled; }
 
     public void addChapter(ChapterEntity chapter) {
         chapters.add(chapter);

@@ -8,7 +8,10 @@ public record Book(
     String author,
     String description,
     String coverUrl,
-    List<Chapter> chapters
+    List<Chapter> chapters,
+    boolean ttsEnabled,
+    boolean illustrationEnabled,
+    boolean characterEnabled
 ) {
     public record Chapter(String id, String title) {}
 }

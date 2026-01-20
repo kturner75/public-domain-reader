@@ -40,6 +40,31 @@ public class BookStorageService {
             .map(this::toBookDto);
     }
 
+    @Transactional
+    public Optional<Book> updateBookFeatures(String bookId,
+                                             Boolean ttsEnabled,
+                                             Boolean illustrationEnabled,
+                                             Boolean characterEnabled) {
+        Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
+        if (bookOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        BookEntity book = bookOpt.get();
+        if (ttsEnabled != null) {
+            book.setTtsEnabled(ttsEnabled);
+        }
+        if (illustrationEnabled != null) {
+            book.setIllustrationEnabled(illustrationEnabled);
+        }
+        if (characterEnabled != null) {
+            book.setCharacterEnabled(characterEnabled);
+        }
+
+        BookEntity saved = bookRepository.save(book);
+        return Optional.of(toBookDto(saved));
+    }
+
     public Optional<ChapterContent> getChapterContent(String bookId, String chapterId) {
         return chapterRepository.findById(chapterId)
             .filter(chapter -> chapter.getBook().getId().equals(bookId))
@@ -136,7 +161,10 @@ public class BookStorageService {
             entity.getAuthor(),
             entity.getDescription(),
             entity.getCoverUrl(),
-            chapters
+            chapters,
+            Boolean.TRUE.equals(entity.getTtsEnabled()),
+            Boolean.TRUE.equals(entity.getIllustrationEnabled()),
+            Boolean.TRUE.equals(entity.getCharacterEnabled())
         );
     }
 

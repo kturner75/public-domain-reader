@@ -6,7 +6,9 @@ import org.example.reader.service.BookStorageService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,6 +34,23 @@ public class LibraryController {
         return bookStorageService.getBook(bookId)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PatchMapping("/{bookId}/features")
+    public ResponseEntity<Book> updateBookFeatures(
+            @PathVariable String bookId,
+            @RequestBody FeatureUpdateRequest request) {
+        if (request == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        return bookStorageService.updateBookFeatures(
+                bookId,
+                request.ttsEnabled(),
+                request.illustrationEnabled(),
+                request.characterEnabled()
+        ).map(ResponseEntity::ok)
+         .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/{bookId}/chapters/{chapterId}")
@@ -60,4 +79,10 @@ public class LibraryController {
     }
 
     public record DeleteAllResponse(int deletedCount) {}
+
+    public record FeatureUpdateRequest(
+            Boolean ttsEnabled,
+            Boolean illustrationEnabled,
+            Boolean characterEnabled
+    ) {}
 }

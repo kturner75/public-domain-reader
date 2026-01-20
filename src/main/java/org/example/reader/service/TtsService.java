@@ -46,6 +46,9 @@ public class TtsService {
     @Value("${tts.cache-dir}")
     private String cacheDir;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     private WebClient webClient;
     private Path cachePath;
 
@@ -66,6 +69,10 @@ public class TtsService {
         return apiKey != null && !apiKey.isBlank();
     }
 
+    public boolean isCacheOnly() {
+        return cacheOnly;
+    }
+
     public byte[] generateSpeech(String text, VoiceSettings settings) {
         String voice = settings.voice() != null ? settings.voice() : defaultVoice;
         double speed = settings.speed() > 0 ? settings.speed() : 1.0;
@@ -82,6 +89,11 @@ public class TtsService {
             } catch (IOException e) {
                 log.warn("Failed to read cached file, regenerating", e);
             }
+        }
+
+        if (cacheOnly) {
+            log.info("TTS cache-only mode enabled, skipping generation for cache miss: {}", cacheKey);
+            return null;
         }
 
         // Generate via OpenAI API
@@ -144,6 +156,12 @@ public class TtsService {
             } catch (IOException e) {
                 log.warn("Failed to read cached file", e);
             }
+        }
+
+        if (cacheOnly) {
+            log.info("TTS cache-only mode enabled, skipping generation for cache miss: book={}, chapter={}, paragraph={}",
+                     bookId, chapterId, paragraphIndex);
+            return null;
         }
 
         // Generate - this means we're calling OpenAI API
