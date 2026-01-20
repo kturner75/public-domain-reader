@@ -83,6 +83,9 @@
         chapterTitle: document.getElementById('chapter-title'),
         columnLeft: document.getElementById('column-left'),
         columnRight: document.getElementById('column-right'),
+        readerContent: document.querySelector('.reader-content'),
+        gutterLeft: document.getElementById('gutter-left'),
+        gutterRight: document.getElementById('gutter-right'),
         pageIndicator: document.getElementById('page-indicator'),
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
@@ -426,7 +429,7 @@
     }
 
     // Load chapter content
-    async function loadChapter(chapterIndex, pageIndex = 0, paragraphIndex = 0) {
+    async function loadChapter(chapterIndex, pageIndex = 0, paragraphIndex = 0, suppressTts = false) {
         if (chapterIndex < 0 || chapterIndex >= state.chapters.length) return;
 
         state.ttsWaitingForChapter = true;
@@ -451,7 +454,7 @@
 
             // Continue TTS if it was enabled
             state.ttsWaitingForChapter = false;
-            if (state.ttsEnabled) {
+            if (state.ttsEnabled && !suppressTts) {
                 ttsSpeakCurrent();
             }
 
@@ -758,7 +761,12 @@
         elements.searchResults.classList.add('hidden');
         elements.searchInput.value = '';
 
-        loadChapter(chapterIndex, 0).then(() => {
+        const loadPromise = loadChapter(chapterIndex, 0, paragraphIndex, true);
+        if (state.ttsEnabled) {
+            ttsStopPlayback();
+        }
+
+        loadPromise.then(() => {
             // Find which page contains this paragraph
             for (let i = 0; i < state.pagesData.length; i++) {
                 const pageData = state.pagesData[i];
@@ -766,6 +774,9 @@
                     state.currentPage = i;
                     state.currentParagraphIndex = paragraphIndex;
                     renderPage();
+                    if (state.ttsEnabled) {
+                        ttsSpeakCurrent();
+                    }
                     break;
                 }
             }
@@ -1313,28 +1324,36 @@
         speechSynthesis.speak(utterance);
     }
 
+    function ttsStopPlayback() {
+        if (!state.ttsEnabled) {
+            return;
+        }
+
+        // Abort any in-flight request
+        if (state.ttsAbortController) {
+            state.ttsAbortController.abort();
+            state.ttsAbortController = null;
+        }
+        if (state.ttsAudio) {
+            state.ttsAudio.pause();
+            // Clean up blob URL if exists
+            if (state.ttsAudio.src && state.ttsAudio.src.startsWith('blob:')) {
+                URL.revokeObjectURL(state.ttsAudio.src);
+            }
+            state.ttsAudio = null;
+        }
+        // Cancel browser speech synthesis if active
+        if (state.ttsBrowserAvailable) {
+            speechSynthesis.cancel();
+        }
+        // Clear prefetch since user navigated away
+        ttsClearPrefetch();
+    }
+
     function ttsInterrupt() {
         // Called when user navigates manually while TTS is active
         if (state.ttsEnabled) {
-            // Abort any in-flight request
-            if (state.ttsAbortController) {
-                state.ttsAbortController.abort();
-                state.ttsAbortController = null;
-            }
-            if (state.ttsAudio) {
-                state.ttsAudio.pause();
-                // Clean up blob URL if exists
-                if (state.ttsAudio.src && state.ttsAudio.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(state.ttsAudio.src);
-                }
-                state.ttsAudio = null;
-            }
-            // Cancel browser speech synthesis if active
-            if (state.ttsBrowserAvailable) {
-                speechSynthesis.cancel();
-            }
-            // Clear prefetch since user navigated away
-            ttsClearPrefetch();
+            ttsStopPlayback();
             ttsSpeakCurrent();
         }
     }
@@ -2751,6 +2770,40 @@
 
         // Back to library
         elements.backToLibrary.addEventListener('click', backToLibrary);
+
+        // Paragraph click navigation
+        if (elements.readerContent) {
+            elements.readerContent.addEventListener('click', (e) => {
+                const paragraph = e.target.closest('.paragraph');
+                if (!paragraph || state.speedReadingActive) return;
+                if (elements.readerView.classList.contains('hidden')) return;
+
+                const index = parseInt(paragraph.dataset.index, 10);
+                if (Number.isNaN(index) || index === state.currentParagraphIndex) return;
+
+                state.currentParagraphIndex = index;
+                renderPage();
+                ttsInterrupt();
+            });
+        }
+
+        // Page gutters
+        if (elements.gutterLeft) {
+            elements.gutterLeft.addEventListener('click', () => {
+                if (!elements.readerView.classList.contains('hidden') && !state.speedReadingActive) {
+                    prevPage();
+                    ttsInterrupt();
+                }
+            });
+        }
+        if (elements.gutterRight) {
+            elements.gutterRight.addEventListener('click', () => {
+                if (!elements.readerView.classList.contains('hidden') && !state.speedReadingActive) {
+                    nextPage();
+                    ttsInterrupt();
+                }
+            });
+        }
 
         // TTS toggle
         if (elements.ttsToggle) {
