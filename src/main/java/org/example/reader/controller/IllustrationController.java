@@ -4,6 +4,7 @@ import org.example.reader.entity.BookEntity;
 import org.example.reader.entity.IllustrationStatus;
 import org.example.reader.model.IllustrationSettings;
 import org.example.reader.repository.BookRepository;
+import org.example.reader.repository.ChapterRepository;
 import org.example.reader.service.ComfyUIService;
 import org.example.reader.service.IllustrationService;
 import org.example.reader.service.IllustrationStyleAnalysisService;
@@ -27,20 +28,26 @@ public class IllustrationController {
     @Value("${illustration.allow-prompt-editing:false}")
     private boolean allowPromptEditing;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     private final IllustrationService illustrationService;
     private final IllustrationStyleAnalysisService styleAnalysisService;
     private final ComfyUIService comfyUIService;
     private final BookRepository bookRepository;
+    private final ChapterRepository chapterRepository;
 
     public IllustrationController(
             IllustrationService illustrationService,
             IllustrationStyleAnalysisService styleAnalysisService,
             ComfyUIService comfyUIService,
-            BookRepository bookRepository) {
+            BookRepository bookRepository,
+            ChapterRepository chapterRepository) {
         this.illustrationService = illustrationService;
         this.styleAnalysisService = styleAnalysisService;
         this.comfyUIService = comfyUIService;
         this.bookRepository = bookRepository;
+        this.chapterRepository = chapterRepository;
     }
 
     /**
@@ -53,6 +60,7 @@ public class IllustrationController {
         status.put("ollamaAvailable", styleAnalysisService.isOllamaAvailable());
         status.put("allowPromptEditing", allowPromptEditing);
         status.put("queueProcessorRunning", illustrationService.isQueueProcessorRunning());
+        status.put("cacheOnly", cacheOnly);
         return status;
     }
 
@@ -67,6 +75,9 @@ public class IllustrationController {
         }
 
         BookEntity book = bookOpt.get();
+        if (!isIllustrationEnabled(book)) {
+            return ResponseEntity.status(403).build();
+        }
 
         if (book.getIllustrationStyle() != null) {
             IllustrationSettings settings = new IllustrationSettings(
@@ -93,6 +104,12 @@ public class IllustrationController {
         if (bookOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return ResponseEntity.status(403).build();
+        }
 
         IllustrationSettings settings = illustrationService.getOrAnalyzeBookStyle(bookId, force);
 
@@ -107,6 +124,13 @@ public class IllustrationController {
      */
     @GetMapping("/chapter/{chapterId}")
     public ResponseEntity<byte[]> getIllustration(@PathVariable String chapterId) {
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return ResponseEntity.status(403).build();
+        }
         byte[] image = illustrationService.getIllustration(chapterId);
         if (image == null) {
             return ResponseEntity.notFound().build();
@@ -123,6 +147,21 @@ public class IllustrationController {
      */
     @GetMapping("/chapter/{chapterId}/status")
     public Map<String, Object> getChapterStatus(@PathVariable String chapterId) {
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return Map.of(
+                    "chapterId", chapterId,
+                    "status", "NOT_FOUND",
+                    "ready", false
+            );
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return Map.of(
+                    "chapterId", chapterId,
+                    "status", "DISABLED",
+                    "ready", false
+            );
+        }
         IllustrationStatus status = illustrationService.getStatus(chapterId);
 
         Map<String, Object> response = new HashMap<>();
@@ -138,6 +177,16 @@ public class IllustrationController {
      */
     @PostMapping("/chapter/{chapterId}/request")
     public ResponseEntity<Void> requestIllustration(@PathVariable String chapterId) {
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return ResponseEntity.status(403).build();
+        }
         illustrationService.requestIllustration(chapterId);
         return ResponseEntity.accepted().build();
     }
@@ -147,6 +196,16 @@ public class IllustrationController {
      */
     @PostMapping("/chapter/{chapterId}/prefetch-next")
     public ResponseEntity<Void> prefetchNext(@PathVariable String chapterId) {
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return ResponseEntity.status(403).build();
+        }
         illustrationService.prefetchNextChapter(chapterId);
         return ResponseEntity.accepted().build();
     }
@@ -157,6 +216,13 @@ public class IllustrationController {
     @GetMapping("/chapter/{chapterId}/prompt")
     public ResponseEntity<Map<String, String>> getPrompt(@PathVariable String chapterId) {
         if (!allowPromptEditing) {
+            return ResponseEntity.status(403).build();
+        }
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
             return ResponseEntity.status(403).build();
         }
 
@@ -179,6 +245,16 @@ public class IllustrationController {
         if (!allowPromptEditing) {
             return ResponseEntity.status(403).build();
         }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        Optional<BookEntity> bookOpt = getBookForChapter(chapterId);
+        if (bookOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!isIllustrationEnabled(bookOpt.get())) {
+            return ResponseEntity.status(403).build();
+        }
 
         if (request.prompt() == null || request.prompt().isBlank()) {
             return ResponseEntity.badRequest().build();
@@ -193,9 +269,21 @@ public class IllustrationController {
      */
     @PostMapping("/retry-stuck")
     public ResponseEntity<Void> retryStuck() {
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
         illustrationService.retryStuckPendingIllustrations();
         return ResponseEntity.accepted().build();
     }
 
     public record RegenerateRequest(String prompt) {}
+
+    private boolean isIllustrationEnabled(BookEntity book) {
+        return Boolean.TRUE.equals(book.getIllustrationEnabled());
+    }
+
+    private Optional<BookEntity> getBookForChapter(String chapterId) {
+        return chapterRepository.findById(chapterId)
+                .map(chapter -> chapter.getBook());
+    }
 }

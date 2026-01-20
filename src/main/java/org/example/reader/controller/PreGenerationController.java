@@ -14,9 +14,13 @@ import org.springframework.web.bind.annotation.*;
 public class PreGenerationController {
 
     private final PreGenerationService preGenerationService;
+    private final boolean cacheOnly;
 
-    public PreGenerationController(PreGenerationService preGenerationService) {
+    public PreGenerationController(PreGenerationService preGenerationService,
+                                   @org.springframework.beans.factory.annotation.Value("${generation.cache-only:false}")
+                                   boolean cacheOnly) {
         this.preGenerationService = preGenerationService;
+        this.cacheOnly = cacheOnly;
     }
 
     /**
@@ -28,6 +32,9 @@ public class PreGenerationController {
      */
     @PostMapping("/book/{bookId}")
     public ResponseEntity<PreGenResult> preGenerateForBook(@PathVariable String bookId) {
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
         PreGenResult result = preGenerationService.preGenerateForBook(bookId);
 
         if (result.success()) {
@@ -47,6 +54,9 @@ public class PreGenerationController {
      */
     @PostMapping("/gutenberg/{gutenbergId}")
     public ResponseEntity<PreGenResult> preGenerateByGutenbergId(@PathVariable int gutenbergId) {
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
         PreGenResult result = preGenerationService.preGenerateByGutenbergId(gutenbergId);
 
         if (result.success()) {

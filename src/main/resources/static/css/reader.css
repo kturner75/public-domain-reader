@@ -162,6 +162,17 @@ html, body {
     flex-shrink: 0;
 }
 
+.cache-only-indicator {
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-color);
+    background: rgba(0, 0, 0, 0.04);
+}
+
 #reader-view.speed-reading-active .reader-content,
 #reader-view.speed-reading-active .chapter-title,
 #reader-view.speed-reading-active .reader-footer {

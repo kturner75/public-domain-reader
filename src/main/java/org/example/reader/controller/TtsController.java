@@ -50,6 +50,7 @@ public class TtsController {
     status.put("openaiConfigured", ttsService.isConfigured());
     status.put("ollamaAvailable", voiceAnalysisService.isOllamaAvailable());
     status.put("voices", TtsService.AVAILABLE_VOICES);
+    status.put("cacheOnly", ttsService.isCacheOnly());
     return status;
   }
 
@@ -66,6 +67,9 @@ public class TtsController {
     }
 
     BookEntity book = bookOpt.get();
+    if (!isTtsEnabled(book)) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
 
     // Return saved settings if they exist
     if (book.getTtsVoice() != null) {
@@ -91,6 +95,12 @@ public class TtsController {
     }
 
     BookEntity book = bookOpt.get();
+    if (!isTtsEnabled(book)) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    if (ttsService.isCacheOnly()) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).build();
+    }
 
     // Return existing settings if already analyzed (unless force=true)
     if (!force && book.getTtsVoice() != null) {
@@ -152,6 +162,9 @@ public class TtsController {
     );
 
     byte[] audio = ttsService.generateSpeech(text, settings);
+    if (audio == null) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
 
     return ResponseEntity.ok()
         .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
@@ -171,6 +184,14 @@ public class TtsController {
     if (!ttsService.isConfigured()) {
       return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
           .body("OpenAI API key not configured".getBytes());
+    }
+
+    Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
+    if (bookOpt.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+    if (!isTtsEnabled(bookOpt.get())) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
 
     // Get paragraph text
@@ -197,6 +218,9 @@ public class TtsController {
     VoiceSettings settings = new VoiceSettings(voice, speed, instructions, null);
     byte[] audio = ttsService.generateSpeechForParagraph(
         bookId, chapterId, paragraphIndex, text, settings);
+    if (audio == null) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
 
     return ResponseEntity.ok()
         .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
@@ -212,6 +236,9 @@ public class TtsController {
     }
 
     BookEntity book = bookOpt.get();
+    if (!isTtsEnabled(book)) {
+      return Map.of("error", "TTS disabled for book");
+    }
     List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(book.getId());
 
     int totalCharacters = 0;
@@ -241,6 +268,10 @@ public class TtsController {
   private String extractPlainText(String html) {
     if (html == null) return "";
     return Jsoup.parse(html).text();
+  }
+
+  private boolean isTtsEnabled(BookEntity book) {
+    return Boolean.TRUE.equals(book.getTtsEnabled());
   }
 
   public record SpeakRequest(

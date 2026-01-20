@@ -160,7 +160,7 @@ class BookImportServiceTest {
         ParsedBook parsedBook = new ParsedBook(List.of(chapter));
         when(contentParser.parse(anyString())).thenReturn(parsedBook);
 
-        Book savedBook = new Book("book-id", "Test Book", "Test Author", "", null, List.of());
+        Book savedBook = new Book("book-id", "Test Book", "Test Author", "", null, List.of(), false, false, false);
         when(bookStorageService.saveBook(any(BookEntity.class))).thenReturn(savedBook);
 
         ImportResult result = bookImportService.importBook(1234);
@@ -176,7 +176,7 @@ class BookImportServiceTest {
     void importBookFailsIfAlreadyImported() {
         when(bookStorageService.existsBySource("gutenberg", "1234")).thenReturn(true);
         when(bookStorageService.findBySource("gutenberg", "1234"))
-            .thenReturn(Optional.of(new Book("existing-id", "Test", "Author", "", null, List.of())));
+            .thenReturn(Optional.of(new Book("existing-id", "Test", "Author", "", null, List.of(), false, false, false)));
 
         ImportResult result = bookImportService.importBook(1234);
 
@@ -252,7 +252,7 @@ class BookImportServiceTest {
         ParsedChapter chapter = new ParsedChapter("Chapter 1", List.of("Paragraph"));
         when(contentParser.parse(anyString())).thenReturn(new ParsedBook(List.of(chapter)));
 
-        Book savedBook = new Book("id", "Test Book", "Test Author", "", null, List.of());
+        Book savedBook = new Book("id", "Test Book", "Test Author", "", null, List.of(), false, false, false);
         when(bookStorageService.saveBook(any(BookEntity.class))).thenReturn(savedBook);
 
         bookImportService.importBook(1234);
