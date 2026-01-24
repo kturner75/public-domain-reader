@@ -20,6 +20,8 @@
         ttsVoiceSettings: null,  // { voice, speed, instructions, reasoning }
         ttsAvailable: false,
         ttsOpenAIAvailable: false,
+        ttsOpenAIConfigured: false,
+        ttsCachedAvailable: false,
         ttsBrowserAvailable: false,
         ttsUsingBrowser: false,  // true when currently using browser fallback
         ttsPlaybackRate: 1.0,  // 1.0, 1.25, 1.5, 1.75, 2.0
@@ -901,11 +903,15 @@
         try {
             const response = await fetch('/api/tts/status');
             const status = await response.json();
-            state.ttsOpenAIAvailable = status.openaiConfigured;
+            state.ttsOpenAIConfigured = status.openaiConfigured === true;
+            state.ttsCachedAvailable = status.cachedAvailable === true;
+            state.ttsOpenAIAvailable = state.ttsOpenAIConfigured || state.ttsCachedAvailable;
             state.cacheOnly = status.cacheOnly === true;
         } catch (error) {
             console.warn('OpenAI TTS not available:', error);
             state.ttsOpenAIAvailable = false;
+            state.ttsOpenAIConfigured = false;
+            state.ttsCachedAvailable = false;
         }
 
         // TTS is available if either OpenAI or browser is available and the book allows it
@@ -927,13 +933,15 @@
 
         console.log('TTS availability:', {
             openai: state.ttsOpenAIAvailable,
+            cached: state.ttsCachedAvailable,
             browser: state.ttsBrowserAvailable,
             available: state.ttsAvailable
         });
         updateCacheOnlyIndicator();
 
         return {
-            openaiConfigured: state.ttsOpenAIAvailable,
+            openaiConfigured: state.ttsOpenAIConfigured,
+            cachedAvailable: state.ttsCachedAvailable,
             browserAvailable: state.ttsBrowserAvailable
         };
     }
@@ -1093,6 +1101,16 @@
             state.ttsPrefetchedChapter = null;
             state.ttsPrefetchAbortController = null;  // Clear prefetch controller
             console.log('Using prefetched audio for paragraph', state.currentParagraphIndex);
+        } else if (state.ttsCachedAvailable && !state.ttsOpenAIConfigured) {
+            const params = new URLSearchParams();
+            if (state.ttsVoiceSettings) {
+                if (state.ttsVoiceSettings.voice) params.set('voice', state.ttsVoiceSettings.voice);
+                if (state.ttsVoiceSettings.speed) params.set('speed', state.ttsVoiceSettings.speed);
+                if (state.ttsVoiceSettings.instructions) params.set('instructions', state.ttsVoiceSettings.instructions);
+            }
+            let url = `/api/tts/speak/${state.currentBook.id}/${chapter.id}/${state.currentParagraphIndex}`;
+            if (params.toString()) url += '?' + params.toString();
+            audio = new Audio(url);
         } else {
             // Fetch audio with AbortController
             const controller = new AbortController();
@@ -1216,6 +1234,7 @@
     async function ttsPrefetchNext() {
         // Don't prefetch if OpenAI TTS is not available (browser TTS doesn't benefit from prefetch)
         if (!state.ttsOpenAIAvailable || !state.ttsEnabled) return;
+        if (state.ttsCachedAvailable && !state.ttsOpenAIConfigured) return;
 
         const nextIndex = state.currentParagraphIndex + 1;
         const chapter = state.chapters[state.currentChapterIndex];
@@ -2341,7 +2360,8 @@
             const status = await response.json();
             state.characterAvailable = status.enabled && isBookFeatureEnabled('characterEnabled');
             state.characterCacheOnly = status.cacheOnly === true;
-            state.characterChatAvailable = state.characterAvailable && !state.characterCacheOnly;
+            // Chat is available if the feature is enabled AND the chat provider is configured
+            state.characterChatAvailable = state.characterAvailable && status.chatEnabled === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
 
             console.log('Character status response:', status);
@@ -2367,7 +2387,8 @@
             state.newCharacterQueue = [];
             state.currentToastCharacter = null;
         }
-        if (!state.characterAvailable || state.characterCacheOnly) {
+        // Chat unavailable if character feature is off, cache-only mode, or chat explicitly disabled
+        if (!state.characterAvailable) {
             state.characterChatAvailable = false;
         }
         updateCacheOnlyIndicator();

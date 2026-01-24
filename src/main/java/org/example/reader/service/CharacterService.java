@@ -64,6 +64,7 @@ public class CharacterService {
     private final CharacterPortraitService portraitService;
     private final IllustrationService illustrationService;
     private final ComfyUIService comfyUIService;
+    private final AssetKeyService assetKeyService;
 
     @Value("${character.secondary.max-per-book:40}")
     private int maxSecondaryPerBook;
@@ -83,7 +84,8 @@ public class CharacterService {
             CharacterExtractionService extractionService,
             CharacterPortraitService portraitService,
             IllustrationService illustrationService,
-            ComfyUIService comfyUIService) {
+            ComfyUIService comfyUIService,
+            AssetKeyService assetKeyService) {
         this.characterRepository = characterRepository;
         this.chapterAnalysisRepository = chapterAnalysisRepository;
         this.chapterRepository = chapterRepository;
@@ -93,6 +95,7 @@ public class CharacterService {
         this.portraitService = portraitService;
         this.illustrationService = illustrationService;
         this.comfyUIService = comfyUIService;
+        this.assetKeyService = assetKeyService;
     }
 
     @Autowired
@@ -115,7 +118,7 @@ public class CharacterService {
     }
 
     public boolean isAvailable() {
-        return extractionService.isOllamaAvailable() && comfyUIService.isAvailable();
+        return extractionService.isReasoningProviderAvailable() && comfyUIService.isAvailable();
     }
 
     @Transactional
@@ -223,6 +226,12 @@ public class CharacterService {
                 .filter(c -> c.getStatus() == CharacterStatus.COMPLETED)
                 .map(c -> comfyUIService.getPortraitImage(c.getPortraitFilename()))
                 .orElse(null);
+    }
+
+    public Optional<String> getPortraitFilename(String characterId) {
+        return characterRepository.findById(characterId)
+                .filter(c -> c.getStatus() == CharacterStatus.COMPLETED)
+                .map(CharacterEntity::getPortraitFilename);
     }
 
     private void processQueue() {
@@ -575,12 +584,13 @@ public class CharacterService {
             self.updatePortraitPrompt(characterId, portraitPrompt);
 
             String outputPrefix = "portrait_" + characterId;
-            String promptId = comfyUIService.submitPortraitWorkflow(portraitPrompt, outputPrefix);
+            String cacheKey = buildPortraitCacheKey(character);
+            String promptId = comfyUIService.submitPortraitWorkflow(portraitPrompt, outputPrefix, cacheKey);
 
             ComfyUIService.IllustrationResult result = comfyUIService.pollForPortraitCompletion(promptId);
 
             if (result.success()) {
-                self.updateCharacterStatus(characterId, CharacterStatus.COMPLETED, result.filename(), null);
+                self.updateCharacterStatus(characterId, CharacterStatus.COMPLETED, cacheKey, null);
                 log.info("Portrait completed for character: {}", character.getName());
             } else {
                 self.updateCharacterStatus(characterId, CharacterStatus.FAILED, null, result.errorMessage());
@@ -636,6 +646,27 @@ public class CharacterService {
     private String stripHtml(String html) {
         if (html == null) return "";
         return html.replaceAll("<[^>]*>", "").trim();
+    }
+
+    private String buildPortraitCacheKey(CharacterEntity character) {
+        BookEntity book = character.getBook();
+        String baseSlug = assetKeyService.normalizeCharacterName(character.getName());
+        String normalizedSlug = baseSlug.isBlank() ? "character" : baseSlug;
+
+        List<CharacterEntity> sameName = characterRepository.findByBookIdOrderByCreatedAt(book.getId());
+        boolean collision = sameName.stream()
+                .anyMatch(other -> !other.getId().equals(character.getId())
+                        && assetKeyService.normalizeCharacterName(other.getName()).equals(normalizedSlug));
+
+        String resolvedSlug = normalizedSlug;
+        if (collision) {
+            resolvedSlug = normalizedSlug + "-"
+                    + character.getFirstChapter().getChapterIndex()
+                    + "-"
+                    + character.getFirstParagraphIndex();
+        }
+
+        return assetKeyService.buildPortraitKey(book, resolvedSlug);
     }
 
     /**

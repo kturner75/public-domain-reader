@@ -18,6 +18,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeoutException;
 
 @Service
@@ -61,6 +63,8 @@ public class ComfyUIService {
   private WebClient webClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
   private final Random random = new Random();
+  private final ConcurrentMap<String, String> illustrationCacheKeys = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, String> portraitCacheKeys = new ConcurrentHashMap<>();
 
   @PostConstruct
   public void init() throws IOException {
@@ -109,7 +113,7 @@ public class ComfyUIService {
    * @param outputFilename The filename prefix for the output image
    * @return The prompt_id for polling
    */
-  public String submitWorkflow(String positivePrompt, String outputFilename) throws Exception {
+  public String submitWorkflow(String positivePrompt, String outputFilename, String cacheKey) throws Exception {
     ObjectNode workflow = buildWorkflow(positivePrompt, outputFilename);
 
     ObjectNode requestBody = objectMapper.createObjectNode();
@@ -125,6 +129,9 @@ public class ComfyUIService {
 
     JsonNode responseNode = objectMapper.readTree(response);
     String promptId = responseNode.get("prompt_id").asText();
+    if (cacheKey != null && !cacheKey.isBlank()) {
+      illustrationCacheKeys.put(promptId, cacheKey);
+    }
     log.info("Submitted workflow to ComfyUI, prompt_id: {}", promptId);
     return promptId;
   }
@@ -138,6 +145,7 @@ public class ComfyUIService {
   public IllustrationResult pollForCompletion(String promptId) throws Exception {
     long startTime = System.currentTimeMillis();
     long pollInterval = 2000; // 2 seconds
+    String cacheKey = illustrationCacheKeys.remove(promptId);
 
     while (System.currentTimeMillis() - startTime < workflowTimeout) {
       String response = webClient.get()
@@ -176,7 +184,7 @@ public class ComfyUIService {
                 String subfolder = imageInfo.has("subfolder") ? imageInfo.get("subfolder").asText() : "";
 
                 // Download the image to our cache
-                String cachedPath = downloadImage(filename, subfolder, promptId);
+                String cachedPath = downloadImage(filename, subfolder, cacheKey, promptId);
                 return new IllustrationResult(true, cachedPath, null);
               }
             }
@@ -193,7 +201,7 @@ public class ComfyUIService {
   /**
    * Download generated image from ComfyUI and save to cache.
    */
-  private String downloadImage(String filename, String subfolder, String promptId) throws Exception {
+  private String downloadImage(String filename, String subfolder, String cacheKey, String promptId) throws Exception {
     String uri = "/view?filename=" + filename;
     if (subfolder != null && !subfolder.isEmpty()) {
       uri += "&subfolder=" + subfolder;
@@ -206,8 +214,9 @@ public class ComfyUIService {
         .block(Duration.ofSeconds(30));
 
     // Save to cache directory with prompt ID as filename
-    String cachedFilename = promptId + ".png";
+    String cachedFilename = resolveCacheFilename(cacheKey, promptId);
     Path cachedPath = Paths.get(cacheDir, cachedFilename);
+    Files.createDirectories(cachedPath.getParent());
     Files.write(cachedPath, imageData);
 
     log.info("Downloaded and cached image: {}", cachedPath);
@@ -219,7 +228,7 @@ public class ComfyUIService {
    */
   public byte[] getImage(String filename) {
     try {
-      Path imagePath = Paths.get(cacheDir, filename);
+      Path imagePath = safeResolve(cacheDir, filename);
       if (Files.exists(imagePath)) {
         return Files.readAllBytes(imagePath);
       }
@@ -336,7 +345,7 @@ public class ComfyUIService {
    * Submit a portrait workflow to ComfyUI for character portrait generation.
    * Uses portrait-specific dimensions (512x640 by default).
    */
-  public String submitPortraitWorkflow(String positivePrompt, String outputFilename) throws Exception {
+  public String submitPortraitWorkflow(String positivePrompt, String outputFilename, String cacheKey) throws Exception {
     ObjectNode workflow = buildPortraitWorkflow(positivePrompt, outputFilename);
 
     ObjectNode requestBody = objectMapper.createObjectNode();
@@ -352,6 +361,9 @@ public class ComfyUIService {
 
     JsonNode responseNode = objectMapper.readTree(response);
     String promptId = responseNode.get("prompt_id").asText();
+    if (cacheKey != null && !cacheKey.isBlank()) {
+      portraitCacheKeys.put(promptId, cacheKey);
+    }
     log.info("Submitted portrait workflow to ComfyUI, prompt_id: {}", promptId);
     return promptId;
   }
@@ -362,6 +374,7 @@ public class ComfyUIService {
   public IllustrationResult pollForPortraitCompletion(String promptId) throws Exception {
     long startTime = System.currentTimeMillis();
     long pollInterval = 2000;
+    String cacheKey = portraitCacheKeys.remove(promptId);
 
     while (System.currentTimeMillis() - startTime < workflowTimeout) {
       String response = webClient.get()
@@ -395,7 +408,7 @@ public class ComfyUIService {
                 String filename = imageInfo.get("filename").asText();
                 String subfolder = imageInfo.has("subfolder") ? imageInfo.get("subfolder").asText() : "";
 
-                String cachedPath = downloadPortraitImage(filename, subfolder, promptId);
+                String cachedPath = downloadPortraitImage(filename, subfolder, cacheKey, promptId);
                 return new IllustrationResult(true, cachedPath, null);
               }
             }
@@ -412,7 +425,7 @@ public class ComfyUIService {
   /**
    * Download generated portrait image from ComfyUI and save to portrait cache.
    */
-  private String downloadPortraitImage(String filename, String subfolder, String promptId) throws Exception {
+  private String downloadPortraitImage(String filename, String subfolder, String cacheKey, String promptId) throws Exception {
     String uri = "/view?filename=" + filename;
     if (subfolder != null && !subfolder.isEmpty()) {
       uri += "&subfolder=" + subfolder;
@@ -424,8 +437,9 @@ public class ComfyUIService {
         .bodyToMono(byte[].class)
         .block(Duration.ofSeconds(30));
 
-    String cachedFilename = promptId + ".png";
+    String cachedFilename = resolveCacheFilename(cacheKey, promptId);
     Path cachedPath = Paths.get(portraitCacheDir, cachedFilename);
+    Files.createDirectories(cachedPath.getParent());
     Files.write(cachedPath, imageData);
 
     log.info("Downloaded and cached portrait: {}", cachedPath);
@@ -437,7 +451,7 @@ public class ComfyUIService {
    */
   public byte[] getPortraitImage(String filename) {
     try {
-      Path imagePath = Paths.get(portraitCacheDir, filename);
+      Path imagePath = safeResolve(portraitCacheDir, filename);
       if (Files.exists(imagePath)) {
         return Files.readAllBytes(imagePath);
       }
@@ -455,7 +469,7 @@ public class ComfyUIService {
       return false;
     }
     try {
-      Path imagePath = Paths.get(portraitCacheDir, filename);
+      Path imagePath = safeResolve(portraitCacheDir, filename);
       if (Files.exists(imagePath)) {
         Files.delete(imagePath);
         log.info("Deleted portrait file: {}", filename);
@@ -563,5 +577,19 @@ public class ComfyUIService {
     workflow.set("9", node9);
 
     return workflow;
+  }
+
+  private String resolveCacheFilename(String cacheKey, String promptId) {
+    String resolved = (cacheKey == null || cacheKey.isBlank()) ? promptId + ".png" : cacheKey;
+    return resolved.endsWith(".png") ? resolved : resolved + ".png";
+  }
+
+  private Path safeResolve(String baseDir, String filename) {
+    Path basePath = Paths.get(baseDir).toAbsolutePath().normalize();
+    Path resolved = basePath.resolve(filename).normalize();
+    if (!resolved.startsWith(basePath)) {
+      return basePath.resolve(Paths.get(filename).getFileName().toString());
+    }
+    return resolved;
   }
 }

@@ -1,42 +1,23 @@
 package org.example.reader.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.example.reader.model.IllustrationSettings;
+import org.example.reader.service.llm.LlmOptions;
+import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-
-import java.time.Duration;
-import java.util.Map;
 
 @Service
 public class CharacterPortraitService {
 
     private static final Logger log = LoggerFactory.getLogger(CharacterPortraitService.class);
 
-    @Value("${ollama.base-url}")
-    private String ollamaBaseUrl;
+    private final LlmProvider reasoningProvider;
 
-    @Value("${ollama.model}")
-    private String ollamaModel;
-
-    @Value("${ollama.timeout-seconds:180}")
-    private int timeoutSeconds;
-
-    private WebClient webClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    @PostConstruct
-    public void init() {
-        this.webClient = WebClient.builder()
-                .baseUrl(ollamaBaseUrl)
-                .build();
-        log.info("Character portrait service initialized");
+    public CharacterPortraitService(@Qualifier("reasoningLlmProvider") LlmProvider reasoningProvider) {
+        this.reasoningProvider = reasoningProvider;
+        log.info("Character portrait service initialized with provider: {}", reasoningProvider.getProviderName());
     }
 
     public String generatePortraitPrompt(
@@ -83,26 +64,7 @@ public class CharacterPortraitService {
                 bookStyle.promptPrefix());
 
         try {
-            Map<String, Object> requestBody = Map.of(
-                    "model", ollamaModel,
-                    "prompt", prompt,
-                    "stream", false,
-                    "options", Map.of(
-                            "temperature", 0.7
-                    )
-            );
-
-            String response = webClient.post()
-                    .uri("/api/generate")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .block();
-
-            JsonNode responseNode = objectMapper.readTree(response);
-            String generatedPrompt = responseNode.get("response").asText().trim();
+            String generatedPrompt = reasoningProvider.generate(prompt, LlmOptions.withTemperature(0.7)).trim();
 
             generatedPrompt = cleanPrompt(generatedPrompt);
 

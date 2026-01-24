@@ -13,6 +13,7 @@ import org.example.reader.service.CharacterExtractionService;
 import org.example.reader.service.CharacterPrefetchService;
 import org.example.reader.service.CharacterService;
 import org.example.reader.service.ComfyUIService;
+import org.example.reader.service.CdnAssetService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +40,12 @@ public class CharacterController {
     @Value("${character.enabled:true}")
     private boolean characterEnabled;
 
+    @Value("${ai.reasoning.enabled:true}")
+    private boolean reasoningEnabled;
+
+    @Value("${ai.chat.enabled:false}")
+    private boolean chatEnabled;
+
     @Value("${generation.cache-only:false}")
     private boolean cacheOnly;
 
@@ -47,6 +54,7 @@ public class CharacterController {
     private final CharacterExtractionService extractionService;
     private final CharacterPrefetchService prefetchService;
     private final ComfyUIService comfyUIService;
+    private final CdnAssetService cdnAssetService;
     private final BookRepository bookRepository;
     private final ChapterRepository chapterRepository;
 
@@ -56,6 +64,7 @@ public class CharacterController {
             CharacterExtractionService extractionService,
             CharacterPrefetchService prefetchService,
             ComfyUIService comfyUIService,
+            CdnAssetService cdnAssetService,
             BookRepository bookRepository,
             ChapterRepository chapterRepository) {
         this.characterService = characterService;
@@ -63,6 +72,7 @@ public class CharacterController {
         this.extractionService = extractionService;
         this.prefetchService = prefetchService;
         this.comfyUIService = comfyUIService;
+        this.cdnAssetService = cdnAssetService;
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
     }
@@ -71,7 +81,12 @@ public class CharacterController {
     public Map<String, Object> getStatus() {
         Map<String, Object> status = new HashMap<>();
         status.put("enabled", characterEnabled);
-        status.put("ollamaAvailable", extractionService.isOllamaAvailable());
+        status.put("reasoningEnabled", reasoningEnabled);
+        status.put("chatEnabled", chatEnabled);
+        status.put("reasoningProviderAvailable", extractionService.isReasoningProviderAvailable());
+        status.put("chatProviderAvailable", chatService.isChatProviderAvailable());
+        // Legacy field for backwards compatibility
+        status.put("ollamaAvailable", extractionService.isReasoningProviderAvailable());
         status.put("comfyuiAvailable", comfyUIService.isAvailable());
         status.put("available", characterEnabled && characterService.isAvailable());
         status.put("cacheOnly", cacheOnly);
@@ -168,6 +183,17 @@ public class CharacterController {
         if (characterOpt.isPresent() && !isCharacterEnabled(characterOpt.get().getBook())) {
             return ResponseEntity.status(403).build();
         }
+
+        if (cdnAssetService.isEnabled()) {
+            return characterOpt
+                    .flatMap(c -> characterService.getPortraitFilename(c.getId()))
+                    .flatMap(key -> cdnAssetService.buildAssetUrl("character-portraits", key))
+                    .map(url -> ResponseEntity.status(302)
+                            .header(HttpHeaders.LOCATION, url)
+                            .body(new byte[0]))
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        }
+
         byte[] image = characterOpt.map(c -> characterService.getPortrait(c.getId())).orElse(null);
         if (image == null) {
             return ResponseEntity.notFound().build();
@@ -251,8 +277,12 @@ public class CharacterController {
         if (!characterEnabled) {
             return ResponseEntity.status(403).build();
         }
-        if (cacheOnly) {
-            return ResponseEntity.status(409).build();
+        if (!chatEnabled) {
+            return ResponseEntity.status(403).body(new ChatResponse(
+                    "Chat is disabled in this environment.",
+                    characterId,
+                    System.currentTimeMillis()
+            ));
         }
 
         // Check character type - only PRIMARY characters can chat
