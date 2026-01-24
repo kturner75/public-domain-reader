@@ -40,6 +40,7 @@ public class IllustrationService {
     private final IllustrationPromptService promptService;
     private final IllustrationStyleAnalysisService styleAnalysisService;
     private final ComfyUIService comfyUIService;
+    private final AssetKeyService assetKeyService;
 
     private final BlockingQueue<GenerationRequest> generationQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -55,7 +56,8 @@ public class IllustrationService {
             ParagraphRepository paragraphRepository,
             IllustrationPromptService promptService,
             IllustrationStyleAnalysisService styleAnalysisService,
-            ComfyUIService comfyUIService) {
+            ComfyUIService comfyUIService,
+            AssetKeyService assetKeyService) {
         this.illustrationRepository = illustrationRepository;
         this.chapterRepository = chapterRepository;
         this.bookRepository = bookRepository;
@@ -63,6 +65,7 @@ public class IllustrationService {
         this.promptService = promptService;
         this.styleAnalysisService = styleAnalysisService;
         this.comfyUIService = comfyUIService;
+        this.assetKeyService = assetKeyService;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -108,6 +111,12 @@ public class IllustrationService {
                 .filter(i -> i.getStatus() == IllustrationStatus.COMPLETED)
                 .map(i -> comfyUIService.getImage(i.getImageFilename()))
                 .orElse(null);
+    }
+
+    public Optional<String> getIllustrationFilename(String chapterId) {
+        return illustrationRepository.findByChapterId(chapterId)
+                .filter(i -> i.getStatus() == IllustrationStatus.COMPLETED)
+                .map(IllustrationEntity::getImageFilename);
     }
 
     /**
@@ -324,13 +333,14 @@ public class IllustrationService {
 
             // Submit to ComfyUI
             String outputPrefix = "illustration_" + chapterId;
-            String promptId = comfyUIService.submitWorkflow(imagePrompt, outputPrefix);
+            String cacheKey = assetKeyService.buildIllustrationKey(chapter);
+            String promptId = comfyUIService.submitWorkflow(imagePrompt, outputPrefix, cacheKey);
 
             // Poll for completion
             ComfyUIService.IllustrationResult result = comfyUIService.pollForCompletion(promptId);
 
             if (result.success()) {
-                self.updateIllustrationStatus(chapterId, IllustrationStatus.COMPLETED, result.filename(), null);
+                self.updateIllustrationStatus(chapterId, IllustrationStatus.COMPLETED, cacheKey, null);
                 log.info("Illustration completed for chapter: {}", chapterId);
             } else {
                 self.updateIllustrationStatus(chapterId, IllustrationStatus.FAILED, null, result.errorMessage());

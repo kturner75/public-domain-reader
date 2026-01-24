@@ -46,7 +46,7 @@ public class TtsService {
     @Value("${tts.cache-dir}")
     private String cacheDir;
 
-    @Value("${generation.cache-only:false}")
+    @Value("${tts.cache-only:false}")
     private boolean cacheOnly;
 
     private WebClient webClient;
@@ -71,6 +71,10 @@ public class TtsService {
 
     public boolean isCacheOnly() {
         return cacheOnly;
+    }
+
+    public String resolveVoice(String requestedVoice) {
+        return (requestedVoice != null && !requestedVoice.isBlank()) ? requestedVoice : defaultVoice;
     }
 
     public byte[] generateSpeech(String text, VoiceSettings settings) {
@@ -131,14 +135,18 @@ public class TtsService {
         return audio;
     }
 
-    public byte[] generateSpeechForParagraph(String bookId, String chapterId, int paragraphIndex,
+    public byte[] generateSpeechForParagraph(String bookKey, int chapterIndex, int paragraphIndex,
                                               String text, VoiceSettings settings) {
         String voice = settings.voice() != null ? settings.voice() : defaultVoice;
         double speed = settings.speed() > 0 ? settings.speed() : 1.0;
         String instructions = settings.instructions();
 
-        // Use book-specific cache path INCLUDING voice so changing voice regenerates audio
-        Path bookCachePath = cachePath.resolve(bookId).resolve(voice).resolve(chapterId);
+        // Use stable cache path INCLUDING voice so changing voice regenerates audio
+        Path bookCachePath = cachePath.resolve(bookKey)
+                .resolve("audio")
+                .resolve(voice)
+                .resolve("chapters")
+                .resolve(String.valueOf(chapterIndex));
         try {
             Files.createDirectories(bookCachePath);
         } catch (IOException e) {
@@ -150,7 +158,7 @@ public class TtsService {
         String textPreview = truncateForLog(text);
         if (Files.exists(cachedFile)) {
             log.info("TTS cache HIT: book={}, chapter={}, paragraph={}, text=\"{}\"",
-                     bookId, chapterId, paragraphIndex, textPreview);
+                     bookKey, chapterIndex, paragraphIndex, textPreview);
             try {
                 return Files.readAllBytes(cachedFile);
             } catch (IOException e) {
@@ -160,13 +168,13 @@ public class TtsService {
 
         if (cacheOnly) {
             log.info("TTS cache-only mode enabled, skipping generation for cache miss: book={}, chapter={}, paragraph={}",
-                     bookId, chapterId, paragraphIndex);
+                     bookKey, chapterIndex, paragraphIndex);
             return null;
         }
 
         // Generate - this means we're calling OpenAI API
         log.info("TTS cache MISS - calling OpenAI: book={}, chapter={}, paragraph={}, text=\"{}\"",
-                 bookId, chapterId, paragraphIndex, textPreview);
+                 bookKey, chapterIndex, paragraphIndex, textPreview);
 
         Map<String, Object> requestBody = new java.util.HashMap<>();
         requestBody.put("model", model);

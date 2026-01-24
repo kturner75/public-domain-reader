@@ -1,24 +1,20 @@
 package org.example.reader.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.example.reader.entity.BookEntity;
 import org.example.reader.entity.CharacterEntity;
 import org.example.reader.entity.ChapterEntity;
 import org.example.reader.model.ChatMessage;
 import org.example.reader.repository.CharacterRepository;
 import org.example.reader.repository.ChapterRepository;
+import org.example.reader.service.llm.LlmOptions;
+import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 
-import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -26,36 +22,25 @@ public class CharacterChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CharacterChatService.class);
 
-    @Value("${ollama.base-url}")
-    private String ollamaBaseUrl;
-
-    @Value("${character.chat.model:llama3.1:latest}")
-    private String chatModel;
-
-    @Value("${ollama.timeout-seconds:180}")
-    private int timeoutSeconds;
+    private final LlmProvider chatProvider;
+    private final CharacterRepository characterRepository;
+    private final ChapterRepository chapterRepository;
 
     @Value("${character.chat.max-context-messages:10}")
     private int maxContextMessages;
 
-    private final CharacterRepository characterRepository;
-    private final ChapterRepository chapterRepository;
-
-    private WebClient webClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    public CharacterChatService(CharacterRepository characterRepository,
-                               ChapterRepository chapterRepository) {
+    public CharacterChatService(
+            @Qualifier("chatLlmProvider") LlmProvider chatProvider,
+            CharacterRepository characterRepository,
+            ChapterRepository chapterRepository) {
+        this.chatProvider = chatProvider;
         this.characterRepository = characterRepository;
         this.chapterRepository = chapterRepository;
+        log.info("Character chat service initialized with provider: {}", chatProvider.getProviderName());
     }
 
-    @PostConstruct
-    public void init() {
-        this.webClient = WebClient.builder()
-                .baseUrl(ollamaBaseUrl)
-                .build();
-        log.info("Character chat service initialized with model: {}", chatModel);
+    public boolean isChatProviderAvailable() {
+        return chatProvider.isAvailable();
     }
 
     public String chat(String characterId, String userMessage,
@@ -92,27 +77,7 @@ public class CharacterChatService {
                 character.getName());
 
         try {
-            Map<String, Object> requestBody = Map.of(
-                    "model", chatModel,
-                    "prompt", fullPrompt,
-                    "stream", false,
-                    "options", Map.of(
-                            "temperature", 0.8,
-                            "top_p", 0.9
-                    )
-            );
-
-            String response = webClient.post()
-                    .uri("/api/generate")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .block();
-
-            JsonNode responseNode = objectMapper.readTree(response);
-            String generatedText = responseNode.get("response").asText().trim();
+            String generatedText = chatProvider.generate(fullPrompt, LlmOptions.withTemperatureAndTopP(0.8, 0.9)).trim();
 
             generatedText = cleanResponse(generatedText, character.getName());
 
@@ -134,6 +99,13 @@ public class CharacterChatService {
 
             CHARACTER DESCRIPTION:
             %s
+
+            WHO YOU ARE TALKING TO:
+            - The person messaging you is a READER - someone from the modern day who is reading your story
+            - They are NOT a character from your book - do NOT address them as Watson, Elizabeth, or any other character
+            - Think of them as a curious stranger who has somehow been granted the ability to converse with you
+            - You may be intrigued, amused, or bewildered by this magical conversation, but accept it gracefully
+            - Address them simply as "my friend", "dear reader", or similar - never assume they are someone from your world
 
             IMPORTANT STORY CONSTRAINTS:
             - The reader is currently at Chapter %d ("%s"), paragraph %d

@@ -7,6 +7,8 @@ import org.example.reader.model.VoiceSettings;
 import org.example.reader.repository.BookRepository;
 import org.example.reader.repository.ChapterRepository;
 import org.example.reader.repository.ParagraphRepository;
+import org.example.reader.service.AssetKeyService;
+import org.example.reader.service.CdnAssetService;
 import org.example.reader.service.TtsService;
 import org.example.reader.service.VoiceAnalysisService;
 import org.jsoup.Jsoup;
@@ -33,24 +35,33 @@ public class TtsController {
   private final BookRepository bookRepository;
   private final ChapterRepository chapterRepository;
   private final ParagraphRepository paragraphRepository;
+  private final AssetKeyService assetKeyService;
+  private final CdnAssetService cdnAssetService;
 
   public TtsController(TtsService ttsService, VoiceAnalysisService voiceAnalysisService,
                        BookRepository bookRepository, ChapterRepository chapterRepository,
-                       ParagraphRepository paragraphRepository) {
+                       ParagraphRepository paragraphRepository,
+                       AssetKeyService assetKeyService,
+                       CdnAssetService cdnAssetService) {
     this.ttsService = ttsService;
     this.voiceAnalysisService = voiceAnalysisService;
     this.bookRepository = bookRepository;
     this.chapterRepository = chapterRepository;
     this.paragraphRepository = paragraphRepository;
+    this.assetKeyService = assetKeyService;
+    this.cdnAssetService = cdnAssetService;
   }
 
   @GetMapping("/status")
   public Map<String, Object> getStatus() {
     Map<String, Object> status = new HashMap<>();
+    boolean cacheOnly = ttsService.isCacheOnly();
+    boolean cachedAvailable = cacheOnly && cdnAssetService.isEnabled();
     status.put("openaiConfigured", ttsService.isConfigured());
+    status.put("cachedAvailable", cachedAvailable);
     status.put("ollamaAvailable", voiceAnalysisService.isOllamaAvailable());
     status.put("voices", TtsService.AVAILABLE_VOICES);
-    status.put("cacheOnly", ttsService.isCacheOnly());
+    status.put("cacheOnly", cacheOnly);
     return status;
   }
 
@@ -181,11 +192,6 @@ public class TtsController {
       @RequestParam(required = false, defaultValue = "1.0") double speed,
       @RequestParam(required = false) String instructions) {
 
-    if (!ttsService.isConfigured()) {
-      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-          .body("OpenAI API key not configured".getBytes());
-    }
-
     Optional<BookEntity> bookOpt = bookRepository.findById(bookId);
     if (bookOpt.isEmpty()) {
       return ResponseEntity.notFound().build();
@@ -199,9 +205,11 @@ public class TtsController {
     if (chapterOpt.isEmpty()) {
       return ResponseEntity.notFound().build();
     }
+    ChapterEntity chapter = chapterOpt.get();
+    String bookKey = assetKeyService.buildBookKey(chapter.getBook());
 
     List<ParagraphEntity> paragraphs = paragraphRepository
-        .findByChapterIdOrderByParagraphIndex(chapterOpt.get().getId());
+        .findByChapterIdOrderByParagraphIndex(chapter.getId());
 
     if (paragraphIndex < 0 || paragraphIndex >= paragraphs.size()) {
       return ResponseEntity.notFound().build();
@@ -215,9 +223,26 @@ public class TtsController {
           .body(new byte[0]);
     }
 
+    boolean cacheOnly = ttsService.isCacheOnly();
+    if (cacheOnly && cdnAssetService.isEnabled()) {
+      String resolvedVoice = ttsService.resolveVoice(voice);
+      String audioKey = assetKeyService.buildAudioKey(bookOpt.get(), resolvedVoice,
+          chapter.getChapterIndex(), paragraphIndex);
+      return cdnAssetService.buildAssetUrl("audio", audioKey)
+          .map(url -> ResponseEntity.status(HttpStatus.FOUND)
+              .header(HttpHeaders.LOCATION, url)
+              .body(new byte[0]))
+          .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    if (!ttsService.isConfigured()) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+          .body("OpenAI API key not configured".getBytes());
+    }
+
     VoiceSettings settings = new VoiceSettings(voice, speed, instructions, null);
     byte[] audio = ttsService.generateSpeechForParagraph(
-        bookId, chapterId, paragraphIndex, text, settings);
+        bookKey, chapter.getChapterIndex(), paragraphIndex, text, settings);
     if (audio == null) {
       return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }

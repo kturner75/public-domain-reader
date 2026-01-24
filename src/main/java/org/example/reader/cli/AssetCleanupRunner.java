@@ -22,6 +22,7 @@ public class AssetCleanupRunner {
     private static final String APPLY_FLAG = "--apply";
     private static final String AUDIO_FLAG = "--audio";
     private static final String AUDIO_ROOT_FLAG = "--audio-root-cache";
+    private static final String LEGACY_ONLY_FLAG = "--legacy-only";
     private static final String HELP_FLAG = "--help";
 
     private static final int SAMPLE_LIMIT = 20;
@@ -36,6 +37,7 @@ public class AssetCleanupRunner {
         boolean apply = arguments.contains(APPLY_FLAG);
         boolean includeAudio = arguments.contains(AUDIO_FLAG);
         boolean includeAudioRoot = arguments.contains(AUDIO_ROOT_FLAG);
+        boolean legacyOnly = arguments.contains(LEGACY_ONLY_FLAG);
 
         Properties properties = loadProperties();
         String dbUrl = properties.getProperty("spring.datasource.url", "jdbc:h2:file:./data/library");
@@ -49,13 +51,14 @@ public class AssetCleanupRunner {
         try (Connection connection = DriverManager.getConnection(dbUrl, dbUser, dbPassword)) {
             Set<String> illustrationFiles = queryFilenames(connection, "select image_filename from illustrations where image_filename is not null");
             Set<String> portraitFiles = queryFilenames(connection, "select portrait_filename from characters where portrait_filename is not null");
-            Set<String> bookIds = includeAudio ? queryFilenames(connection, "select id from books") : Set.of();
-            Set<String> chapterIds = includeAudio ? queryFilenames(connection, "select id from chapters") : Set.of();
+            BookKeyData bookKeyData = includeAudio ? queryBookKeys(connection) : new BookKeyData();
+            BookChapterData chapterData = includeAudio ? queryBookChapters(connection, bookKeyData.bookKeysById()) : new BookChapterData();
 
-            List<Path> orphanIllustrations = findOrphanedFiles(illustrationDir, illustrationFiles);
-            List<Path> orphanPortraits = findOrphanedFiles(portraitDir, portraitFiles);
+            List<Path> orphanIllustrations = findOrphanedFiles(illustrationDir, illustrationFiles, legacyOnly);
+            List<Path> orphanPortraits = findOrphanedFiles(portraitDir, portraitFiles, legacyOnly);
             List<Path> orphanAudio = includeAudio
-                ? findOrphanedAudio(audioDir, bookIds, chapterIds, includeAudioRoot)
+                ? findOrphanedAudio(audioDir, bookKeyData.bookKeys(), chapterData.chaptersByBookKey(),
+                                    includeAudioRoot, legacyOnly)
                 : List.of();
 
             report("illustrations", orphanIllustrations);
@@ -91,6 +94,7 @@ public class AssetCleanupRunner {
         System.out.println("  --apply             Delete orphaned files (default is dry run).");
         System.out.println("  --audio             Also check TTS audio cache for missing books/chapters.");
         System.out.println("  --audio-root-cache  Include audio files stored directly under the audio cache dir.");
+        System.out.println("  --legacy-only       Only delete non-stable assets (paths not under books/).");
     }
 
     private static Properties loadProperties() {
@@ -128,29 +132,102 @@ public class AssetCleanupRunner {
         return values;
     }
 
-    private static List<Path> findOrphanedFiles(Path directory, Set<String> referencedFilenames) throws IOException {
+    private static List<Path> findOrphanedFiles(Path directory, Set<String> referencedFilenames,
+                                                boolean legacyOnly) throws IOException {
         List<Path> orphaned = new ArrayList<>();
         if (!Files.isDirectory(directory)) {
             return orphaned;
         }
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
-            for (Path path : stream) {
-                if (!Files.isRegularFile(path)) {
-                    continue;
+        try (var paths = Files.walk(directory)) {
+            paths.filter(Files::isRegularFile).forEach(path -> {
+                String relative = directory.relativize(path).toString().replace('\\', '/');
+                if (legacyOnly && relative.startsWith("books/")) {
+                    return;
                 }
-                String filename = path.getFileName().toString();
-                if (!referencedFilenames.contains(filename)) {
+                if (!referencedFilenames.contains(relative)) {
                     orphaned.add(path);
                 }
-            }
+            });
         }
         return orphaned;
     }
 
-    private static List<Path> findOrphanedAudio(Path audioDir, Set<String> bookIds, Set<String> chapterIds,
-                                                boolean includeRootCache) throws IOException {
+    private static List<Path> findOrphanedAudio(Path audioDir, Set<String> bookKeys,
+                                                java.util.Map<String, Set<Integer>> chaptersByBookKey,
+                                                boolean includeRootCache, boolean legacyOnly) throws IOException {
         List<Path> orphaned = new ArrayList<>();
         if (!Files.isDirectory(audioDir)) {
+            return orphaned;
+        }
+
+        Path booksRoot = audioDir.resolve("books");
+        if (Files.isDirectory(booksRoot)) {
+            if (legacyOnly) {
+                try (DirectoryStream<Path> entries = Files.newDirectoryStream(audioDir)) {
+                    for (Path entry : entries) {
+                        if (entry.getFileName().toString().equals("books")) {
+                            continue;
+                        }
+                        orphaned.add(entry);
+                    }
+                }
+                return orphaned;
+            }
+            try (DirectoryStream<Path> sourceDirs = Files.newDirectoryStream(booksRoot)) {
+                for (Path sourceDir : sourceDirs) {
+                    if (!Files.isDirectory(sourceDir)) {
+                        if (includeRootCache) {
+                            orphaned.add(sourceDir);
+                        }
+                        continue;
+                    }
+                    String source = sourceDir.getFileName().toString();
+                    try (DirectoryStream<Path> bookDirs = Files.newDirectoryStream(sourceDir)) {
+                        for (Path bookDir : bookDirs) {
+                            if (!Files.isDirectory(bookDir)) {
+                                orphaned.add(bookDir);
+                                continue;
+                            }
+                            String sourceId = bookDir.getFileName().toString();
+                            String bookKey = "books/" + source + "/" + sourceId;
+                            if (!bookKeys.contains(bookKey)) {
+                                orphaned.add(bookDir);
+                                continue;
+                            }
+                            Path audioRoot = bookDir.resolve("audio");
+                            if (!Files.isDirectory(audioRoot)) {
+                                continue;
+                            }
+                            try (DirectoryStream<Path> voiceDirs = Files.newDirectoryStream(audioRoot)) {
+                                for (Path voiceDir : voiceDirs) {
+                                    if (!Files.isDirectory(voiceDir)) {
+                                        orphaned.add(voiceDir);
+                                        continue;
+                                    }
+                                    Path chaptersDir = voiceDir.resolve("chapters");
+                                    if (!Files.isDirectory(chaptersDir)) {
+                                        orphaned.add(voiceDir);
+                                        continue;
+                                    }
+                                    try (DirectoryStream<Path> chapterDirs = Files.newDirectoryStream(chaptersDir)) {
+                                        for (Path chapterDir : chapterDirs) {
+                                            if (!Files.isDirectory(chapterDir)) {
+                                                orphaned.add(chapterDir);
+                                                continue;
+                                            }
+                                            String chapterIndex = chapterDir.getFileName().toString();
+                                            Set<Integer> expected = chaptersByBookKey.getOrDefault(bookKey, Set.of());
+                                            if (!expected.contains(parseIntSafe(chapterIndex))) {
+                                                orphaned.add(chapterDir);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return orphaned;
         }
 
@@ -165,35 +242,82 @@ public class AssetCleanupRunner {
                 if (!Files.isDirectory(bookDir)) {
                     continue;
                 }
-                String bookId = bookDir.getFileName().toString();
-                if (!bookIds.contains(bookId)) {
+                if (!legacyOnly) {
                     orphaned.add(bookDir);
-                    continue;
-                }
-                try (DirectoryStream<Path> voiceDirs = Files.newDirectoryStream(bookDir)) {
-                    for (Path voiceDir : voiceDirs) {
-                        if (!Files.isDirectory(voiceDir)) {
-                            orphaned.add(voiceDir);
-                            continue;
-                        }
-                        try (DirectoryStream<Path> chapterDirs = Files.newDirectoryStream(voiceDir)) {
-                            for (Path chapterDir : chapterDirs) {
-                                if (!Files.isDirectory(chapterDir)) {
-                                    orphaned.add(chapterDir);
-                                    continue;
-                                }
-                                String chapterId = chapterDir.getFileName().toString();
-                                if (!chapterIds.contains(chapterId)) {
-                                    orphaned.add(chapterDir);
-                                }
-                            }
-                        }
-                    }
+                } else {
+                    orphaned.add(bookDir);
                 }
             }
         }
 
         return orphaned;
+    }
+
+    private static BookKeyData queryBookKeys(Connection connection) throws Exception {
+        java.util.Map<String, String> byId = new java.util.HashMap<>();
+        Set<String> bookKeys = new HashSet<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("select id, source, source_id from books")) {
+            while (resultSet.next()) {
+                String id = resultSet.getString(1);
+                String source = normalizeSegment(resultSet.getString(2));
+                String sourceId = normalizeSegment(resultSet.getString(3));
+                String key = (!source.isBlank() && !sourceId.isBlank())
+                        ? "books/" + source + "/" + sourceId
+                        : "books/local/" + normalizeSegment(id);
+                byId.put(id, key);
+                bookKeys.add(key);
+            }
+        }
+        return new BookKeyData(byId, bookKeys);
+    }
+
+    private static BookChapterData queryBookChapters(Connection connection, java.util.Map<String, String> bookKeysById)
+            throws Exception {
+        java.util.Map<String, Set<Integer>> chaptersByBookKey = new java.util.HashMap<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("select book_id, chapter_index from chapters")) {
+            while (resultSet.next()) {
+                String bookId = resultSet.getString(1);
+                int chapterIndex = resultSet.getInt(2);
+                String bookKey = bookKeysById.get(bookId);
+                if (bookKey == null) {
+                    continue;
+                }
+                chaptersByBookKey.computeIfAbsent(bookKey, key -> new HashSet<>()).add(chapterIndex);
+            }
+        }
+        return new BookChapterData(chaptersByBookKey);
+    }
+
+    private static int parseIntSafe(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static String normalizeSegment(String value) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.trim().toLowerCase();
+        normalized = normalized.replaceAll("[^a-z0-9]+", "-");
+        normalized = normalized.replaceAll("^-+", "").replaceAll("-+$", "");
+        return normalized;
+    }
+
+    private record BookKeyData(java.util.Map<String, String> bookKeysById, Set<String> bookKeys) {
+        private BookKeyData() {
+            this(new java.util.HashMap<>(), new HashSet<>());
+        }
+    }
+
+    private record BookChapterData(java.util.Map<String, Set<Integer>> chaptersByBookKey) {
+        private BookChapterData() {
+            this(new java.util.HashMap<>());
+        }
     }
 
     private static void report(String label, List<Path> orphaned) {

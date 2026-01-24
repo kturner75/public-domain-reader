@@ -40,10 +40,10 @@ public class CharacterPrefetchService {
     private final CharacterService characterService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${ollama.base-url}")
+    @Value("${ai.reasoning.ollama.base-url}")
     private String ollamaBaseUrl;
 
-    @Value("${ollama.model}")
+    @Value("${ai.reasoning.ollama.model}")
     private String ollamaModel;
 
     @Value("${character.prefetch.timeout-seconds:60}")

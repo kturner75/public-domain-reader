@@ -6,6 +6,7 @@ import org.example.reader.model.IllustrationSettings;
 import org.example.reader.repository.BookRepository;
 import org.example.reader.repository.ChapterRepository;
 import org.example.reader.service.ComfyUIService;
+import org.example.reader.service.CdnAssetService;
 import org.example.reader.service.IllustrationService;
 import org.example.reader.service.IllustrationStyleAnalysisService;
 import org.slf4j.Logger;
@@ -34,6 +35,7 @@ public class IllustrationController {
     private final IllustrationService illustrationService;
     private final IllustrationStyleAnalysisService styleAnalysisService;
     private final ComfyUIService comfyUIService;
+    private final CdnAssetService cdnAssetService;
     private final BookRepository bookRepository;
     private final ChapterRepository chapterRepository;
 
@@ -41,11 +43,13 @@ public class IllustrationController {
             IllustrationService illustrationService,
             IllustrationStyleAnalysisService styleAnalysisService,
             ComfyUIService comfyUIService,
+            CdnAssetService cdnAssetService,
             BookRepository bookRepository,
             ChapterRepository chapterRepository) {
         this.illustrationService = illustrationService;
         this.styleAnalysisService = styleAnalysisService;
         this.comfyUIService = comfyUIService;
+        this.cdnAssetService = cdnAssetService;
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
     }
@@ -131,6 +135,16 @@ public class IllustrationController {
         if (!isIllustrationEnabled(bookOpt.get())) {
             return ResponseEntity.status(403).build();
         }
+
+        if (cdnAssetService.isEnabled()) {
+            return illustrationService.getIllustrationFilename(chapterId)
+                    .flatMap(key -> cdnAssetService.buildAssetUrl("illustrations", key))
+                    .map(url -> ResponseEntity.status(302)
+                            .header(HttpHeaders.LOCATION, url)
+                            .body(new byte[0]))
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        }
+
         byte[] image = illustrationService.getIllustration(chapterId);
         if (image == null) {
             return ResponseEntity.notFound().build();
