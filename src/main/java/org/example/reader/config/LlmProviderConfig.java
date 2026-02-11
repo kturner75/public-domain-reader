@@ -38,6 +38,44 @@ public class LlmProviderConfig {
     @Value("${ai.reasoning.xai.model:grok-4-1-fast-reasoning}")
     private String reasoningXaiModel;
 
+    // Recap reasoning provider config (can differ from global reasoning provider)
+    @Value("${recap.reasoning.provider:${ai.reasoning.provider:ollama}}")
+    private String recapReasoningProvider;
+
+    @Value("${recap.reasoning.timeout-seconds:${ai.reasoning.timeout-seconds:180}}")
+    private int recapReasoningTimeoutSeconds;
+
+    @Value("${recap.reasoning.ollama.base-url:${ai.reasoning.ollama.base-url:http://localhost:11434}}")
+    private String recapReasoningOllamaBaseUrl;
+
+    @Value("${recap.reasoning.ollama.model:${ai.reasoning.ollama.model:llama3.1:latest}}")
+    private String recapReasoningOllamaModel;
+
+    @Value("${recap.reasoning.xai.api-key:${ai.reasoning.xai.api-key:}}")
+    private String recapReasoningXaiApiKey;
+
+    @Value("${recap.reasoning.xai.model:${ai.reasoning.xai.model:grok-4-1-fast-reasoning}}")
+    private String recapReasoningXaiModel;
+
+    // Quiz reasoning provider config (defaults to global reasoning provider)
+    @Value("${quiz.reasoning.provider:${ai.reasoning.provider:ollama}}")
+    private String quizReasoningProvider;
+
+    @Value("${quiz.reasoning.timeout-seconds:${ai.reasoning.timeout-seconds:180}}")
+    private int quizReasoningTimeoutSeconds;
+
+    @Value("${quiz.reasoning.ollama.base-url:${ai.reasoning.ollama.base-url:http://localhost:11434}}")
+    private String quizReasoningOllamaBaseUrl;
+
+    @Value("${quiz.reasoning.ollama.model:${ai.reasoning.ollama.model:llama3.1:latest}}")
+    private String quizReasoningOllamaModel;
+
+    @Value("${quiz.reasoning.xai.api-key:${ai.reasoning.xai.api-key:}}")
+    private String quizReasoningXaiApiKey;
+
+    @Value("${quiz.reasoning.xai.model:${ai.reasoning.xai.model:grok-4-1-fast-reasoning}}")
+    private String quizReasoningXaiModel;
+
     // Chat provider config
     @Value("${ai.chat.provider:xai}")
     private String chatProvider;
@@ -67,6 +105,32 @@ public class LlmProviderConfig {
                 reasoningXaiApiKey, reasoningXaiModel,
                 reasoningTimeoutSeconds,
                 "reasoning"
+        );
+    }
+
+    @Bean
+    @Qualifier("recapReasoningLlmProvider")
+    public LlmProvider recapReasoningLlmProvider() {
+        log.info("Configuring recap reasoning LLM provider: {}", recapReasoningProvider);
+        return createProvider(
+                recapReasoningProvider,
+                recapReasoningOllamaBaseUrl, recapReasoningOllamaModel,
+                recapReasoningXaiApiKey, recapReasoningXaiModel,
+                recapReasoningTimeoutSeconds,
+                "recap-reasoning"
+        );
+    }
+
+    @Bean
+    @Qualifier("quizReasoningLlmProvider")
+    public LlmProvider quizReasoningLlmProvider() {
+        log.info("Configuring quiz reasoning LLM provider: {}", quizReasoningProvider);
+        return createProvider(
+                quizReasoningProvider,
+                quizReasoningOllamaBaseUrl, quizReasoningOllamaModel,
+                quizReasoningXaiApiKey, quizReasoningXaiModel,
+                quizReasoningTimeoutSeconds,
+                "quiz-reasoning"
         );
     }
 

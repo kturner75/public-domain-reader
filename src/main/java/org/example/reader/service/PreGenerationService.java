@@ -3,11 +3,13 @@ package org.example.reader.service;
 import org.example.reader.entity.CharacterStatus;
 import org.example.reader.entity.ChapterEntity;
 import org.example.reader.entity.ChapterAnalysisStatus;
+import org.example.reader.entity.ChapterRecapStatus;
 import org.example.reader.entity.IllustrationStatus;
 import org.example.reader.model.Book;
 import org.example.reader.repository.BookRepository;
 import org.example.reader.repository.CharacterRepository;
 import org.example.reader.repository.ChapterAnalysisRepository;
+import org.example.reader.repository.ChapterRecapRepository;
 import org.example.reader.repository.ChapterRepository;
 import org.example.reader.repository.IllustrationRepository;
 import org.example.reader.service.BookImportService.ImportResult;
@@ -33,17 +35,22 @@ public class PreGenerationService {
     private final BookRepository bookRepository;
     private final ChapterRepository chapterRepository;
     private final ChapterAnalysisRepository chapterAnalysisRepository;
+    private final ChapterRecapRepository chapterRecapRepository;
     private final IllustrationRepository illustrationRepository;
     private final CharacterRepository characterRepository;
     private final IllustrationService illustrationService;
     private final CharacterService characterService;
     private final CharacterPrefetchService characterPrefetchService;
+    private final ChapterRecapService chapterRecapService;
 
     @Value("${pregen.poll-interval-seconds:10}")
     private int pollIntervalSeconds;
 
     @Value("${pregen.max-wait-minutes:120}")
     private int maxWaitMinutes;
+
+    @Value("${pregen.stall-threshold-polls:30}")
+    private int stallThresholdPolls;
 
     @Value("${pregen.cooldown-every-images:100}")
     private int cooldownEveryImages;
@@ -57,21 +64,25 @@ public class PreGenerationService {
             BookRepository bookRepository,
             ChapterRepository chapterRepository,
             ChapterAnalysisRepository chapterAnalysisRepository,
+            ChapterRecapRepository chapterRecapRepository,
             IllustrationRepository illustrationRepository,
             CharacterRepository characterRepository,
             IllustrationService illustrationService,
             CharacterService characterService,
-            CharacterPrefetchService characterPrefetchService) {
+            CharacterPrefetchService characterPrefetchService,
+            ChapterRecapService chapterRecapService) {
         this.bookImportService = bookImportService;
         this.bookStorageService = bookStorageService;
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
         this.chapterAnalysisRepository = chapterAnalysisRepository;
+        this.chapterRecapRepository = chapterRecapRepository;
         this.illustrationRepository = illustrationRepository;
         this.characterRepository = characterRepository;
         this.illustrationService = illustrationService;
         this.characterService = characterService;
         this.characterPrefetchService = characterPrefetchService;
+        this.chapterRecapService = chapterRecapService;
     }
 
     public record PreGenResult(
@@ -84,11 +95,14 @@ public class PreGenerationService {
             int illustrationsFailed,
             int portraitsCompleted,
             int portraitsFailed,
+            int recapsCompleted,
+            int recapsFailed,
             int newIllustrations,
-            int newPortraits
+            int newPortraits,
+            int newRecaps
     ) {
         public static PreGenResult failure(String message) {
-            return new PreGenResult(false, null, null, message, 0, 0, 0, 0, 0, 0, 0);
+            return new PreGenResult(false, null, null, message, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
     }
 
@@ -126,6 +140,38 @@ public class PreGenerationService {
     }
 
     /**
+     * Pre-generate recap assets only for a book by Gutenberg ID.
+     * Will import the book if not already present.
+     */
+    public PreGenResult preGenerateRecapsByGutenbergId(int gutenbergId) {
+        log.info("Starting recap-only pre-generation for Gutenberg ID: {}", gutenbergId);
+
+        String sourceId = String.valueOf(gutenbergId);
+        Optional<Book> existingBook = bookStorageService.findBySource("gutenberg", sourceId);
+
+        String bookId;
+        String bookTitle;
+
+        if (existingBook.isPresent()) {
+            bookId = existingBook.get().id();
+            bookTitle = existingBook.get().title();
+            log.info("Book already imported: '{}' ({})", bookTitle, bookId);
+        } else {
+            log.info("Importing book from Gutenberg ID: {}", gutenbergId);
+            ImportResult importResult = bookImportService.importBook(gutenbergId);
+            if (!importResult.success()) {
+                log.error("Failed to import book: {}", importResult.message());
+                return PreGenResult.failure("Import failed: " + importResult.message());
+            }
+            bookId = importResult.bookId();
+            bookTitle = bookRepository.findById(bookId).map(b -> b.getTitle()).orElse("Unknown");
+            log.info("Successfully imported '{}' with {} chapters", bookTitle, importResult.chapterCount());
+        }
+
+        return preGenerateRecapsForBook(bookId);
+    }
+
+    /**
      * Pre-generate all assets for a book that's already in the database.
      */
     public PreGenResult preGenerateForBook(String bookId) {
@@ -142,6 +188,8 @@ public class PreGenerationService {
                 + illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.FAILED).size();
         int prePortraitsTotal = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.COMPLETED).size()
                 + characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.FAILED).size();
+        int preRecapsTotal = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.COMPLETED).size()
+                + chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.FAILED).size();
 
         // Step 1: Analyze book style (if not already done)
         log.info("[1/4] Analyzing book illustration style...");
@@ -158,6 +206,7 @@ public class PreGenerationService {
         for (ChapterEntity chapter : chapters) {
             illustrationService.requestIllustration(chapter.getId());
             characterService.requestChapterAnalysis(chapter.getId());
+            chapterRecapService.requestChapterRecap(chapter.getId());
         }
 
         // Force-queue any items that were already pending (from previous runs)
@@ -165,9 +214,10 @@ public class PreGenerationService {
         int illustrationsRequeued = illustrationService.forceQueuePendingForBook(bookId);
         int portraitsRequeued = characterService.forceQueuePendingPortraitsForBook(bookId);
         int analysesRequeued = characterService.forceQueuePendingAnalysesForBook(bookId);
-        if (illustrationsRequeued > 0 || portraitsRequeued > 0 || analysesRequeued > 0) {
-            log.info("Re-queued {} illustrations, {} portraits, and {} analyses from previous pending state",
-                    illustrationsRequeued, portraitsRequeued, analysesRequeued);
+        int recapsRequeued = chapterRecapService.forceQueuePendingForBook(bookId);
+        if (illustrationsRequeued > 0 || portraitsRequeued > 0 || analysesRequeued > 0 || recapsRequeued > 0) {
+            log.info("Re-queued {} illustrations, {} portraits, {} analyses, and {} recaps from previous pending state",
+                    illustrationsRequeued, portraitsRequeued, analysesRequeued, recapsRequeued);
         }
 
         // Step 4: Wait for all generation to complete
@@ -183,8 +233,9 @@ public class PreGenerationService {
         int lastIllustrationsPending = -1;
         int lastPortraitsPending = -1;
         int lastAnalysesPending = -1;
+        int lastRecapsPending = -1;
         int stallCount = 0;
-        final int stallThreshold = 6; // After 6 unchanged polls (60s), consider it stalled
+        final int stallThreshold = Math.max(1, stallThresholdPolls);
 
         // Track images completed for periodic cooldown
         int imagesSinceLastCooldown = 0;
@@ -204,21 +255,30 @@ public class PreGenerationService {
             int analysesPendingNull = chapterAnalysisRepository.findByChapterBookIdAndStatusIsNull(bookId).size();
             int analysesGenerating = chapterAnalysisRepository.findByChapterBookIdAndStatus(bookId, ChapterAnalysisStatus.GENERATING).size();
 
+            // Count pending/generating recaps
+            int recapsPending = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.PENDING).size();
+            int recapsPendingNull = chapterRecapRepository.findByChapterBookIdAndStatusIsNull(bookId).size();
+            int recapsGenerating = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.GENERATING).size();
+
             int totalPending = illustrationsPending + illustrationsGenerating
                     + portraitsPending + portraitsGenerating
-                    + analysesPending + analysesPendingNull + analysesGenerating;
+                    + analysesPending + analysesPendingNull + analysesGenerating
+                    + recapsPending + recapsPendingNull + recapsGenerating;
 
             // Log progress if changed
             if (illustrationsPending + illustrationsGenerating != lastIllustrationsPending ||
                     portraitsPending + portraitsGenerating != lastPortraitsPending ||
-                    analysesPending + analysesPendingNull + analysesGenerating != lastAnalysesPending) {
-                log.info("  Progress: {} illustrations pending/generating, {} portraits pending/generating, {} analyses pending/generating",
+                    analysesPending + analysesPendingNull + analysesGenerating != lastAnalysesPending ||
+                    recapsPending + recapsPendingNull + recapsGenerating != lastRecapsPending) {
+                log.info("  Progress: {} illustrations pending/generating, {} portraits pending/generating, {} analyses pending/generating, {} recaps pending/generating",
                         illustrationsPending + illustrationsGenerating,
                         portraitsPending + portraitsGenerating,
-                        analysesPending + analysesPendingNull + analysesGenerating);
+                        analysesPending + analysesPendingNull + analysesGenerating,
+                        recapsPending + recapsPendingNull + recapsGenerating);
                 lastIllustrationsPending = illustrationsPending + illustrationsGenerating;
                 lastPortraitsPending = portraitsPending + portraitsGenerating;
                 lastAnalysesPending = analysesPending + analysesPendingNull + analysesGenerating;
+                lastRecapsPending = recapsPending + recapsPendingNull + recapsGenerating;
                 stallCount = 0; // Reset stall counter on progress
             } else if (totalPending > 0) {
                 stallCount++;
@@ -228,8 +288,9 @@ public class PreGenerationService {
                     int illustrationsReset = illustrationService.resetAndRequeueStuckForBook(bookId);
                     int portraitsReset = characterService.resetAndRequeueStuckPortraitsForBook(bookId);
                     int analysesReset = characterService.resetAndRequeueStuckAnalysesForBook(bookId);
-                    log.info("Reset and re-queued {} illustrations, {} portraits, and {} analyses",
-                            illustrationsReset, portraitsReset, analysesReset);
+                    int recapsReset = chapterRecapService.resetAndRequeueStuckForBook(bookId);
+                    log.info("Reset and re-queued {} illustrations, {} portraits, {} analyses, and {} recaps",
+                            illustrationsReset, portraitsReset, analysesReset, recapsReset);
                     stallCount = 0;
                 }
             }
@@ -278,17 +339,22 @@ public class PreGenerationService {
         int illustrationsFailed = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.FAILED).size();
         int portraitsCompleted = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.COMPLETED).size();
         int portraitsFailed = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.FAILED).size();
+        int recapsCompleted = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.COMPLETED).size();
+        int recapsFailed = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.FAILED).size();
         int newIllustrations = Math.max(0, (illustrationsCompleted + illustrationsFailed) - preIllustrationsTotal);
         int newPortraits = Math.max(0, (portraitsCompleted + portraitsFailed) - prePortraitsTotal);
+        int newRecaps = Math.max(0, (recapsCompleted + recapsFailed) - preRecapsTotal);
 
         long elapsedMinutes = (System.currentTimeMillis() - startTime) / 60000;
         log.info("Pre-generation completed for '{}' in {} minutes", bookTitle, elapsedMinutes);
         log.info("  Illustrations: {} completed, {} failed", illustrationsCompleted, illustrationsFailed);
         log.info("  Portraits: {} completed, {} failed", portraitsCompleted, portraitsFailed);
+        log.info("  Recaps: {} completed, {} failed", recapsCompleted, recapsFailed);
 
-        boolean allSuccess = illustrationsFailed == 0 && portraitsFailed == 0;
+        boolean allSuccess = illustrationsFailed == 0 && portraitsFailed == 0 && recapsFailed == 0;
         String message = allSuccess ? "All assets generated successfully" :
-                String.format("%d illustrations failed, %d portraits failed", illustrationsFailed, portraitsFailed);
+                String.format("%d illustrations failed, %d portraits failed, %d recaps failed",
+                        illustrationsFailed, portraitsFailed, recapsFailed);
 
         return new PreGenResult(
                 allSuccess,
@@ -300,8 +366,110 @@ public class PreGenerationService {
                 illustrationsFailed,
                 portraitsCompleted,
                 portraitsFailed,
+                recapsCompleted,
+                recapsFailed,
                 newIllustrations,
-                newPortraits
+                newPortraits,
+                newRecaps
+        );
+    }
+
+    /**
+     * Pre-generate recap assets only for a book that's already in the database.
+     */
+    public PreGenResult preGenerateRecapsForBook(String bookId) {
+        var book = bookRepository.findById(bookId).orElse(null);
+        if (book == null) {
+            return PreGenResult.failure("Book not found: " + bookId);
+        }
+
+        String bookTitle = book.getTitle();
+        log.info("Starting recap-only pre-generation for '{}' by {}", bookTitle, book.getAuthor());
+
+        int preRecapsTotal = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.COMPLETED).size()
+                + chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.FAILED).size();
+
+        List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(bookId);
+        log.info("Queuing recap generation for {} chapters...", chapters.size());
+        for (ChapterEntity chapter : chapters) {
+            chapterRecapService.requestChapterRecap(chapter.getId());
+        }
+
+        int recapsRequeued = chapterRecapService.forceQueuePendingForBook(bookId);
+        if (recapsRequeued > 0) {
+            log.info("Re-queued {} recaps from previous pending state", recapsRequeued);
+        }
+
+        log.info("Waiting for recap generation to complete (polling every {}s, max {}min)...",
+                pollIntervalSeconds, maxWaitMinutes);
+
+        long startTime = System.currentTimeMillis();
+        long maxWaitMs = maxWaitMinutes * 60 * 1000L;
+        int lastRecapsPending = -1;
+        int stallCount = 0;
+        final int stallThreshold = Math.max(1, stallThresholdPolls);
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            int recapsPending = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.PENDING).size();
+            int recapsPendingNull = chapterRecapRepository.findByChapterBookIdAndStatusIsNull(bookId).size();
+            int recapsGenerating = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.GENERATING).size();
+            int totalPending = recapsPending + recapsPendingNull + recapsGenerating;
+
+            if (totalPending != lastRecapsPending) {
+                log.info("  Progress: {} recaps pending/generating", totalPending);
+                lastRecapsPending = totalPending;
+                stallCount = 0;
+            } else if (totalPending > 0) {
+                stallCount++;
+                if (stallCount >= stallThreshold) {
+                    int recapsReset = chapterRecapService.resetAndRequeueStuckForBook(bookId);
+                    log.info("Reset and re-queued {} recaps", recapsReset);
+                    stallCount = 0;
+                }
+            }
+
+            if (totalPending == 0) {
+                log.info("All recap tasks completed!");
+                break;
+            }
+
+            try {
+                Thread.sleep(pollIntervalSeconds * 1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Recap pre-generation interrupted");
+                break;
+            }
+        }
+
+        int recapsCompleted = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.COMPLETED).size();
+        int recapsFailed = chapterRecapRepository.findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.FAILED).size();
+        int newRecaps = Math.max(0, (recapsCompleted + recapsFailed) - preRecapsTotal);
+
+        long elapsedMinutes = (System.currentTimeMillis() - startTime) / 60000;
+        log.info("Recap-only pre-generation completed for '{}' in {} minutes", bookTitle, elapsedMinutes);
+        log.info("  Recaps: {} completed, {} failed", recapsCompleted, recapsFailed);
+
+        boolean success = recapsFailed == 0;
+        String message = success
+                ? "Recaps generated successfully"
+                : String.format("%d recaps failed", recapsFailed);
+
+        return new PreGenResult(
+                success,
+                bookId,
+                bookTitle,
+                message,
+                chapters.size(),
+                0,
+                0,
+                0,
+                0,
+                recapsCompleted,
+                recapsFailed,
+                0,
+                0,
+                newRecaps
         );
     }
 }
