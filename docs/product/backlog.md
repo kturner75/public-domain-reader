@@ -1,6 +1,6 @@
 # Product Backlog
 
-Last updated: 2026-02-08
+Last updated: 2026-02-11
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
@@ -57,23 +57,38 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P2
 - Effort: M
-- Status: Discovery
+- Status: Done
 - Problem: Readers may want optional chapter-level comprehension checks and reflection prompts.
-- Scope Buckets:
-- Quiz question generation and answer validation strategy.
-- Placement in chapter transition flow and opt-in behavior.
-- Scoring, review feedback, and linkage to trophies.
-- Discovery Questions:
-- Should quizzes be strictly factual or include interpretive questions?
-- How many questions per chapter and what difficulty ramp should we use?
-- Should incorrect answers provide citations/snippets from the chapter text?
+- Implementation Plan:
+- Phase 1 (Data + API): Add per-chapter quiz persistence with immutable payload storage, generation status, and read/status/generate/grade endpoints.
+- Phase 2 (Generation Pipeline): Implement async on-demand quiz generation on chapter load with LLM JSON output and extractive fallback.
+- Phase 3 (Reader UX): Add `Quiz` tab in chapter pause overlay with multiple-choice flow, score summary, and wrong-answer citation snippets.
+- Phase 4 (Progression): Define difficulty ramp and trophy linkage once quiz completion telemetry is stable.
 - Current Direction (2026-02-08):
 - Start with factual-only quizzes.
 - Present at chapter pause as optional interaction.
 - Add citations/snippets for wrong answers as a likely v1 requirement.
-- Exit Criteria for Discovery:
-- Quiz format specification with scoring rules.
-- Decision on quiz generation mode (pre-gen/on-demand/hybrid).
+- Current Direction (2026-02-11):
+- v1 quiz format: factual-only multiple-choice (target 3 questions, allow 2-5 from LLM output).
+- v1 generation mode: on-demand async generation with persisted chapter quiz payloads and cache reuse.
+- v1 review feedback: grading response includes correct answer and citation snippet for each missed question.
+- Acceptance Criteria:
+- Quiz API returns stable, static payload for a chapter after first successful generation.
+- Quiz grading endpoint returns total score and per-question correctness with citation snippets for missed answers.
+- Reader chapter pause UI exposes quiz interaction without blocking continue/skip chapter navigation.
+- Quiz difficulty ramps deterministically by chapter progression and returns current difficulty in quiz payload/grade responses.
+- Quiz grading records progression attempts and unlocks deterministic quiz trophies for future gamification surfaces.
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-020.1 Quiz Data + API | Done | `chapter_quizzes` persistence, async generation queue, `/api/quizzes` status/read/generate/grade endpoints | Controller/service tests pass and generated quiz payload is stable per chapter |
+| BL-020.2 Reader Quiz UX | Done | Add `Quiz` tab to chapter pause overlay with answer submission + score/citation feedback | Reader can complete quiz and view missed-answer citations without nav regressions |
+| BL-020.3 Difficulty + Trophy Linkage | Done | Add configurable difficulty ramp and integrate quiz outcomes with trophy logic | Difficulty settings and trophy unlock hooks are implemented and validated |
+- Session Log:
+- 2026-02-11: Started BL-020 by implementing chapter quiz persistence + async generation service and adding `/api/quizzes` read/status/generate/grade endpoints.
+- 2026-02-11: Added chapter pause `Quiz` tab in reader overlay with multi-question submission flow, score summary, and missed-answer citation feedback.
+- 2026-02-11: Validated BL-020.1/BL-020.2 with passing `ChapterQuizServiceTest` and `ChapterQuizControllerTest` plus recap regression tests.
+- 2026-02-11: Completed BL-020.3 by adding chapter-index-based quiz difficulty ramping, persisted quiz attempt/trophy tracking, trophy/readout APIs, and UI feedback for unlocked trophies and streak progress.
 
 ### BL-021 - User Registration and Account System
 - Type: Feature
@@ -245,7 +260,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P1
 - Effort: XL
-- Status: Ready
+- Status: Done
 - Problem: Readers need structured comprehension support between chapters without breaking immersion.
 - Implementation Plan:
 - Phase 1 (Data + Contracts): Add recap persistence model per `bookId/chapterId` with immutable generated payload, status, timestamps, and prompt/version metadata; add recap retrieval/status APIs and typed frontend response models.
@@ -277,14 +292,29 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Work Tracker:
 | Slice | Status | Scope | Done When |
 | --- | --- | --- | --- |
-| BL-017.1 Recap Data + API | Todo | Recap entity/repo/service + read/status endpoints + payload schema | Endpoints return stable recap payload; controller/service tests pass |
-| BL-017.2 Generation Integration | Todo | Hook recap generation into pre-generation + on-demand fallback | Recaps generate in both paths; progress/state visible |
-| BL-017.3 Reader Transition UI | Todo | Post-chapter recap screen, skip/continue flow, opt-out toggle | Reader can view recap or skip with no nav regressions |
-| BL-017.4 Bounded Discussion Chat | Todo | Chapter-bounded chat endpoint + frontend thread persistence | Chat never leaks future-chapter content; fallback responses handled |
-| BL-017.5 Guardrails + Rollout | Todo | Spoiler guards, feature flags, metrics, rollout toggles | Flags + metrics verified; safe staged rollout possible |
+| BL-017.1 Recap Data + API | Done | Recap entity/repo/service + read/status endpoints + payload schema | Endpoints return stable recap payload; controller/service tests pass |
+| BL-017.2 Generation Integration | Done | Hook recap generation into pre-generation + on-demand fallback | Recaps generate in both paths; progress/state visible |
+| BL-017.3 Reader Transition UI | Done | Post-chapter recap screen, skip/continue flow, opt-out toggle | Reader can view recap or skip with no nav regressions |
+| BL-017.4 Bounded Discussion Chat | Done | Chapter-bounded chat endpoint + frontend thread persistence | Chat never leaks future-chapter content; fallback responses handled |
+| BL-017.5 Guardrails + Rollout | Done | Spoiler guards, feature flags, metrics, rollout toggles | Flags/metrics wired, recap-only pregen stable, and manual spoiler checks passed on tested books |
 - Session Log:
 - 2026-02-08: Moved BL-017 from `Discovery` to `Ready` with concrete implementation plan.
 - 2026-02-08: Added minimal slice tracker and dated log to support pause/resume execution.
+- 2026-02-08: Implemented BL-017.1 with `chapter_recaps` persistence, recap payload schema, `/api/recaps` read/status endpoints, and passing controller/service tests.
+- 2026-02-08: Implemented BL-017.2 with async recap generation queue, pre-generation integration, recap status metrics in pregen results, and passing recap/pregen tests.
+- 2026-02-08: Started BL-017.3 with first-pass chapter recap transition overlay, skip/continue actions, and per-book recap opt-out toggle in reader UI.
+- 2026-02-08: Started BL-017.4 with chapter-bounded recap chat API contract (`/api/recaps/book/{bookId}/chat`) and context-guard service tests.
+- 2026-02-08: Upgraded recap generation to reasoning-LLM JSON output with extractive fallback and added recap service tests for provider path.
+- 2026-02-08: Completed BL-017.4 frontend work by adding recap discussion UI and per-book local thread persistence in reader recap overlay.
+- 2026-02-08: Updated recap overlay UX to auto-refresh while status is `MISSING/PENDING/GENERATING`, stopping polling once terminal status is reached or overlay closes.
+- 2026-02-08: Refined recap overlay into two tabs (`Recap` default, `Chat`) to improve focus now and leave clean UI space for future `Pop Quiz` expansion.
+- 2026-02-08: Started BL-017.5 by adding rollout gating modes (`all`, `allow-list`, `pre-generated`), per-book recap availability endpoint, and recap metrics capture (generation/chat/modal events) with status visibility.
+- 2026-02-08: Added recap-specific reasoning provider config so recaps can use Ollama independently of other reasoning tasks (cost-control path for recap generation).
+- 2026-02-08: Added recap-only pre-generation mode for batch runner to support top-20 recap generation without triggering illustration/portrait generation.
+- 2026-02-11: Stabilized recap pre-generation by preventing duplicate queue entries, skipping already-completed recaps, and resetting only stale `GENERATING` recaps (plus configurable stall thresholds).
+- 2026-02-11: Completed recap UX polish with persistent modal chrome + scrollable body, recap/chat tab flow polish, and a reader header control to re-enable per-book recap popups after opt-out.
+- 2026-02-11: Hardened recap chat guardrails by enforcing source-only prompt behavior and chapter-scoped local chat history; validated behavior in manual QA on tested books.
+- 2026-02-11: Marked BL-017 as Done; next feature work continues under BL-020 (Post-Chapter Pop Quiz).
 
 ## P2
 

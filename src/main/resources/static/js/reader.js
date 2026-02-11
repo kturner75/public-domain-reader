@@ -56,6 +56,26 @@
         characterAvailable: false,
         characterCacheOnly: false,
         characterChatAvailable: false,
+        recapAvailable: false,
+        recapCacheOnly: false,
+        recapChatAvailable: false,
+        recapOptOut: false,
+        recapPendingChapterIndex: null,
+        recapActiveTab: 'recap',
+        recapChatChapterIndex: null,
+        recapChatHistory: [],
+        recapChatLoading: false,
+        recapPollingInterval: null,
+        recapPollingChapterId: null,
+        recapPollingInFlight: false,
+        quizAvailable: false,
+        quizCacheOnly: false,
+        quizChapterId: null,
+        quizQuestions: [],
+        quizSelectedAnswers: [],
+        quizSubmitting: false,
+        quizResult: null,
+        quizDifficultyLevel: 0,
         characters: [],                   // Characters met so far
         characterLastCheck: 0,            // Timestamp of last new character check
         characterPollingInterval: null,   // Interval for checking new characters
@@ -118,6 +138,31 @@
         speedReadingContinue: document.getElementById('speed-reading-continue'),
         speedReadingExit: document.getElementById('speed-reading-exit'),
         speedReadingHint: document.getElementById('speed-reading-hint'),
+        chapterRecapOverlay: document.getElementById('chapter-recap-overlay'),
+        chapterRecapBackdrop: document.getElementById('chapter-recap-backdrop'),
+        chapterRecapClose: document.getElementById('chapter-recap-close'),
+        chapterRecapChapterTitle: document.getElementById('chapter-recap-chapter-title'),
+        chapterRecapTabRecap: document.getElementById('chapter-recap-tab-recap'),
+        chapterRecapTabChat: document.getElementById('chapter-recap-tab-chat'),
+        chapterRecapTabQuiz: document.getElementById('chapter-recap-tab-quiz'),
+        chapterRecapPanelRecap: document.getElementById('chapter-recap-panel-recap'),
+        chapterRecapPanelChat: document.getElementById('chapter-recap-panel-chat'),
+        chapterRecapPanelQuiz: document.getElementById('chapter-recap-panel-quiz'),
+        chapterRecapStatus: document.getElementById('chapter-recap-status'),
+        chapterRecapSummary: document.getElementById('chapter-recap-summary'),
+        chapterRecapEvents: document.getElementById('chapter-recap-events'),
+        chapterRecapCharacters: document.getElementById('chapter-recap-characters'),
+        chapterRecapChatStatus: document.getElementById('chapter-recap-chat-status'),
+        chapterRecapChatMessages: document.getElementById('chapter-recap-chat-messages'),
+        chapterRecapChatInput: document.getElementById('chapter-recap-chat-input'),
+        chapterRecapChatSend: document.getElementById('chapter-recap-chat-send'),
+        chapterQuizStatus: document.getElementById('chapter-quiz-status'),
+        chapterQuizQuestions: document.getElementById('chapter-quiz-questions'),
+        chapterQuizSubmit: document.getElementById('chapter-quiz-submit'),
+        chapterQuizFeedback: document.getElementById('chapter-quiz-feedback'),
+        chapterRecapOptout: document.getElementById('chapter-recap-optout'),
+        chapterRecapSkip: document.getElementById('chapter-recap-skip'),
+        chapterRecapContinue: document.getElementById('chapter-recap-continue'),
         // Illustration elements
         illustrationToggle: document.getElementById('illustration-toggle'),
         illustrationColumn: document.getElementById('illustration-column'),
@@ -144,6 +189,7 @@
         // Character elements
         characterToggle: document.getElementById('character-toggle'),
         characterHint: document.getElementById('character-hint'),
+        recapEnableBtn: document.getElementById('recap-enable-btn'),
         characterToast: document.getElementById('character-toast'),
         characterToastImage: document.getElementById('character-toast-image'),
         characterToastName: document.getElementById('character-toast-name'),
@@ -184,6 +230,8 @@
         TTS_SPEED: 'reader_ttsSpeed',
         SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
+        RECAP_OPTOUT_PREFIX: 'reader_recapOptOut_',
+        RECAP_CHAT_PREFIX: 'reader_recapChat_',
         CHARACTER_CHAT_PREFIX: 'reader_characterChat_',
         DISCOVERED_CHARACTERS_PREFIX: 'reader_discoveredCharacters_',
         DISCOVERED_CHARACTER_DETAILS_PREFIX: 'reader_discoveredCharacterDetails_'
@@ -207,6 +255,8 @@
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
         await characterCheckAvailability();
+        await recapCheckAvailability();
+        await quizCheckAvailability();
 
         // Load saved TTS speed preference
         const savedSpeed = parseFloat(localStorage.getItem(STORAGE_KEYS.TTS_SPEED));
@@ -432,6 +482,15 @@
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
         await characterCheckAvailability();
+        await recapCheckAvailability();
+        await quizCheckAvailability();
+
+        state.recapOptOut = getRecapOptOut(book.id);
+        if (elements.chapterRecapOptout) {
+            elements.chapterRecapOptout.checked = state.recapOptOut;
+        }
+        updateRecapOptOutControl();
+        closeChapterRecapOverlay(false);
 
         const savedIllustrationMode = localStorage.getItem(STORAGE_KEYS.ILLUSTRATION_MODE);
         if (!state.illustrationMode && savedIllustrationMode === 'true' && state.illustrationAvailable) {
@@ -501,6 +560,10 @@
 
             // Analyze chapter for characters
             loadChapterCharacters();
+
+            // Queue recap generation asynchronously (no-op when disabled or already generated)
+            requestChapterRecapGeneration(chapter.id);
+            requestChapterQuizGeneration(chapter.id);
         } catch (error) {
             state.ttsWaitingForChapter = false;
             console.error('Failed to load chapter:', error);
@@ -674,8 +737,7 @@
             state.currentParagraphIndex = state.pagesData[state.currentPage].startParagraph;
             renderPage();
         } else if (state.currentChapterIndex < state.chapters.length - 1) {
-            // Go to next chapter
-            loadChapter(state.currentChapterIndex + 1, 0);
+            goToNextChapter(true);
         }
     }
 
@@ -708,10 +770,7 @@
                 renderPage();
             }
         } else if (state.currentChapterIndex < state.chapters.length - 1) {
-            // Go to next chapter
-            loadChapter(state.currentChapterIndex + 1, 0).then(() => {
-                state.currentParagraphIndex = 0;
-            });
+            goToNextChapter(true);
         }
     }
 
@@ -740,7 +799,7 @@
 
     function nextChapter() {
         if (state.currentChapterIndex < state.chapters.length - 1) {
-            loadChapter(state.currentChapterIndex + 1, 0);
+            goToNextChapter(true);
         }
     }
 
@@ -748,6 +807,702 @@
         if (state.currentChapterIndex > 0) {
             loadChapter(state.currentChapterIndex - 1, 0);
         }
+    }
+
+    function shouldShowChapterRecapOnTransition() {
+        return (state.recapAvailable || state.quizAvailable) &&
+            !state.recapOptOut &&
+            !state.ttsEnabled &&
+            !state.speedReadingActive;
+    }
+
+    async function goToNextChapter(showRecap) {
+        const nextChapterIndex = state.currentChapterIndex + 1;
+        if (nextChapterIndex >= state.chapters.length) return;
+
+        if (showRecap && shouldShowChapterRecapOnTransition()) {
+            if (state.recapCacheOnly || state.quizCacheOnly) {
+                const transitionDataReady = await isCurrentChapterPauseReady();
+                if (!transitionDataReady) {
+                    loadChapter(nextChapterIndex, 0);
+                    return;
+                }
+            }
+            openChapterRecapOverlay(nextChapterIndex);
+            return;
+        }
+
+        loadChapter(nextChapterIndex, 0);
+    }
+
+    async function openChapterRecapOverlay(nextChapterIndex) {
+        if (!state.currentBook) {
+            loadChapter(nextChapterIndex, 0);
+            return;
+        }
+
+        const currentChapter = state.chapters[state.currentChapterIndex];
+        if (!currentChapter) {
+            loadChapter(nextChapterIndex, 0);
+            return;
+        }
+
+        state.recapPendingChapterIndex = nextChapterIndex;
+        state.recapChatChapterIndex = state.currentChapterIndex;
+        state.quizChapterId = currentChapter.id;
+        state.quizQuestions = [];
+        state.quizSelectedAnswers = [];
+        state.quizSubmitting = false;
+        state.quizResult = null;
+        state.quizDifficultyLevel = 0;
+        if (elements.chapterRecapOptout) {
+            elements.chapterRecapOptout.checked = state.recapOptOut;
+        }
+        setChapterRecapTab(state.recapAvailable ? 'recap' : 'quiz');
+        elements.chapterRecapChapterTitle.textContent = currentChapter.title || 'Current chapter';
+        elements.chapterRecapStatus.textContent = 'Loading recap...';
+        elements.chapterRecapSummary.textContent = 'Preparing chapter recap.';
+        if (elements.chapterQuizStatus) {
+            elements.chapterQuizStatus.textContent = 'Loading quiz...';
+        }
+        renderRecapList(elements.chapterRecapEvents, []);
+        renderRecapList(elements.chapterRecapCharacters, []);
+        renderChapterQuizQuestions();
+        renderChapterQuizFeedback(null);
+        state.recapChatHistory = loadRecapChatHistory(state.recapChatChapterIndex);
+        renderRecapChatMessages();
+        setRecapChatControls();
+        setQuizControls();
+        if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.value = '';
+        }
+        elements.chapterRecapOverlay.classList.remove('hidden');
+        ttsPauseForModal();
+        trackRecapAnalytics('viewed');
+
+        stopRecapOverlayPolling();
+        const shouldPoll = await refreshChapterRecapOverlay(currentChapter.id);
+        if (shouldPoll && isChapterRecapVisible()) {
+            startRecapOverlayPolling(currentChapter.id);
+        }
+    }
+
+    function populateChapterRecapOverlay(recap) {
+        const payload = recap && recap.payload ? recap.payload : {};
+        const summary = (payload.shortSummary || '').trim();
+        const events = Array.isArray(payload.keyEvents) ? payload.keyEvents : [];
+        const deltas = Array.isArray(payload.characterDeltas) ? payload.characterDeltas : [];
+
+        if (recap && recap.status) {
+            if (recap.status === 'COMPLETED') {
+                elements.chapterRecapStatus.textContent = 'Recap ready';
+            } else if (recap.status === 'MISSING' || recap.status === 'PENDING' || recap.status === 'GENERATING') {
+                elements.chapterRecapStatus.textContent = 'Recap is still generating.';
+            } else if (recap.status === 'FAILED') {
+                elements.chapterRecapStatus.textContent = 'Recap generation failed.';
+            } else {
+                elements.chapterRecapStatus.textContent = `Recap status: ${recap.status}`;
+            }
+        } else {
+            elements.chapterRecapStatus.textContent = 'Recap status unknown.';
+        }
+
+        elements.chapterRecapSummary.textContent = summary ||
+            'Recap details are not ready yet. You can skip recap and continue.';
+
+        renderRecapList(elements.chapterRecapEvents, events);
+        renderRecapList(
+            elements.chapterRecapCharacters,
+            deltas.map(d => `${d.characterName}: ${d.delta}`)
+        );
+    }
+
+    function setChapterRecapTab(tab) {
+        const validTab = tab === 'chat' || tab === 'quiz' || tab === 'recap' ? tab : 'recap';
+        let nextTab = validTab;
+        if (nextTab === 'recap' && !state.recapAvailable && state.quizAvailable) {
+            nextTab = 'quiz';
+        }
+        if (nextTab === 'quiz' && !state.quizAvailable && state.recapAvailable) {
+            nextTab = 'recap';
+        }
+        if (nextTab === 'chat' && !state.recapChatAvailable) {
+            if (state.recapAvailable) {
+                nextTab = 'recap';
+            } else if (state.quizAvailable) {
+                nextTab = 'quiz';
+            }
+        }
+
+        const recapActive = nextTab === 'recap';
+        const chatActive = nextTab === 'chat';
+        const quizActive = nextTab === 'quiz';
+        state.recapActiveTab = nextTab;
+
+        if (elements.chapterRecapTabRecap) {
+            elements.chapterRecapTabRecap.classList.toggle('active', recapActive);
+            elements.chapterRecapTabRecap.setAttribute('aria-selected', recapActive ? 'true' : 'false');
+        }
+        if (elements.chapterRecapTabChat) {
+            elements.chapterRecapTabChat.classList.toggle('active', chatActive);
+            elements.chapterRecapTabChat.setAttribute('aria-selected', chatActive ? 'true' : 'false');
+        }
+        if (elements.chapterRecapTabQuiz) {
+            elements.chapterRecapTabQuiz.classList.toggle('active', quizActive);
+            elements.chapterRecapTabQuiz.setAttribute('aria-selected', quizActive ? 'true' : 'false');
+        }
+        if (elements.chapterRecapPanelRecap) {
+            elements.chapterRecapPanelRecap.classList.toggle('hidden', !recapActive);
+        }
+        if (elements.chapterRecapPanelChat) {
+            elements.chapterRecapPanelChat.classList.toggle('hidden', !chatActive);
+        }
+        if (elements.chapterRecapPanelQuiz) {
+            elements.chapterRecapPanelQuiz.classList.toggle('hidden', !quizActive);
+        }
+    }
+
+    function shouldPollRecapStatus(status) {
+        return status === 'MISSING' || status === 'PENDING' || status === 'GENERATING';
+    }
+
+    async function refreshChapterRecapOverlay(chapterId) {
+        const pollStates = [];
+        try {
+            const response = await fetch(`/api/recaps/chapter/${chapterId}`);
+            if (!response.ok) {
+                elements.chapterRecapStatus.textContent = 'Recap unavailable right now.';
+                elements.chapterRecapSummary.textContent = 'You can continue to the next chapter now, and recap data will populate once generation completes.';
+            } else {
+                const recap = await response.json();
+                populateChapterRecapOverlay(recap);
+                pollStates.push(recap && shouldPollRecapStatus(recap.status));
+            }
+        } catch (error) {
+            console.debug('Failed to load chapter recap:', error);
+            elements.chapterRecapStatus.textContent = 'Recap unavailable right now.';
+            elements.chapterRecapSummary.textContent = 'You can continue to the next chapter now, and recap data will populate once generation completes.';
+        }
+
+        const shouldPollQuiz = await refreshChapterQuizOverlay(chapterId);
+        pollStates.push(shouldPollQuiz);
+        return pollStates.some(Boolean);
+    }
+
+    function startRecapOverlayPolling(chapterId) {
+        stopRecapOverlayPolling();
+        state.recapPollingChapterId = chapterId;
+        state.recapPollingInterval = setInterval(async () => {
+            if (!isChapterRecapVisible() || state.recapPollingChapterId !== chapterId) {
+                stopRecapOverlayPolling();
+                return;
+            }
+            if (state.recapPollingInFlight) {
+                return;
+            }
+
+            state.recapPollingInFlight = true;
+            try {
+                const shouldContinue = await refreshChapterRecapOverlay(chapterId);
+                if (!shouldContinue) {
+                    stopRecapOverlayPolling();
+                }
+            } finally {
+                state.recapPollingInFlight = false;
+            }
+        }, 3000);
+    }
+
+    function stopRecapOverlayPolling() {
+        if (state.recapPollingInterval) {
+            clearInterval(state.recapPollingInterval);
+        }
+        state.recapPollingInterval = null;
+        state.recapPollingChapterId = null;
+        state.recapPollingInFlight = false;
+    }
+
+    function renderRecapList(listElement, values) {
+        if (!listElement) return;
+        listElement.innerHTML = '';
+        if (!Array.isArray(values) || values.length === 0) {
+            const li = document.createElement('li');
+            li.textContent = 'Not available yet.';
+            listElement.appendChild(li);
+            return;
+        }
+        values.forEach(value => {
+            const li = document.createElement('li');
+            li.textContent = value;
+            listElement.appendChild(li);
+        });
+    }
+
+    function loadRecapChatHistory(chapterIndex = state.recapChatChapterIndex) {
+        const key = getRecapChatStorageKey(chapterIndex);
+        if (!key) return [];
+        const stored = localStorage.getItem(key);
+        if (!stored) return [];
+        try {
+            const parsed = JSON.parse(stored);
+            if (!Array.isArray(parsed)) return [];
+            return parsed
+                .filter(msg => msg && typeof msg.content === 'string' && msg.content.trim())
+                .map(msg => ({
+                    role: msg.role === 'user' ? 'user' : 'assistant',
+                    content: msg.content.trim(),
+                    timestamp: Number.isFinite(msg.timestamp) ? msg.timestamp : Date.now()
+                }));
+        } catch (_error) {
+            return [];
+        }
+    }
+
+    function saveRecapChatHistory(history, chapterIndex = state.recapChatChapterIndex) {
+        const key = getRecapChatStorageKey(chapterIndex);
+        if (!key) return;
+        const limited = Array.isArray(history) ? history.slice(-80) : [];
+        localStorage.setItem(key, JSON.stringify(limited));
+    }
+
+    function getRecapChatStorageKey(chapterIndex) {
+        if (!state.currentBook?.id || !Number.isInteger(chapterIndex) || chapterIndex < 0) {
+            return null;
+        }
+        return `${STORAGE_KEYS.RECAP_CHAT_PREFIX}${state.currentBook.id}_ch${chapterIndex}`;
+    }
+
+    function setRecapChatControls() {
+        const canUseChat = state.recapChatAvailable && !!state.currentBook;
+        const inputDisabled = !canUseChat || state.recapChatLoading;
+        const sendDisabled = !canUseChat || state.recapChatLoading;
+        const chatUnavailable = !state.recapChatAvailable || state.recapCacheOnly;
+        const recapUnavailable = !state.recapAvailable;
+
+        if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.disabled = inputDisabled;
+        }
+        if (elements.chapterRecapChatSend) {
+            elements.chapterRecapChatSend.disabled = sendDisabled;
+        }
+        if (elements.chapterRecapTabChat) {
+            elements.chapterRecapTabChat.classList.toggle('unavailable', chatUnavailable);
+        }
+        if (elements.chapterRecapTabRecap) {
+            elements.chapterRecapTabRecap.classList.toggle('unavailable', recapUnavailable);
+        }
+
+        if (!elements.chapterRecapChatStatus) return;
+        if (state.recapCacheOnly) {
+            elements.chapterRecapChatStatus.textContent = 'Recap chat is unavailable in cache-only mode.';
+            return;
+        }
+        if (!state.recapChatAvailable) {
+            elements.chapterRecapChatStatus.textContent = 'Recap chat provider is unavailable.';
+            return;
+        }
+        elements.chapterRecapChatStatus.textContent = state.recapChatLoading
+            ? 'Generating response...'
+            : 'Spoiler-safe discussion through your current chapter.';
+    }
+
+    function renderRecapChatMessages() {
+        if (!elements.chapterRecapChatMessages) return;
+        if (!Array.isArray(state.recapChatHistory) || state.recapChatHistory.length === 0) {
+            elements.chapterRecapChatMessages.innerHTML = '<div class="chapter-recap-chat-empty">Ask a question about what happened so far.</div>';
+            return;
+        }
+
+        elements.chapterRecapChatMessages.innerHTML = state.recapChatHistory.map(msg => {
+            const roleClass = msg.role === 'user' ? 'user' : 'character';
+            return `
+                <div class="chat-message ${roleClass}">
+                    ${escapeHtml(msg.content)}
+                </div>
+            `;
+        }).join('');
+
+        elements.chapterRecapChatMessages.scrollTop = elements.chapterRecapChatMessages.scrollHeight;
+    }
+
+    async function refreshChapterQuizOverlay(chapterId) {
+        try {
+            const response = await fetch(`/api/quizzes/chapter/${chapterId}`);
+            if (!response.ok) {
+                if (elements.chapterQuizStatus) {
+                    elements.chapterQuizStatus.textContent = 'Quiz unavailable right now.';
+                }
+                state.quizQuestions = [];
+                state.quizSelectedAnswers = [];
+                renderChapterQuizQuestions();
+                renderChapterQuizFeedback(null);
+                setQuizControls();
+                return false;
+            }
+            const quiz = await response.json();
+            populateChapterQuizOverlay(quiz);
+            return quiz && shouldPollRecapStatus(quiz.status);
+        } catch (error) {
+            console.debug('Failed to load chapter quiz:', error);
+            if (elements.chapterQuizStatus) {
+                elements.chapterQuizStatus.textContent = 'Quiz unavailable right now.';
+            }
+            state.quizQuestions = [];
+            state.quizSelectedAnswers = [];
+            renderChapterQuizQuestions();
+            renderChapterQuizFeedback(null);
+            setQuizControls();
+            return false;
+        }
+    }
+
+    function populateChapterQuizOverlay(quiz) {
+        const payload = quiz && quiz.payload ? quiz.payload : {};
+        const questions = Array.isArray(payload.questions) ? payload.questions : [];
+        const previousSelections = Array.isArray(state.quizSelectedAnswers) ? state.quizSelectedAnswers : [];
+        const sameQuestionCount = Array.isArray(state.quizQuestions) && state.quizQuestions.length === questions.length;
+        const difficultyLevel = Number.isInteger(quiz?.difficultyLevel) ? quiz.difficultyLevel : 0;
+
+        state.quizQuestions = questions;
+        state.quizDifficultyLevel = difficultyLevel;
+        state.quizSelectedAnswers = questions.map((_, index) =>
+            Number.isInteger(previousSelections[index]) ? previousSelections[index] : null
+        );
+        if (!sameQuestionCount) {
+            state.quizResult = null;
+            renderChapterQuizFeedback(null);
+        }
+
+        if (elements.chapterQuizStatus) {
+            if (quiz && quiz.status === 'COMPLETED') {
+                elements.chapterQuizStatus.textContent = `Quiz ready (${formatQuizDifficulty(difficultyLevel)})`;
+            } else if (quiz && (quiz.status === 'MISSING' || quiz.status === 'PENDING' || quiz.status === 'GENERATING')) {
+                elements.chapterQuizStatus.textContent = 'Quiz is still generating.';
+            } else if (quiz && quiz.status === 'FAILED') {
+                elements.chapterQuizStatus.textContent = 'Quiz generation failed.';
+            } else {
+                elements.chapterQuizStatus.textContent = 'Quiz status unknown.';
+            }
+        }
+
+        renderChapterQuizQuestions();
+        setQuizControls();
+    }
+
+    function renderChapterQuizQuestions() {
+        if (!elements.chapterQuizQuestions) return;
+
+        const questions = Array.isArray(state.quizQuestions) ? state.quizQuestions : [];
+        if (questions.length === 0) {
+            elements.chapterQuizQuestions.innerHTML = '<div class="chapter-recap-chat-empty">Quiz questions are not ready yet.</div>';
+            return;
+        }
+
+        elements.chapterQuizQuestions.innerHTML = questions.map((question, questionIndex) => {
+            const prompt = escapeHtml(question.question || `Question ${questionIndex + 1}`);
+            const options = Array.isArray(question.options) ? question.options : [];
+            const optionsHtml = options.map((option, optionIndex) => {
+                const checked = state.quizSelectedAnswers[questionIndex] === optionIndex ? 'checked' : '';
+                return `
+                    <li>
+                        <label>
+                            <input type="radio" name="chapter-quiz-q-${questionIndex}" data-question-index="${questionIndex}" value="${optionIndex}" ${checked} ${state.quizSubmitting ? 'disabled' : ''} />
+                            <span>${escapeHtml(option)}</span>
+                        </label>
+                    </li>
+                `;
+            }).join('');
+            return `
+                <div class="chapter-quiz-question">
+                    <div class="chapter-quiz-question-title">${questionIndex + 1}. ${prompt}</div>
+                    <ul class="chapter-quiz-options">${optionsHtml}</ul>
+                </div>
+            `;
+        }).join('');
+
+        elements.chapterQuizQuestions.querySelectorAll('input[type="radio"]').forEach(input => {
+            input.addEventListener('change', () => {
+                const questionIndex = Number.parseInt(input.dataset.questionIndex, 10);
+                const selectedIndex = Number.parseInt(input.value, 10);
+                if (!Number.isInteger(questionIndex) || questionIndex < 0) return;
+                if (!Number.isInteger(selectedIndex) || selectedIndex < 0) return;
+                state.quizSelectedAnswers[questionIndex] = selectedIndex;
+                setQuizControls();
+            });
+        });
+    }
+
+    function setQuizControls() {
+        const quizUnavailable = !state.quizAvailable;
+        if (elements.chapterRecapTabQuiz) {
+            elements.chapterRecapTabQuiz.classList.toggle('unavailable', quizUnavailable);
+        }
+        if (!elements.chapterQuizSubmit) return;
+
+        const hasQuestions = Array.isArray(state.quizQuestions) && state.quizQuestions.length > 0;
+        const answeredCount = Array.isArray(state.quizSelectedAnswers)
+            ? state.quizSelectedAnswers.filter(value => Number.isInteger(value)).length
+            : 0;
+        elements.chapterQuizSubmit.disabled = quizUnavailable
+            || state.quizSubmitting
+            || !hasQuestions
+            || answeredCount === 0;
+        elements.chapterQuizSubmit.textContent = state.quizSubmitting
+            ? 'Checking...'
+            : 'Check Answers';
+    }
+
+    function renderChapterQuizFeedback(result) {
+        if (!elements.chapterQuizFeedback) return;
+        if (!result) {
+            elements.chapterQuizFeedback.classList.add('hidden');
+            elements.chapterQuizFeedback.innerHTML = '';
+            return;
+        }
+
+        const missed = Array.isArray(result.results)
+            ? result.results.filter(item => item && item.correct === false)
+            : [];
+        const score = Number.isFinite(result.scorePercent) ? result.scorePercent : 0;
+        const correctAnswers = Number.isFinite(result.correctAnswers) ? result.correctAnswers : 0;
+        const totalQuestions = Number.isFinite(result.totalQuestions) ? result.totalQuestions : 0;
+        const difficultyLabel = formatQuizDifficulty(result.difficultyLevel);
+        const progress = result.progress || {};
+        const totalAttempts = Number.isFinite(progress.totalAttempts) ? progress.totalAttempts : 0;
+        const perfectAttempts = Number.isFinite(progress.perfectAttempts) ? progress.perfectAttempts : 0;
+        const streak = Number.isFinite(progress.currentPerfectStreak) ? progress.currentPerfectStreak : 0;
+        const unlockedTrophies = Array.isArray(result.unlockedTrophies) ? result.unlockedTrophies : [];
+
+        const missedItems = missed.map(item => {
+            const qNum = Number.isFinite(item.questionIndex) ? item.questionIndex + 1 : '?';
+            const correctAnswer = escapeHtml(item.correctAnswer || '');
+            const citation = escapeHtml(item.citationSnippet || '');
+            const citationLine = citation
+                ? `<div><em>Citation:</em> ${citation}</div>`
+                : '';
+            return `<li><strong>Q${qNum}</strong> correct answer: ${correctAnswer}${citationLine}</li>`;
+        }).join('');
+
+        const details = missed.length > 0
+            ? `<ul class="chapter-quiz-feedback-list">${missedItems}</ul>`
+            : '<div class="chapter-quiz-feedback-list">Perfect score. Nice recall.</div>';
+
+        const unlockedBlock = unlockedTrophies.length > 0
+            ? `<div class="chapter-quiz-trophies"><strong>New trophy unlocked:</strong> ${unlockedTrophies.map(t => escapeHtml(t.title || t.code || 'Trophy')).join(', ')}</div>`
+            : '';
+
+        elements.chapterQuizFeedback.innerHTML = `
+            <div class="chapter-quiz-feedback-score">Score: ${correctAnswers}/${totalQuestions} (${score}%) • ${difficultyLabel}</div>
+            <div class="chapter-quiz-feedback-meta">Attempts: ${totalAttempts} • Perfect: ${perfectAttempts} • Current streak: ${streak}</div>
+            ${unlockedBlock}
+            ${details}
+        `;
+        elements.chapterQuizFeedback.classList.remove('hidden');
+    }
+
+    function formatQuizDifficulty(level) {
+        const numeric = Number.isInteger(level) ? level : 0;
+        if (numeric <= 0) return 'Easy';
+        if (numeric === 1) return 'Medium';
+        if (numeric === 2) return 'Hard';
+        return `Expert ${numeric}`;
+    }
+
+    async function submitChapterQuiz() {
+        if (!state.quizChapterId || !Array.isArray(state.quizQuestions) || state.quizQuestions.length === 0) {
+            return;
+        }
+        if (state.quizSubmitting || !state.quizAvailable) {
+            return;
+        }
+
+        state.quizSubmitting = true;
+        setQuizControls();
+
+        try {
+            const payload = {
+                selectedOptionIndexes: state.quizQuestions.map((_, index) =>
+                    Number.isInteger(state.quizSelectedAnswers[index]) ? state.quizSelectedAnswers[index] : -1
+                )
+            };
+            const response = await fetch(`/api/quizzes/chapter/${state.quizChapterId}/grade`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                if (elements.chapterQuizStatus) {
+                    elements.chapterQuizStatus.textContent = response.status === 409
+                        ? 'Quiz is still generating.'
+                        : 'Unable to grade quiz right now.';
+                }
+                return;
+            }
+
+            const result = await response.json();
+            state.quizResult = result;
+            renderChapterQuizFeedback(result);
+        } catch (error) {
+            console.debug('Quiz grading failed:', error);
+            if (elements.chapterQuizStatus) {
+                elements.chapterQuizStatus.textContent = 'Unable to grade quiz right now.';
+            }
+        } finally {
+            state.quizSubmitting = false;
+            setQuizControls();
+        }
+    }
+
+    async function sendRecapChatMessage() {
+        const message = elements.chapterRecapChatInput?.value?.trim();
+        if (!message || !state.currentBook || state.recapChatLoading || !state.recapChatAvailable) return;
+        const chatChapterIndex = Number.isInteger(state.recapChatChapterIndex)
+            ? state.recapChatChapterIndex
+            : state.currentChapterIndex;
+
+        const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+        state.recapChatHistory.push(userMsg);
+        saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
+        renderRecapChatMessages();
+
+        if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.value = '';
+        }
+
+        state.recapChatLoading = true;
+        setRecapChatControls();
+
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'chat-message character loading';
+        loadingDiv.textContent = 'Thinking';
+        elements.chapterRecapChatMessages?.appendChild(loadingDiv);
+        if (elements.chapterRecapChatMessages) {
+            elements.chapterRecapChatMessages.scrollTop = elements.chapterRecapChatMessages.scrollHeight;
+        }
+
+        try {
+            const response = await fetch(`/api/recaps/book/${state.currentBook.id}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    conversationHistory: state.recapChatHistory.slice(-10),
+                    readerChapterIndex: chatChapterIndex
+                })
+            });
+
+            let reply = '';
+            if (response.ok) {
+                const data = await response.json();
+                reply = (data && typeof data.response === 'string') ? data.response : '';
+            } else {
+                try {
+                    const errorData = await response.json();
+                    reply = (errorData && typeof errorData.response === 'string') ? errorData.response : '';
+                } catch (_error) {
+                    reply = '';
+                }
+            }
+
+            loadingDiv.remove();
+            const assistantMsg = {
+                role: 'assistant',
+                content: reply.trim() || "I don't have enough context to answer that yet.",
+                timestamp: Date.now()
+            };
+            state.recapChatHistory.push(assistantMsg);
+            saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
+            renderRecapChatMessages();
+        } catch (error) {
+            console.debug('Recap chat failed:', error);
+            loadingDiv.remove();
+            const fallbackMsg = {
+                role: 'assistant',
+                content: "I can't answer right now, but you can continue reading and ask again.",
+                timestamp: Date.now()
+            };
+            state.recapChatHistory.push(fallbackMsg);
+            saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
+            renderRecapChatMessages();
+        } finally {
+            state.recapChatLoading = false;
+            setRecapChatControls();
+            elements.chapterRecapChatInput?.focus();
+        }
+    }
+
+    function closeChapterRecapOverlay(restoreAudio = true) {
+        if (!elements.chapterRecapOverlay) return;
+        stopRecapOverlayPolling();
+        elements.chapterRecapOverlay.classList.add('hidden');
+        state.recapPendingChapterIndex = null;
+        state.recapChatChapterIndex = null;
+        state.quizChapterId = null;
+        state.quizQuestions = [];
+        state.quizSelectedAnswers = [];
+        state.quizSubmitting = false;
+        state.quizResult = null;
+        state.quizDifficultyLevel = 0;
+        setChapterRecapTab('recap');
+        state.recapChatLoading = false;
+        if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.value = '';
+        }
+        renderChapterQuizFeedback(null);
+        renderChapterQuizQuestions();
+        setRecapChatControls();
+        setQuizControls();
+        if (restoreAudio) {
+            ttsResumeAfterModal();
+        }
+    }
+
+    async function isCurrentChapterPauseReady() {
+        if (!state.currentBook || !state.chapters || state.currentChapterIndex < 0) {
+            return false;
+        }
+        const currentChapter = state.chapters[state.currentChapterIndex];
+        if (!currentChapter) {
+            return false;
+        }
+        try {
+            let recapReady = false;
+            let quizReady = false;
+
+            if (state.recapAvailable) {
+                const recapResponse = await fetch(`/api/recaps/chapter/${currentChapter.id}/status`);
+                if (recapResponse.ok) {
+                    const recapStatus = await recapResponse.json();
+                    recapReady = recapStatus && recapStatus.ready === true;
+                }
+            }
+
+            if (state.quizAvailable) {
+                const quizResponse = await fetch(`/api/quizzes/chapter/${currentChapter.id}/status`);
+                if (quizResponse.ok) {
+                    const quizStatus = await quizResponse.json();
+                    quizReady = quizStatus && quizStatus.ready === true;
+                }
+            }
+            return recapReady || quizReady;
+        } catch (error) {
+            console.debug('Failed to check chapter pause cache status:', error);
+            return false;
+        }
+    }
+
+    async function continueFromChapterRecap(eventType = 'continued') {
+        const nextChapterIndex = state.recapPendingChapterIndex;
+        if (eventType) {
+            trackRecapAnalytics(eventType);
+        }
+        closeChapterRecapOverlay(false);
+        if (nextChapterIndex == null) return;
+        await loadChapter(nextChapterIndex, 0);
+    }
+
+    async function skipChapterRecap() {
+        await continueFromChapterRecap('skipped');
     }
 
     // Search
@@ -822,6 +1577,7 @@
     // Back to library
     function backToLibrary() {
         ttsStop();
+        closeChapterRecapOverlay(false);
         if (state.speedReadingActive) {
             exitSpeedReading(true);
         }
@@ -829,6 +1585,15 @@
         state.newCharacterQueue = [];
         state.currentToastCharacter = null;
         state.ttsVoiceSettings = null;  // Clear voice settings for next book
+        state.recapChatHistory = [];
+        state.recapChatChapterIndex = null;
+        state.recapChatLoading = false;
+        state.quizChapterId = null;
+        state.quizQuestions = [];
+        state.quizSelectedAnswers = [];
+        state.quizSubmitting = false;
+        state.quizResult = null;
+        updateRecapOptOutControl();
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
         elements.searchResults.classList.add('hidden');
@@ -1222,9 +1987,8 @@
         }
 
         if (wasLastParagraph) {
-            // Need to load next chapter - nextParagraph handles this
-            // loadChapter will call ttsSpeakCurrent() when it finishes loading
-            nextParagraph();
+            // Keep TTS chapter transitions uninterrupted by recap overlay.
+            goToNextChapter(false);
         } else {
             nextParagraph();
             ttsSpeakCurrent();
@@ -2394,6 +3158,88 @@
         updateCacheOnlyIndicator();
     }
 
+    async function recapCheckAvailability() {
+        try {
+            const statusUrl = state.currentBook?.id
+                ? `/api/recaps/book/${state.currentBook.id}/status`
+                : '/api/recaps/status';
+            const response = await fetch(statusUrl);
+            const status = await response.json();
+            state.recapAvailable = status.available === true;
+            state.recapCacheOnly = status.cacheOnly === true;
+            state.recapChatAvailable = state.recapAvailable &&
+                status.chatProviderAvailable === true &&
+                !state.recapCacheOnly;
+            state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
+        } catch (error) {
+            console.debug('Failed to check recap availability:', error);
+            state.recapAvailable = false;
+            state.recapCacheOnly = false;
+            state.recapChatAvailable = false;
+        }
+        updateRecapOptOutControl();
+        updateCacheOnlyIndicator();
+        setRecapChatControls();
+    }
+
+    async function quizCheckAvailability() {
+        try {
+            const statusUrl = state.currentBook?.id
+                ? `/api/quizzes/book/${state.currentBook.id}/status`
+                : '/api/quizzes/status';
+            const response = await fetch(statusUrl);
+            const status = await response.json();
+            state.quizAvailable = status.available === true;
+            state.quizCacheOnly = status.cacheOnly === true;
+            state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
+        } catch (error) {
+            console.debug('Failed to check quiz availability:', error);
+            state.quizAvailable = false;
+            state.quizCacheOnly = false;
+        }
+        updateRecapOptOutControl();
+        updateCacheOnlyIndicator();
+        setQuizControls();
+    }
+
+    function trackRecapAnalytics(eventType) {
+        if (!state.currentBook?.id || !eventType) return;
+        const currentChapter = state.chapters?.[state.currentChapterIndex];
+        fetch('/api/recaps/analytics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                bookId: state.currentBook.id,
+                chapterId: currentChapter?.id || null,
+                event: eventType
+            })
+        }).catch(error => {
+            console.debug('Failed to track recap analytics event:', error);
+        });
+    }
+
+    function getRecapOptOut(bookId) {
+        if (!bookId) return false;
+        return localStorage.getItem(`${STORAGE_KEYS.RECAP_OPTOUT_PREFIX}${bookId}`) === 'true';
+    }
+
+    function setRecapOptOut(bookId, enabled) {
+        if (!bookId) return;
+        localStorage.setItem(`${STORAGE_KEYS.RECAP_OPTOUT_PREFIX}${bookId}`, enabled ? 'true' : 'false');
+        state.recapOptOut = enabled;
+        updateRecapOptOutControl();
+    }
+
+    function updateRecapOptOutControl() {
+        if (!elements.recapEnableBtn) return;
+        const showControl = !!state.currentBook && (state.recapAvailable || state.quizAvailable) && state.recapOptOut;
+        elements.recapEnableBtn.classList.toggle('hidden', !showControl);
+    }
+
+    function isChapterRecapVisible() {
+        return elements.chapterRecapOverlay && !elements.chapterRecapOverlay.classList.contains('hidden');
+    }
+
     function isCharacterBrowserVisible() {
         return elements.characterBrowserModal && !elements.characterBrowserModal.classList.contains('hidden');
     }
@@ -2422,6 +3268,24 @@
             startCharacterPolling();
         } catch (error) {
             console.error('Failed to request character analysis:', error);
+        }
+    }
+
+    async function requestChapterRecapGeneration(chapterId) {
+        if (!chapterId || state.cacheOnly || !state.recapAvailable) return;
+        try {
+            await fetch(`/api/recaps/chapter/${chapterId}/generate`, { method: 'POST' });
+        } catch (error) {
+            console.debug('Failed to request chapter recap generation:', error);
+        }
+    }
+
+    async function requestChapterQuizGeneration(chapterId) {
+        if (!chapterId || state.cacheOnly || !state.quizAvailable) return;
+        try {
+            await fetch(`/api/quizzes/chapter/${chapterId}/generate`, { method: 'POST' });
+        } catch (error) {
+            console.debug('Failed to request chapter quiz generation:', error);
         }
     }
 
@@ -3011,6 +3875,62 @@
             }
         }
 
+        if (elements.chapterRecapClose) {
+            elements.chapterRecapClose.addEventListener('click', () => closeChapterRecapOverlay(true));
+        }
+        if (elements.chapterRecapBackdrop) {
+            elements.chapterRecapBackdrop.addEventListener('click', () => closeChapterRecapOverlay(true));
+        }
+        if (elements.chapterRecapSkip) {
+            elements.chapterRecapSkip.addEventListener('click', skipChapterRecap);
+        }
+        if (elements.chapterRecapContinue) {
+            elements.chapterRecapContinue.addEventListener('click', () => continueFromChapterRecap('continued'));
+        }
+        if (elements.chapterRecapTabRecap) {
+            elements.chapterRecapTabRecap.addEventListener('click', () => setChapterRecapTab('recap'));
+        }
+        if (elements.chapterRecapTabChat) {
+            elements.chapterRecapTabChat.addEventListener('click', () => {
+                setChapterRecapTab('chat');
+                if (state.recapChatAvailable && !state.recapChatLoading) {
+                    elements.chapterRecapChatInput?.focus();
+                }
+            });
+        }
+        if (elements.chapterRecapTabQuiz) {
+            elements.chapterRecapTabQuiz.addEventListener('click', () => setChapterRecapTab('quiz'));
+        }
+        if (elements.chapterRecapChatSend) {
+            elements.chapterRecapChatSend.addEventListener('click', sendRecapChatMessage);
+        }
+        if (elements.chapterQuizSubmit) {
+            elements.chapterQuizSubmit.addEventListener('click', submitChapterQuiz);
+        }
+        if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    sendRecapChatMessage();
+                }
+            });
+        }
+        if (elements.chapterRecapOptout) {
+            elements.chapterRecapOptout.addEventListener('change', (e) => {
+                setRecapOptOut(state.currentBook?.id, !!e.target.checked);
+            });
+        }
+        if (elements.recapEnableBtn) {
+            elements.recapEnableBtn.addEventListener('click', () => {
+                if (!state.currentBook?.id) return;
+                setRecapOptOut(state.currentBook.id, false);
+                if (elements.chapterRecapOptout) {
+                    elements.chapterRecapOptout.checked = false;
+                }
+            });
+        }
+
         // Illustration toggle
         if (elements.illustrationToggle) {
             elements.illustrationToggle.addEventListener('click', illustrationToggle);
@@ -3146,6 +4066,22 @@
                     closePromptModal();
                 }
                 // Don't process other shortcuts when modal is open
+                return;
+            }
+
+            if (isChapterRecapVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeChapterRecapOverlay(true);
+                } else if (e.key === 'Enter'
+                    && state.recapActiveTab === 'recap'
+                    && document.activeElement !== elements.chapterRecapChatInput
+                    && document.activeElement !== elements.chapterRecapTabRecap
+                    && document.activeElement !== elements.chapterRecapTabChat
+                    && document.activeElement !== elements.chapterRecapTabQuiz) {
+                    e.preventDefault();
+                    continueFromChapterRecap('continued');
+                }
                 return;
             }
 

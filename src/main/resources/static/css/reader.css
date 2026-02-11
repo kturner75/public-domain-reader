@@ -173,6 +173,14 @@ html, body {
     background: rgba(0, 0, 0, 0.04);
 }
 
+.recap-enable-btn {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+}
+
 #reader-view.speed-reading-active .reader-content,
 #reader-view.speed-reading-active .chapter-title,
 #reader-view.speed-reading-active .reader-footer {
@@ -459,6 +467,298 @@ kbd {
     25% { content: '.'; }
     50% { content: '..'; }
     75% { content: '...'; }
+}
+
+/* Chapter recap overlay */
+.chapter-recap-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chapter-recap-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(14, 13, 10, 0.52);
+}
+
+.chapter-recap-card {
+    position: relative;
+    width: min(640px, 92vw);
+    max-height: 86vh;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.2);
+    padding: 1.25rem 1.4rem 1.35rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.chapter-recap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+
+.chapter-recap-header h3 {
+    font-size: 1.25rem;
+    font-weight: 500;
+}
+
+.chapter-recap-close {
+    border: none;
+    background: transparent;
+    color: var(--muted-color);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.2rem 0.35rem;
+}
+
+.chapter-recap-close:hover {
+    color: var(--text-color);
+}
+
+.chapter-recap-chapter-title {
+    color: var(--muted-color);
+    font-size: 0.86rem;
+    margin-bottom: 0.4rem;
+}
+
+.chapter-recap-tabs {
+    display: flex;
+    gap: 0.45rem;
+    margin-bottom: 0.7rem;
+}
+
+.chapter-recap-tab {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-color);
+    font-size: 0.84rem;
+    padding: 0.35rem 0.8rem;
+    cursor: pointer;
+}
+
+.chapter-recap-tab.active {
+    background: var(--text-color);
+    border-color: var(--text-color);
+    color: var(--bg-color);
+}
+
+.chapter-recap-tab.unavailable {
+    opacity: 0.7;
+}
+
+.chapter-recap-panel {
+    min-height: 190px;
+}
+
+.chapter-recap-scroll-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.chapter-recap-status {
+    font-size: 0.82rem;
+    color: var(--muted-color);
+    margin-bottom: 0.65rem;
+}
+
+.chapter-recap-summary {
+    font-size: 1rem;
+    line-height: 1.55;
+    margin-bottom: 0.9rem;
+}
+
+.chapter-recap-section {
+    margin-bottom: 0.85rem;
+}
+
+.chapter-recap-section h4 {
+    font-size: 0.86rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted-color);
+    margin-bottom: 0.35rem;
+}
+
+.chapter-recap-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.chapter-recap-optout {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    color: var(--muted-color);
+}
+
+.chapter-recap-chat {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.chapter-recap-chat-status {
+    font-size: 0.8rem;
+    color: var(--muted-color);
+    margin-bottom: 0.4rem;
+}
+
+.chapter-recap-chat-messages {
+    min-height: 98px;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.chapter-recap-chat .chat-message {
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.chapter-recap-chat-empty {
+    font-size: 0.85rem;
+    color: var(--muted-color);
+}
+
+.chapter-recap-chat-input-container {
+    margin-top: 0.55rem;
+    padding: 0;
+    border-top: none;
+}
+
+.chapter-recap-chat-input-container textarea {
+    min-height: 58px;
+    font-size: 0.9rem;
+}
+
+.chapter-recap-quiz h4 {
+    margin-bottom: 0.35rem;
+}
+
+.chapter-quiz-status {
+    font-size: 0.8rem;
+    color: var(--muted-color);
+    margin-bottom: 0.6rem;
+}
+
+.chapter-quiz-questions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.chapter-quiz-question {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.65rem 0.75rem;
+    background: #fff;
+}
+
+.chapter-quiz-question-title {
+    font-size: 0.92rem;
+    margin-bottom: 0.45rem;
+}
+
+.chapter-quiz-options {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.38rem;
+    list-style: none;
+}
+
+.chapter-quiz-options label {
+    display: flex;
+    gap: 0.45rem;
+    align-items: flex-start;
+    font-size: 0.88rem;
+    line-height: 1.35;
+    color: var(--text-color);
+}
+
+.chapter-quiz-submit {
+    margin-top: 0.7rem;
+}
+
+.chapter-quiz-feedback {
+    margin-top: 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.65rem 0.75rem;
+    background: #fff;
+}
+
+.chapter-quiz-feedback-score {
+    font-size: 0.88rem;
+    margin-bottom: 0.45rem;
+}
+
+.chapter-quiz-feedback-meta {
+    font-size: 0.8rem;
+    color: var(--muted-color);
+    margin-bottom: 0.5rem;
+}
+
+.chapter-quiz-trophies {
+    font-size: 0.84rem;
+    margin-bottom: 0.55rem;
+}
+
+.chapter-quiz-feedback-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.84rem;
+}
+
+.chapter-recap-actions {
+    margin-top: 1.05rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.55rem;
+}
+
+.chapter-recap-btn {
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+.chapter-recap-btn-primary {
+    background: var(--text-color);
+    border-color: var(--text-color);
+    color: var(--bg-color);
+}
+
+.chapter-recap-btn-secondary {
+    background: transparent;
+    color: var(--text-color);
 }
 
 /* Chapter list overlay */

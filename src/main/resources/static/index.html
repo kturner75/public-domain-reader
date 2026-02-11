@@ -81,6 +81,9 @@
             </div>
             <h1 id="book-title" class="book-title"></h1>
             <span id="cache-only-indicator" class="cache-only-indicator hidden">Cache-only</span>
+            <button id="recap-enable-btn" class="header-btn recap-enable-btn hidden" title="Re-enable chapter recap popups">
+                Re-enable Recaps
+            </button>
             <div class="search-container">
                 <input type="text" id="search-input" class="search-input" placeholder="Search... (press /)" />
                 <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -159,6 +162,73 @@
                 <div class="speed-reading-chapter-actions">
                     <button id="speed-reading-continue" class="speed-reading-btn speed-reading-btn-primary">Continue</button>
                     <button id="speed-reading-exit" class="speed-reading-btn speed-reading-btn-secondary">Exit Speed Reading</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chapter Recap Overlay -->
+        <div id="chapter-recap-overlay" class="chapter-recap-overlay hidden">
+            <div id="chapter-recap-backdrop" class="chapter-recap-backdrop"></div>
+            <div class="chapter-recap-card">
+                <div class="chapter-recap-header">
+                    <h3>Chapter Recap</h3>
+                    <button id="chapter-recap-close" class="chapter-recap-close" title="Close (Esc)">&times;</button>
+                </div>
+                <p id="chapter-recap-chapter-title" class="chapter-recap-chapter-title"></p>
+                <div class="chapter-recap-tabs" role="tablist" aria-label="Recap Tabs">
+                    <button id="chapter-recap-tab-recap" class="chapter-recap-tab active" role="tab" aria-selected="true" aria-controls="chapter-recap-panel-recap">Recap</button>
+                    <button id="chapter-recap-tab-chat" class="chapter-recap-tab" role="tab" aria-selected="false" aria-controls="chapter-recap-panel-chat">Chat</button>
+                    <button id="chapter-recap-tab-quiz" class="chapter-recap-tab" role="tab" aria-selected="false" aria-controls="chapter-recap-panel-quiz">Quiz</button>
+                </div>
+
+                <div class="chapter-recap-scroll-body">
+                    <div id="chapter-recap-panel-recap" class="chapter-recap-panel" role="tabpanel">
+                        <p id="chapter-recap-status" class="chapter-recap-status"></p>
+                        <p id="chapter-recap-summary" class="chapter-recap-summary"></p>
+
+                        <div class="chapter-recap-section">
+                            <h4>Key Events</h4>
+                            <ul id="chapter-recap-events" class="chapter-recap-list"></ul>
+                        </div>
+
+                        <div class="chapter-recap-section">
+                            <h4>Character Deltas</h4>
+                            <ul id="chapter-recap-characters" class="chapter-recap-list"></ul>
+                        </div>
+                    </div>
+
+                    <div id="chapter-recap-panel-chat" class="chapter-recap-panel hidden chapter-recap-chat" role="tabpanel">
+                        <h4>Discuss This Chapter</h4>
+                        <p id="chapter-recap-chat-status" class="chapter-recap-chat-status"></p>
+                        <div id="chapter-recap-chat-messages" class="chat-messages chapter-recap-chat-messages"></div>
+                        <div class="chat-input-container chapter-recap-chat-input-container">
+                            <textarea id="chapter-recap-chat-input" placeholder="Ask a spoiler-safe question..." rows="2"></textarea>
+                            <button id="chapter-recap-chat-send" class="chat-send-btn" title="Send (Enter)">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"/>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="chapter-recap-panel-quiz" class="chapter-recap-panel hidden chapter-recap-quiz" role="tabpanel">
+                        <h4>Pop Quiz</h4>
+                        <p id="chapter-quiz-status" class="chapter-quiz-status"></p>
+                        <div id="chapter-quiz-questions" class="chapter-quiz-questions"></div>
+                        <button id="chapter-quiz-submit" class="chapter-recap-btn chapter-recap-btn-primary chapter-quiz-submit">Check Answers</button>
+                        <div id="chapter-quiz-feedback" class="chapter-quiz-feedback hidden"></div>
+                    </div>
+
+                    <label class="chapter-recap-optout">
+                        <input id="chapter-recap-optout" type="checkbox" />
+                        Don&apos;t show chapter pause popups for this book
+                    </label>
+                </div>
+
+                <div class="chapter-recap-actions">
+                    <button id="chapter-recap-skip" class="chapter-recap-btn chapter-recap-btn-secondary">Skip Recap</button>
+                    <button id="chapter-recap-continue" class="chapter-recap-btn chapter-recap-btn-primary">Continue</button>
                 </div>
             </div>
         </div>

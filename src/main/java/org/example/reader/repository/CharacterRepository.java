@@ -24,6 +24,8 @@ public interface CharacterRepository extends JpaRepository<CharacterEntity, Stri
 
     List<CharacterEntity> findByBookIdAndStatus(String bookId, CharacterStatus status);
 
+    List<CharacterEntity> findByBookIdAndFirstChapterIdOrderByFirstParagraphIndex(String bookId, String firstChapterId);
+
     List<CharacterEntity> findByStatus(CharacterStatus status);
 
     long countByBookIdAndCharacterType(String bookId, CharacterType characterType);
