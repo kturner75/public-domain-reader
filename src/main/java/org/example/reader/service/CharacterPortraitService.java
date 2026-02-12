@@ -6,6 +6,7 @@ import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -14,6 +15,9 @@ public class CharacterPortraitService {
     private static final Logger log = LoggerFactory.getLogger(CharacterPortraitService.class);
 
     private final LlmProvider reasoningProvider;
+
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
 
     public CharacterPortraitService(@Qualifier("reasoningLlmProvider") LlmProvider reasoningProvider) {
         this.reasoningProvider = reasoningProvider;
@@ -26,6 +30,9 @@ public class CharacterPortraitService {
             String characterName,
             String characterDescription,
             IllustrationSettings bookStyle) {
+        if (cacheOnly) {
+            return buildFallbackPrompt(characterName, characterDescription, bookStyle);
+        }
 
         String settingContext = bookStyle.setting() != null
                 ? "Cultural/Geographic Setting: " + bookStyle.setting()

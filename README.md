@@ -29,3 +29,47 @@ Non-Negotiables
 - Feels like turning pages in a physical book
 - Optional features stay hidden until invoked
 
+## Operational Scripts
+
+- `scripts/pregen_transfer_book.sh`: one workflow for a single Gutenberg book:
+  - pre-generate illustrations + portraits + recaps (`/api/pregen/gutenberg/{id}`)
+  - export recap transfer JSON (`CacheTransferRunner export`)
+  - optionally import into a target DB (`CacheTransferRunner import`)
+  - optionally sync assets to Spaces (`scripts/sync_spaces.sh`)
+- `scripts/transfer_recaps_remote.sh`: local export + remote import orchestration over SSH:
+  - export recap transfer JSON locally
+  - upload JSON to server via `scp`
+  - run remote import dry-run
+  - optionally stop service, run apply import, then restart service
+- `scripts/deploy_remote.sh`: deploy helper that mirrors the current jar deployment flow:
+  - `mvn clean package`
+  - `scp` jar to server
+  - `ssh` and run remote deploy command (default: `/root/deploy.sh`)
+
+Example:
+
+```bash
+scripts/pregen_transfer_book.sh \
+  --gutenberg-id 1342 \
+  --import-db-url "jdbc:h2:file:/absolute/path/to/library-transfer-test;DB_CLOSE_DELAY=-1" \
+  --sync-assets
+```
+
+Remote import orchestration example:
+
+```bash
+scripts/transfer_recaps_remote.sh \
+  --book-source-id 1342 \
+  --remote ubuntu@reader-host \
+  --remote-project-dir /opt/public-domain-reader \
+  --remote-db-url "jdbc:h2:file:/opt/public-domain-reader/data/library;DB_CLOSE_DELAY=-1" \
+  --apply-import \
+  --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
+  --remote-start-cmd "sudo systemctl start public-domain-reader"
+```
+
+Deploy helper example:
+
+```bash
+scripts/deploy_remote.sh --ssh-target pdr --ssh-key ~/.ssh/kevin
+```

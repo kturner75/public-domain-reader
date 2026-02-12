@@ -41,6 +41,9 @@ public class OllamaLlmProvider implements LlmProvider {
         if (options.topP() != null) {
             ollamaOptions.put("top_p", options.topP());
         }
+        if (options.maxTokens() != null) {
+            ollamaOptions.put("num_predict", options.maxTokens());
+        }
 
         Map<String, Object> requestBody = Map.of(
                 "model", model,

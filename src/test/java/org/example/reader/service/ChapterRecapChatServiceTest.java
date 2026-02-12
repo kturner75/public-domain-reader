@@ -96,4 +96,14 @@ class ChapterRecapChatServiceTest {
         assertTrue(prompt.contains("Reader: What did we learn about him so far?"));
         assertFalse(prompt.contains("He dies later in the story."));
     }
+
+    @Test
+    void chat_cacheOnlyMode_returnsCacheOnlyMessage() {
+        ReflectionTestUtils.setField(chapterRecapChatService, "cacheOnly", true);
+
+        String response = chapterRecapChatService.chat("book-1", "What happened?", List.of(), 0);
+
+        assertEquals("Recap chat is unavailable in cache-only mode.", response);
+        verify(llmProvider, never()).generate(anyString(), any());
+    }
 }

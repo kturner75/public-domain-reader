@@ -57,6 +57,7 @@
         characterCacheOnly: false,
         characterChatAvailable: false,
         recapAvailable: false,
+        recapGenerationAvailable: false,
         recapCacheOnly: false,
         recapChatAvailable: false,
         recapOptOut: false,
@@ -107,6 +108,7 @@
         bookList: document.getElementById('book-list'),
         noResults: document.getElementById('no-results'),
         bookTitle: document.getElementById('book-title'),
+        bookAuthor: document.getElementById('book-author'),
         chapterTitle: document.getElementById('chapter-title'),
         columnLeft: document.getElementById('column-left'),
         columnRight: document.getElementById('column-right'),
@@ -397,12 +399,30 @@
         localStorage.setItem(STORAGE_KEYS.RECENTLY_READ, JSON.stringify(recent));
     }
 
+    function normalizeAuthorName(author) {
+        const raw = (author || '').trim();
+        if (!raw) return '';
+
+        const commaCount = (raw.match(/,/g) || []).length;
+        if (commaCount !== 1) {
+            return raw;
+        }
+
+        const parts = raw.split(',').map(part => part.trim()).filter(Boolean);
+        if (parts.length !== 2) {
+            return raw;
+        }
+
+        return `${parts[1]} ${parts[0]}`.trim();
+    }
+
     // Render a book item (local book with id)
     function renderLocalBookItem(book) {
+        const author = normalizeAuthorName(book.author);
         return `
             <div class="book-item" data-book-id="${book.id}">
                 <div class="book-item-title">${book.title}</div>
-                <div class="book-item-author">${book.author}</div>
+                <div class="book-item-author">${author}</div>
             </div>
         `;
     }
@@ -411,10 +431,11 @@
     function renderCatalogBookItem(book) {
         const importedClass = book.alreadyImported ? ' imported' : '';
         const importedBadge = book.alreadyImported ? '<span class="imported-badge">✓</span>' : '';
+        const author = normalizeAuthorName(book.author);
         return `
             <div class="book-item catalog-book${importedClass}" data-gutenberg-id="${book.gutenbergId}">
                 <div class="book-item-title">${book.title}${importedBadge}</div>
-                <div class="book-item-author">${book.author}</div>
+                <div class="book-item-author">${author}</div>
             </div>
         `;
     }
@@ -478,6 +499,11 @@
 
         // Update title
         elements.bookTitle.textContent = book.title;
+        const author = normalizeAuthorName(book.author);
+        if (elements.bookAuthor) {
+            elements.bookAuthor.textContent = author;
+            elements.bookAuthor.classList.toggle('hidden', author.length === 0);
+        }
 
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
@@ -855,6 +881,8 @@
         state.quizSubmitting = false;
         state.quizResult = null;
         state.quizDifficultyLevel = 0;
+        await recapCheckAvailability();
+        await quizCheckAvailability();
         if (elements.chapterRecapOptout) {
             elements.chapterRecapOptout.checked = state.recapOptOut;
         }
@@ -969,7 +997,7 @@
     async function refreshChapterRecapOverlay(chapterId) {
         const pollStates = [];
         try {
-            const response = await fetch(`/api/recaps/chapter/${chapterId}`);
+            const response = await fetch(`/api/recaps/chapter/${chapterId}`, { cache: 'no-store' });
             if (!response.ok) {
                 elements.chapterRecapStatus.textContent = 'Recap unavailable right now.';
                 elements.chapterRecapSummary.textContent = 'You can continue to the next chapter now, and recap data will populate once generation completes.';
@@ -1127,7 +1155,7 @@
 
     async function refreshChapterQuizOverlay(chapterId) {
         try {
-            const response = await fetch(`/api/quizzes/chapter/${chapterId}`);
+            const response = await fetch(`/api/quizzes/chapter/${chapterId}`, { cache: 'no-store' });
             if (!response.ok) {
                 if (elements.chapterQuizStatus) {
                     elements.chapterQuizStatus.textContent = 'Quiz unavailable right now.';
@@ -1236,6 +1264,8 @@
         const quizUnavailable = !state.quizAvailable;
         if (elements.chapterRecapTabQuiz) {
             elements.chapterRecapTabQuiz.classList.toggle('unavailable', quizUnavailable);
+            elements.chapterRecapTabQuiz.disabled = quizUnavailable;
+            elements.chapterRecapTabQuiz.setAttribute('aria-disabled', quizUnavailable ? 'true' : 'false');
         }
         if (!elements.chapterQuizSubmit) return;
 
@@ -1470,7 +1500,7 @@
             let quizReady = false;
 
             if (state.recapAvailable) {
-                const recapResponse = await fetch(`/api/recaps/chapter/${currentChapter.id}/status`);
+                const recapResponse = await fetch(`/api/recaps/chapter/${currentChapter.id}/status`, { cache: 'no-store' });
                 if (recapResponse.ok) {
                     const recapStatus = await recapResponse.json();
                     recapReady = recapStatus && recapStatus.ready === true;
@@ -1478,7 +1508,7 @@
             }
 
             if (state.quizAvailable) {
-                const quizResponse = await fetch(`/api/quizzes/chapter/${currentChapter.id}/status`);
+                const quizResponse = await fetch(`/api/quizzes/chapter/${currentChapter.id}/status`, { cache: 'no-store' });
                 if (quizResponse.ok) {
                     const quizStatus = await quizResponse.json();
                     quizReady = quizStatus && quizStatus.ready === true;
@@ -2545,7 +2575,9 @@
             const response = await fetch('/api/illustrations/status');
             const status = await response.json();
             state.illustrationAvailable = isBookFeatureEnabled('illustrationEnabled');
-            state.allowPromptEditing = state.illustrationAvailable && (status.allowPromptEditing || false);
+            state.allowPromptEditing = state.illustrationAvailable
+                && !status.cacheOnly
+                && (status.allowPromptEditing || false);
             state.illustrationCacheOnly = status.cacheOnly === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
@@ -2560,6 +2592,9 @@
         }
         if (elements.illustrationHint) {
             elements.illustrationHint.style.display = state.illustrationAvailable ? '' : 'none';
+        }
+        if (elements.illustrationImage && !state.allowPromptEditing) {
+            elements.illustrationImage.classList.remove('editable');
         }
 
         if (!state.illustrationAvailable && state.illustrationMode) {
@@ -2781,7 +2816,7 @@
     // ========================================
 
     async function openPromptModal() {
-        if (!state.allowPromptEditing || !state.illustrationMode) return;
+        if (!state.allowPromptEditing || state.illustrationCacheOnly || !state.illustrationMode) return;
 
         const chapter = state.chapters[state.currentChapterIndex];
         if (!chapter) return;
@@ -3125,7 +3160,9 @@
             state.characterAvailable = status.enabled && isBookFeatureEnabled('characterEnabled');
             state.characterCacheOnly = status.cacheOnly === true;
             // Chat is available if the feature is enabled AND the chat provider is configured
-            state.characterChatAvailable = state.characterAvailable && status.chatEnabled === true;
+            state.characterChatAvailable = state.characterAvailable
+                && !state.characterCacheOnly
+                && status.chatEnabled === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
 
             console.log('Character status response:', status);
@@ -3163,8 +3200,11 @@
             const statusUrl = state.currentBook?.id
                 ? `/api/recaps/book/${state.currentBook.id}/status`
                 : '/api/recaps/status';
-            const response = await fetch(statusUrl);
+            const response = await fetch(statusUrl, { cache: 'no-store' });
             const status = await response.json();
+            state.recapGenerationAvailable = status.enabled === true
+                && status.reasoningEnabled === true
+                && status.cacheOnly !== true;
             state.recapAvailable = status.available === true;
             state.recapCacheOnly = status.cacheOnly === true;
             state.recapChatAvailable = state.recapAvailable &&
@@ -3173,6 +3213,7 @@
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.debug('Failed to check recap availability:', error);
+            state.recapGenerationAvailable = false;
             state.recapAvailable = false;
             state.recapCacheOnly = false;
             state.recapChatAvailable = false;
@@ -3187,10 +3228,10 @@
             const statusUrl = state.currentBook?.id
                 ? `/api/quizzes/book/${state.currentBook.id}/status`
                 : '/api/quizzes/status';
-            const response = await fetch(statusUrl);
+            const response = await fetch(statusUrl, { cache: 'no-store' });
             const status = await response.json();
-            state.quizAvailable = status.available === true;
             state.quizCacheOnly = status.cacheOnly === true;
+            state.quizAvailable = status.available === true && !state.quizCacheOnly;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.debug('Failed to check quiz availability:', error);
@@ -3272,7 +3313,7 @@
     }
 
     async function requestChapterRecapGeneration(chapterId) {
-        if (!chapterId || state.cacheOnly || !state.recapAvailable) return;
+        if (!chapterId || !state.recapGenerationAvailable || state.cacheOnly || state.recapCacheOnly) return;
         try {
             await fetch(`/api/recaps/chapter/${chapterId}/generate`, { method: 'POST' });
         } catch (error) {

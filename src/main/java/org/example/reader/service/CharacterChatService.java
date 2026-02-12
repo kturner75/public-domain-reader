@@ -29,6 +29,9 @@ public class CharacterChatService {
     @Value("${character.chat.max-context-messages:10}")
     private int maxContextMessages;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public CharacterChatService(
             @Qualifier("chatLlmProvider") LlmProvider chatProvider,
             CharacterRepository characterRepository,
@@ -40,12 +43,15 @@ public class CharacterChatService {
     }
 
     public boolean isChatProviderAvailable() {
-        return chatProvider.isAvailable();
+        return !cacheOnly && chatProvider.isAvailable();
     }
 
     public String chat(String characterId, String userMessage,
                        List<ChatMessage> conversationHistory,
                        int readerChapterIndex, int readerParagraphIndex) {
+        if (cacheOnly) {
+            return "Character chat is unavailable in cache-only mode.";
+        }
 
         Optional<CharacterEntity> characterOpt = characterRepository.findByIdWithBookAndChapter(characterId);
         if (characterOpt.isEmpty()) {

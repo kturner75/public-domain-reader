@@ -27,6 +27,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -171,6 +172,40 @@ class ChapterRecapServiceTest {
     }
 
     @Test
+    void requestChapterRecap_existingGeneratingRecap_recentlyUpdated_doesNotRequeue() {
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        ChapterRecapEntity recap = new ChapterRecapEntity(chapter);
+        recap.setStatus(ChapterRecapStatus.GENERATING);
+        recap.setUpdatedAt(LocalDateTime.now());
+
+        ReflectionTestUtils.setField(chapterRecapService, "stuckThresholdMinutes", 15);
+        when(chapterRecapRepository.findByChapterId("chapter-1")).thenReturn(Optional.of(recap));
+
+        chapterRecapService.requestChapterRecap("chapter-1");
+
+        verify(chapterRecapRepository, never()).save(any(ChapterRecapEntity.class));
+        verify(recapMetricsService, never()).recordGenerationRequested();
+    }
+
+    @Test
+    void requestChapterRecap_existingGeneratingRecap_stale_requeuesAsPending() {
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        ChapterRecapEntity recap = new ChapterRecapEntity(chapter);
+        recap.setStatus(ChapterRecapStatus.GENERATING);
+        recap.setUpdatedAt(LocalDateTime.now().minusMinutes(30));
+
+        ReflectionTestUtils.setField(chapterRecapService, "stuckThresholdMinutes", 15);
+        when(chapterRecapRepository.findByChapterId("chapter-1")).thenReturn(Optional.of(recap));
+
+        chapterRecapService.requestChapterRecap("chapter-1");
+
+        ArgumentCaptor<ChapterRecapEntity> captor = ArgumentCaptor.forClass(ChapterRecapEntity.class);
+        verify(chapterRecapRepository).save(captor.capture());
+        assertEquals(ChapterRecapStatus.PENDING, captor.getValue().getStatus());
+        verify(recapMetricsService).recordGenerationRequested();
+    }
+
+    @Test
     void processChapterRecap_withAvailableProvider_persistsLlmGeneratedPayload() {
         ReflectionTestUtils.setField(chapterRecapService, "maxContextChars", 4000);
         when(reasoningProvider.isAvailable()).thenReturn(true);
@@ -202,6 +237,49 @@ class ChapterRecapServiceTest {
         assertEquals("xai", saved.getModelName());
         assertNotNull(saved.getPayloadJson());
         assertTrue(saved.getPayloadJson().contains("Holmes explains the case."));
+    }
+
+    @Test
+    void processChapterRecap_cacheOnlyMode_skipsQueuedGeneration() {
+        ReflectionTestUtils.setField(chapterRecapService, "cacheOnly", true);
+
+        ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
+
+        verify(reasoningProvider, never()).generate(any(), any());
+        verify(chapterRepository, never()).findByIdWithBook("chapter-1");
+        verify(chapterRecapRepository, never()).save(any(ChapterRecapEntity.class));
+    }
+
+    @Test
+    void processChapterRecap_llmFailure_fallsBackToLocalRecap() {
+        ReflectionTestUtils.setField(chapterRecapService, "maxContextChars", 4000);
+        when(reasoningProvider.isAvailable()).thenReturn(true);
+        when(reasoningProvider.generate(any(), any())).thenThrow(new RuntimeException("Ollama 500"));
+
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        when(chapterRepository.findByIdWithBook("chapter-1")).thenReturn(Optional.of(chapter));
+        when(chapterRepository.findById("chapter-1")).thenReturn(Optional.of(chapter));
+        when(chapterRecapRepository.findByChapterId("chapter-1")).thenReturn(Optional.empty());
+        when(chapterRecapRepository.save(any(ChapterRecapEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(paragraphRepository.findByChapterIdOrderByParagraphIndex("chapter-1"))
+                .thenReturn(List.of(
+                        new ParagraphEntity(0, "First event happens in the chapter."),
+                        new ParagraphEntity(1, "Second event moves the plot forward.")
+                ));
+        when(characterRepository.findByBookIdUpToChapter("book-1", 1)).thenReturn(List.of());
+        when(characterRepository.findByBookIdAndFirstChapterIdOrderByFirstParagraphIndex("book-1", "chapter-1"))
+                .thenReturn(List.of());
+
+        ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
+
+        ArgumentCaptor<ChapterRecapEntity> captor = ArgumentCaptor.forClass(ChapterRecapEntity.class);
+        verify(chapterRecapRepository).save(captor.capture());
+        ChapterRecapEntity saved = captor.getValue();
+        assertEquals(ChapterRecapStatus.COMPLETED, saved.getStatus());
+        assertEquals("v1-extractive", saved.getPromptVersion());
+        assertEquals("local-extractive", saved.getModelName());
+        assertNotNull(saved.getPayloadJson());
+        assertFalse(saved.getPayloadJson().isBlank());
     }
 
     private ChapterEntity createChapter(String bookId, String chapterId, int index, String title) {

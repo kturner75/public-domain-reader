@@ -78,6 +78,9 @@ public class ChapterQuizService {
     @Value("${quiz.difficulty.ramp.question-boost-per-level:1}")
     private int questionBoostPerDifficultyLevel;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public ChapterQuizService(
             ChapterQuizRepository chapterQuizRepository,
             ChapterRepository chapterRepository,
@@ -142,6 +145,10 @@ public class ChapterQuizService {
 
     @Transactional
     public void requestChapterQuiz(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping quiz request in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<ChapterQuizEntity> existingQuiz = chapterQuizRepository.findByChapterId(chapterId);
         if (existingQuiz.isPresent()) {
             ChapterQuizEntity quiz = existingQuiz.get();
@@ -318,6 +325,10 @@ public class ChapterQuizService {
     }
 
     private void processChapterQuiz(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping queued quiz generation in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<ChapterEntity> chapterOpt = chapterRepository.findByIdWithBook(chapterId);
         if (chapterOpt.isEmpty()) {
             log.warn("Cannot generate quiz; chapter not found: {}", chapterId);

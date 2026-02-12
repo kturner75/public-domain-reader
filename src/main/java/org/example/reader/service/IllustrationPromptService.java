@@ -6,6 +6,7 @@ import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -14,6 +15,9 @@ public class IllustrationPromptService {
     private static final Logger log = LoggerFactory.getLogger(IllustrationPromptService.class);
 
     private final LlmProvider reasoningProvider;
+
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
 
     public IllustrationPromptService(@Qualifier("reasoningLlmProvider") LlmProvider reasoningProvider) {
         this.reasoningProvider = reasoningProvider;
@@ -36,6 +40,10 @@ public class IllustrationPromptService {
             String chapterTitle,
             String chapterContent,
             IllustrationSettings styleSettings) {
+        if (cacheOnly) {
+            return styleSettings.promptPrefix() + " a scene from " + bookTitle + " by " + author +
+                    ", chapter " + chapterTitle + ", atmospheric book illustration";
+        }
 
         String settingContext = styleSettings.setting() != null
                 ? "Cultural/Geographic Setting: " + styleSettings.setting()

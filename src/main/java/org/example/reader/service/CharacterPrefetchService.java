@@ -49,6 +49,9 @@ public class CharacterPrefetchService {
     @Value("${character.prefetch.timeout-seconds:60}")
     private int timeoutSeconds;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     private WebClient webClient;
 
     public CharacterPrefetchService(
@@ -84,6 +87,10 @@ public class CharacterPrefetchService {
      */
     @Transactional
     public void prefetchCharactersForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping character prefetch in cache-only mode for book {}", bookId);
+            return;
+        }
         BookEntity book = bookRepository.findById(bookId).orElse(null);
         if (book == null) {
             log.warn("Book not found for prefetch: {}", bookId);

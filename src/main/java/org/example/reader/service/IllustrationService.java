@@ -14,6 +14,7 @@ import org.example.reader.repository.IllustrationRepository;
 import org.example.reader.repository.ParagraphRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -45,6 +46,9 @@ public class IllustrationService {
     private final BlockingQueue<GenerationRequest> generationQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile boolean running = true;
+
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
 
     // Self-injection to enable @Transactional on self-invocation
     private IllustrationService self;
@@ -124,6 +128,10 @@ public class IllustrationService {
      */
     @Transactional
     public void requestIllustration(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping illustration request in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<IllustrationEntity> existing = illustrationRepository.findByChapterId(chapterId);
 
         if (existing.isPresent()) {
@@ -191,6 +199,10 @@ public class IllustrationService {
      * Pre-fetch the next chapter's illustration.
      */
     public void prefetchNextChapter(String currentChapterId) {
+        if (cacheOnly) {
+            log.info("Skipping illustration prefetch in cache-only mode for chapter {}", currentChapterId);
+            return;
+        }
         ChapterEntity current = chapterRepository.findById(currentChapterId).orElse(null);
         if (current == null) return;
 
@@ -222,6 +234,10 @@ public class IllustrationService {
                     book.getIllustrationSetting(),
                     book.getIllustrationStyleReasoning()
             );
+        }
+        if (cacheOnly) {
+            log.info("Skipping illustration style analysis in cache-only mode for book {}", bookId);
+            return IllustrationSettings.defaults();
         }
 
         // Get opening text for analysis
@@ -257,6 +273,10 @@ public class IllustrationService {
             try {
                 log.debug("Waiting for illustration request in queue...");
                 GenerationRequest request = generationQueue.take();
+                if (cacheOnly) {
+                    log.info("Skipping queued illustration request in cache-only mode for chapter {}", request.chapterId());
+                    continue;
+                }
                 processedCount++;
                 log.info("Processing illustration request #{} for chapter: {}", processedCount, request.chapterId());
                 String customPrompt = (request instanceof RegenerateRequest r) ? r.customPrompt() : null;
@@ -277,6 +297,10 @@ public class IllustrationService {
      * @param customPrompt If provided, skip LLM prompt generation and use this prompt directly
      */
     private void generateIllustration(String chapterId, String customPrompt) {
+        if (cacheOnly) {
+            log.info("Skipping illustration generation in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         log.info("Starting illustration generation for chapter: {}{}", chapterId,
                 customPrompt != null ? " (with custom prompt)" : "");
 
@@ -436,6 +460,10 @@ public class IllustrationService {
      */
     @Transactional
     public void regenerateWithPrompt(String chapterId, String customPrompt) {
+        if (cacheOnly) {
+            log.info("Skipping illustration regeneration in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<IllustrationEntity> existing = illustrationRepository.findByChapterId(chapterId);
 
         if (existing.isEmpty()) {
@@ -464,6 +492,10 @@ public class IllustrationService {
      */
     @Transactional
     public void retryStuckPendingIllustrations() {
+        if (cacheOnly) {
+            log.info("Skipping illustration retry in cache-only mode");
+            return;
+        }
         List<IllustrationEntity> stuckIllustrations = illustrationRepository.findByStatus(IllustrationStatus.PENDING);
         log.info("Found {} stuck PENDING illustrations", stuckIllustrations.size());
 
@@ -483,6 +515,10 @@ public class IllustrationService {
      */
     @Transactional(readOnly = true)
     public int forceQueuePendingForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping illustration re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<IllustrationEntity> pendingIllustrations = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.PENDING);
         int queued = 0;
         for (IllustrationEntity illustration : pendingIllustrations) {
@@ -501,6 +537,10 @@ public class IllustrationService {
      */
     @Transactional
     public int resetAndRequeueStuckForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping illustration reset/re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<IllustrationEntity> stuckGenerating = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.GENERATING);
         List<IllustrationEntity> stuckPending = illustrationRepository.findByChapterBookIdAndStatus(bookId, IllustrationStatus.PENDING);
 

@@ -29,6 +29,9 @@ public class CharacterExtractionService {
     private final LlmProvider reasoningProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     @Value("${character.extraction.max-characters-per-chapter:5}")
     private int maxCharactersPerChapter;
 
@@ -44,7 +47,7 @@ public class CharacterExtractionService {
     }
 
     public boolean isReasoningProviderAvailable() {
-        return reasoningProvider.isAvailable();
+        return !cacheOnly && reasoningProvider.isAvailable();
     }
 
     /**
@@ -61,6 +64,10 @@ public class CharacterExtractionService {
             String chapterTitle,
             String chapterContent,
             List<String> existingCharacterNames) {
+        if (cacheOnly) {
+            log.info("Skipping character extraction in cache-only mode for chapter '{}'", chapterTitle);
+            return List.of();
+        }
 
         String existingCharactersList = existingCharacterNames.isEmpty()
                 ? "(none yet)"

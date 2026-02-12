@@ -1,6 +1,6 @@
 # Product Backlog
 
-Last updated: 2026-02-11
+Last updated: 2026-02-12
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
@@ -255,6 +255,42 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Expose metrics for queue depth, success/failure counts, and processing latency.
 - Add correlation IDs to generation requests.
 - Add health detail endpoint for provider and queue status.
+
+### BL-023 - Adaptive mobile reader experience
+- Type: Feature
+- Priority: P1
+- Effort: L
+- Status: Proposed
+- Problem: Reader interactions assume keyboard + desktop viewport, causing friction and broken affordances on phones.
+- Acceptance Criteria:
+- Preserve existing desktop keyboard shortcuts and behavior (`h/l`, `j/k`, `H/L`, `/`, `c`) for non-mobile layouts.
+- Provide touch-first mobile navigation for page/paragraph/chapter progression without keyboard dependency.
+- Add capability checks so desktop-centric features can be disabled on mobile when needed, with clear UI fallback messaging.
+- Ensure chapter list and chapter-pause overlays remain usable on common phone breakpoints while keeping continue/skip/submit actions accessible.
+- Add a mobile QA checklist (iOS Safari + Android Chrome) and desktop regression checklist for keyboard flows.
+- Notes/Dependencies:
+- Coordinate with BL-013 so accessibility/focus changes ship alongside mobile interaction updates.
+
+### BL-024 - Cache Transfer + Remote Deploy Automation
+- Type: Improvement
+- Priority: P1
+- Effort: M
+- Status: Done
+- Problem: Moving pre-generated recap data between local and remote environments required manual, error-prone CLI sequences and ad-hoc deployment/import steps.
+- Acceptance Criteria:
+- Provide a recap cache transfer CLI with dry-run/apply safety, conflict policy controls, and stable book/chapter matching semantics.
+- Provide operator scripts for book-level pregen/export/import flow and local-to-remote transfer orchestration over SSH.
+- Support remote execution without requiring Maven when a deployed Spring Boot jar is available.
+- Validate transfer/import on the production-like target flow and document usage.
+- Scope Notes:
+- v1 transfer scope is recap metadata only (`chapter_recaps` payload/status data).
+- Binary assets (audio/illustrations/portraits) remain managed via Spaces sync (`scripts/sync_spaces.sh`).
+- Session Log:
+- 2026-02-12: Implemented `org.example.reader.cli.CacheTransferRunner` with `export`/`import`, `skip|overwrite` conflict handling, format validation, dry-run default, and H2 URL normalization (`DB_CLOSE_ON_EXIT=FALSE`) to avoid exec-classloader shutdown issues.
+- 2026-02-12: Added recap transfer coverage in `CacheTransferRunnerTest` including all-cached export, multi-book export, dry-run immutability, and conflict policy behavior.
+- 2026-02-12: Added operator scripts `scripts/pregen_transfer_book.sh`, `scripts/transfer_recaps_remote.sh`, and `scripts/deploy_remote.sh`; documented workflows in `README.md`.
+- 2026-02-12: Hardened remote transfer script for SSH alias/config usage, strict-mode bash handling, project-root Maven execution, robust remote arg transport, jar-runner fallback (via Spring Boot `PropertiesLauncher`), and remote service stop/start orchestration.
+- 2026-02-12: Validated end-to-end transfer flow against remote target with successful dry-run import summary (`21` books, `1768` recaps, `0` validation errors) and successful apply import run.
 
 ### BL-017 - Post-Chapter Recap + Discussion Experience
 - Type: Feature

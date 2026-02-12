@@ -62,6 +62,9 @@ public class ChapterRecapService {
     @Value("${recap.generation.stuck-threshold-minutes:15}")
     private int stuckThresholdMinutes;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public ChapterRecapService(
             ChapterRecapRepository chapterRecapRepository,
             ChapterRepository chapterRepository,
@@ -128,6 +131,10 @@ public class ChapterRecapService {
 
     @Transactional
     public void requestChapterRecap(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping recap request in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<ChapterRecapEntity> existingRecap = chapterRecapRepository.findByChapterId(chapterId);
         if (existingRecap.isPresent()) {
             ChapterRecapEntity recap = existingRecap.get();
@@ -140,8 +147,15 @@ public class ChapterRecapService {
                 chapterRecapRepository.save(recap);
             }
 
-            if (status == ChapterRecapStatus.COMPLETED || status == ChapterRecapStatus.GENERATING) {
+            if (status == ChapterRecapStatus.COMPLETED) {
                 return;
+            }
+            if (status == ChapterRecapStatus.GENERATING && !isStuckGenerating(recap)) {
+                return;
+            }
+            if (status == ChapterRecapStatus.GENERATING) {
+                log.info("Re-queueing stuck recap generation for chapter {} last updated at {}",
+                        chapterId, recap.getUpdatedAt());
             }
 
             recap.setStatus(ChapterRecapStatus.PENDING);
@@ -166,6 +180,10 @@ public class ChapterRecapService {
 
     @Transactional
     public int forceQueuePendingForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping recap re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<ChapterRecapEntity> pendingRecaps = chapterRecapRepository
                 .findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.PENDING);
         List<ChapterRecapEntity> nullStatusRecaps = chapterRecapRepository
@@ -189,6 +207,10 @@ public class ChapterRecapService {
 
     @Transactional
     public int resetAndRequeueStuckForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping recap reset/re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(Math.max(1, stuckThresholdMinutes));
         List<ChapterRecapEntity> stuckGenerating = chapterRecapRepository
                 .findByChapterBookIdAndStatus(bookId, ChapterRecapStatus.GENERATING).stream()
@@ -284,6 +306,10 @@ public class ChapterRecapService {
     }
 
     private void processChapterRecap(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping queued recap generation in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<ChapterEntity> chapterOpt = chapterRepository.findByIdWithBook(chapterId);
         if (chapterOpt.isEmpty()) {
             log.warn("Cannot generate recap; chapter not found: {}", chapterId);
@@ -333,11 +359,37 @@ public class ChapterRecapService {
             }
         }
 
-        return new RecapGenerationResult(
-                buildFallbackPayload(chapter, paragraphs),
-                "v1-extractive",
-                "local-extractive"
-        );
+        return buildExtractiveFallbackResult(chapter, paragraphs);
+    }
+
+    private RecapGenerationResult buildExtractiveFallbackResult(ChapterEntity chapter, List<String> paragraphs) {
+        try {
+            return new RecapGenerationResult(
+                    buildFallbackPayload(chapter, paragraphs),
+                    "v1-extractive",
+                    "local-extractive"
+            );
+        } catch (Exception e) {
+            // Keep recap generation resilient even if optional fallback sources fail.
+            log.error("Extractive recap fallback failed for chapter {}; using minimal fallback", chapter.getId(), e);
+            return new RecapGenerationResult(
+                    buildMinimalFallbackPayload(paragraphs),
+                    "v0-minimal",
+                    "local-minimal"
+            );
+        }
+    }
+
+    private boolean isStuckGenerating(ChapterRecapEntity recap) {
+        if (recap == null || recap.getStatus() != ChapterRecapStatus.GENERATING) {
+            return false;
+        }
+        LocalDateTime updatedAt = recap.getUpdatedAt();
+        if (updatedAt == null) {
+            return true;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(Math.max(1, stuckThresholdMinutes));
+        return updatedAt.isBefore(cutoff);
     }
 
     private List<String> loadChapterParagraphs(String chapterId) {
@@ -469,6 +521,12 @@ public class ChapterRecapService {
                 .toList();
 
         return new ChapterRecapPayload(shortSummary, keyEvents, deltas);
+    }
+
+    private ChapterRecapPayload buildMinimalFallbackPayload(List<String> paragraphs) {
+        String shortSummary = buildShortSummary(paragraphs);
+        List<String> keyEvents = buildKeyEvents(paragraphs, shortSummary);
+        return new ChapterRecapPayload(shortSummary, keyEvents, List.of());
     }
 
     private record RecapGenerationResult(
