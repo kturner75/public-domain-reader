@@ -138,21 +138,42 @@ class ChapterRecapControllerTest {
     @Test
     void requestChapterRecapGeneration_existingChapter_returnsAccepted() throws Exception {
         when(chapterRecapService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
-        when(recapRolloutService.isBookAllowed("book-1")).thenReturn(true);
         mockMvc.perform(post("/api/recaps/chapter/chapter-1/generate"))
                 .andExpect(status().isAccepted());
         verify(chapterRecapService).requestChapterRecap("chapter-1");
     }
 
     @Test
+    void requestChapterRecapGeneration_rolloutDisabled_stillReturnsAccepted() throws Exception {
+        when(chapterRecapService.findBookIdForChapter("chapter-2")).thenReturn(Optional.of("book-1"));
+        when(recapRolloutService.isBookAllowed("book-1")).thenReturn(false);
+
+        mockMvc.perform(post("/api/recaps/chapter/chapter-2/generate"))
+                .andExpect(status().isAccepted());
+
+        verify(chapterRecapService).requestChapterRecap("chapter-2");
+    }
+
+    @Test
     void requestChapterRecapGeneration_missingChapter_returns404() throws Exception {
         when(chapterRecapService.findBookIdForChapter("missing")).thenReturn(Optional.of("book-1"));
-        when(recapRolloutService.isBookAllowed("book-1")).thenReturn(true);
         org.mockito.Mockito.doThrow(new IllegalArgumentException("Chapter not found"))
                 .when(chapterRecapService).requestChapterRecap("missing");
 
         mockMvc.perform(post("/api/recaps/chapter/missing/generate"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void requeueStuckRecaps_returnsAcceptedWithCount() throws Exception {
+        when(chapterRecapService.resetAndRequeueStuckForBook("book-1")).thenReturn(3);
+
+        mockMvc.perform(post("/api/recaps/book/book-1/requeue-stuck"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.bookId", is("book-1")))
+                .andExpect(jsonPath("$.requeued", is(3)));
+
+        verify(chapterRecapService).resetAndRequeueStuckForBook("book-1");
     }
 
     @Test

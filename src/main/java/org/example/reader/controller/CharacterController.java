@@ -82,7 +82,7 @@ public class CharacterController {
         Map<String, Object> status = new HashMap<>();
         status.put("enabled", characterEnabled);
         status.put("reasoningEnabled", reasoningEnabled);
-        status.put("chatEnabled", chatEnabled);
+        status.put("chatEnabled", chatEnabled && !cacheOnly);
         status.put("reasoningProviderAvailable", extractionService.isReasoningProviderAvailable());
         status.put("chatProviderAvailable", chatService.isChatProviderAvailable());
         // Legacy field for backwards compatibility
@@ -280,6 +280,13 @@ public class CharacterController {
         if (!chatEnabled) {
             return ResponseEntity.status(403).body(new ChatResponse(
                     "Chat is disabled in this environment.",
+                    characterId,
+                    System.currentTimeMillis()
+            ));
+        }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).body(new ChatResponse(
+                    "Character chat is unavailable in cache-only mode.",
                     characterId,
                     System.currentTimeMillis()
             ));

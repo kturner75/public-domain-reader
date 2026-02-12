@@ -8,6 +8,7 @@ import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -18,13 +19,16 @@ public class IllustrationStyleAnalysisService {
     private final LlmProvider reasoningProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public IllustrationStyleAnalysisService(@Qualifier("reasoningLlmProvider") LlmProvider reasoningProvider) {
         this.reasoningProvider = reasoningProvider;
         log.info("Illustration style analysis service initialized with provider: {}", reasoningProvider.getProviderName());
     }
 
     public boolean isReasoningProviderAvailable() {
-        return reasoningProvider.isAvailable();
+        return !cacheOnly && reasoningProvider.isAvailable();
     }
 
     /**
@@ -36,6 +40,10 @@ public class IllustrationStyleAnalysisService {
     }
 
     public IllustrationSettings analyzeBookForStyle(String title, String author, String openingText) {
+        if (cacheOnly) {
+            log.info("Skipping illustration style analysis in cache-only mode for '{}'", title);
+            return IllustrationSettings.defaults();
+        }
         String prompt = String.format("""
             Analyze this book and recommend the best illustration style for generating AI art that accompanies the reading experience.
 

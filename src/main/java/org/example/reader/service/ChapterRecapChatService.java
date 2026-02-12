@@ -34,6 +34,9 @@ public class ChapterRecapChatService {
     @Value("${recap.chat.max-source-chars:12000}")
     private int maxSourceChars;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public ChapterRecapChatService(
             @Qualifier("chatLlmProvider") LlmProvider chatProvider,
             ChapterRepository chapterRepository,
@@ -45,7 +48,7 @@ public class ChapterRecapChatService {
     }
 
     public boolean isChatProviderAvailable() {
-        return chatProvider.isAvailable();
+        return !cacheOnly && chatProvider.isAvailable();
     }
 
     public String chat(
@@ -53,6 +56,9 @@ public class ChapterRecapChatService {
             String userMessage,
             List<ChatMessage> conversationHistory,
             int readerChapterIndex) {
+        if (cacheOnly) {
+            return "Recap chat is unavailable in cache-only mode.";
+        }
 
         List<ChapterEntity> chapters = chapterRepository.findByBookIdOrderByChapterIndex(bookId);
         if (chapters.isEmpty()) {

@@ -58,6 +58,9 @@ public class PreGenerationService {
     @Value("${pregen.image-cooldown-minutes:3}")
     private int imageCooldownMinutes;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     public PreGenerationService(
             BookImportService bookImportService,
             BookStorageService bookStorageService,
@@ -111,6 +114,9 @@ public class PreGenerationService {
      * Will import the book if not already present.
      */
     public PreGenResult preGenerateByGutenbergId(int gutenbergId) {
+        if (cacheOnly) {
+            return PreGenResult.failure("Pre-generation is unavailable in cache-only mode.");
+        }
         log.info("Starting pre-generation for Gutenberg ID: {}", gutenbergId);
 
         // Check if already imported
@@ -144,6 +150,9 @@ public class PreGenerationService {
      * Will import the book if not already present.
      */
     public PreGenResult preGenerateRecapsByGutenbergId(int gutenbergId) {
+        if (cacheOnly) {
+            return PreGenResult.failure("Pre-generation is unavailable in cache-only mode.");
+        }
         log.info("Starting recap-only pre-generation for Gutenberg ID: {}", gutenbergId);
 
         String sourceId = String.valueOf(gutenbergId);
@@ -175,6 +184,9 @@ public class PreGenerationService {
      * Pre-generate all assets for a book that's already in the database.
      */
     public PreGenResult preGenerateForBook(String bookId) {
+        if (cacheOnly) {
+            return PreGenResult.failure("Pre-generation is unavailable in cache-only mode.");
+        }
         var book = bookRepository.findById(bookId).orElse(null);
         if (book == null) {
             return PreGenResult.failure("Book not found: " + bookId);
@@ -378,6 +390,9 @@ public class PreGenerationService {
      * Pre-generate recap assets only for a book that's already in the database.
      */
     public PreGenResult preGenerateRecapsForBook(String bookId) {
+        if (cacheOnly) {
+            return PreGenResult.failure("Pre-generation is unavailable in cache-only mode.");
+        }
         var book = bookRepository.findById(bookId).orElse(null);
         if (book == null) {
             return PreGenResult.failure("Book not found: " + bookId);

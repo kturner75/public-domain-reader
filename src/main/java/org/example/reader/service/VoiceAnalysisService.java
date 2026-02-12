@@ -8,6 +8,7 @@ import org.example.reader.service.llm.LlmProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.stream.Collectors;
@@ -20,13 +21,16 @@ public class VoiceAnalysisService {
   private final LlmProvider reasoningProvider;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  @Value("${generation.cache-only:false}")
+  private boolean cacheOnly;
+
   public VoiceAnalysisService(@Qualifier("reasoningLlmProvider") LlmProvider reasoningProvider) {
     this.reasoningProvider = reasoningProvider;
     log.info("Voice analysis service initialized with provider: {}", reasoningProvider.getProviderName());
   }
 
   public boolean isReasoningProviderAvailable() {
-    return reasoningProvider.isAvailable();
+    return !cacheOnly && reasoningProvider.isAvailable();
   }
 
   /**
@@ -38,6 +42,10 @@ public class VoiceAnalysisService {
   }
 
   public VoiceSettings analyzeBookForVoice(String title, String author, String openingText) {
+    if (cacheOnly) {
+      log.info("Skipping voice analysis in cache-only mode for '{}'", title);
+      return VoiceSettings.defaults();
+    }
     String voicesDescription = TtsService.AVAILABLE_VOICES.stream()
         .map(v -> String.format("- %s (%s): %s", v.get("id"), v.get("gender"), v.get("description")))
         .collect(Collectors.joining("\n"));

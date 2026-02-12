@@ -177,7 +177,7 @@ public class ChapterQuizController {
     }
 
     private boolean isQuizAvailable() {
-        return quizEnabled && reasoningEnabled;
+        return quizEnabled && reasoningEnabled && !cacheOnly;
     }
 
     public record QuizSubmissionRequest(List<Integer> selectedOptionIndexes) {

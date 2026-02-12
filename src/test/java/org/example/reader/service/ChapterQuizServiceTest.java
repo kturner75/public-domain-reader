@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -214,6 +215,17 @@ class ChapterQuizServiceTest {
         assertEquals("xai", saved.getModelName());
         assertNotNull(saved.getPayloadJson());
         assertTrue(saved.getPayloadJson().contains("What does Holmes examine?"));
+    }
+
+    @Test
+    void processChapterQuiz_cacheOnlyMode_skipsQueuedGeneration() {
+        ReflectionTestUtils.setField(chapterQuizService, "cacheOnly", true);
+
+        ReflectionTestUtils.invokeMethod(chapterQuizService, "processChapterQuiz", "chapter-1");
+
+        verify(reasoningProvider, never()).generate(any(), any());
+        verify(chapterRepository, never()).findByIdWithBook("chapter-1");
+        verify(chapterQuizRepository, never()).save(any(ChapterQuizEntity.class));
     }
 
     @Test

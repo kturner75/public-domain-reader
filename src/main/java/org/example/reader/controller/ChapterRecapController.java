@@ -116,7 +116,7 @@ public class ChapterRecapController {
 
     @PostMapping("/chapter/{chapterId}/generate")
     public ResponseEntity<Void> requestChapterRecapGeneration(@PathVariable String chapterId) {
-        if (!recapEnabled) {
+        if (!isRecapGenerationFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
         if (cacheOnly) {
@@ -126,9 +126,6 @@ public class ChapterRecapController {
         if (bookId == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!isBookAvailableForRecap(bookId)) {
-            return ResponseEntity.status(403).build();
-        }
 
         try {
             chapterRecapService.requestChapterRecap(chapterId);
@@ -136,6 +133,18 @@ public class ChapterRecapController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    @PostMapping("/book/{bookId}/requeue-stuck")
+    public ResponseEntity<RequeueStuckResponse> requeueStuckRecaps(@PathVariable String bookId) {
+        if (!isRecapGenerationFeatureEnabled()) {
+            return ResponseEntity.status(403).build();
+        }
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        int requeued = chapterRecapService.resetAndRequeueStuckForBook(bookId);
+        return ResponseEntity.accepted().body(new RequeueStuckResponse(bookId, requeued));
     }
 
     @PostMapping("/book/{bookId}/chat")
@@ -202,6 +211,10 @@ public class ChapterRecapController {
         return recapEnabled && reasoningEnabled && recapRolloutService.isBookAllowed(bookId);
     }
 
+    private boolean isRecapGenerationFeatureEnabled() {
+        return recapEnabled && reasoningEnabled;
+    }
+
     public record RecapChatRequest(
             String message,
             List<ChatMessage> conversationHistory,
@@ -220,6 +233,12 @@ public class ChapterRecapController {
             String bookId,
             String chapterId,
             String event
+    ) {
+    }
+
+    public record RequeueStuckResponse(
+            String bookId,
+            int requeued
     ) {
     }
 }

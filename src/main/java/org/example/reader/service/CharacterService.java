@@ -69,6 +69,9 @@ public class CharacterService {
     @Value("${character.secondary.max-per-book:40}")
     private int maxSecondaryPerBook;
 
+    @Value("${generation.cache-only:false}")
+    private boolean cacheOnly;
+
     private final BlockingQueue<CharacterRequest> requestQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile boolean running = true;
@@ -123,6 +126,10 @@ public class CharacterService {
 
     @Transactional
     public void requestChapterAnalysis(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping character analysis request in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         Optional<ChapterAnalysisEntity> existingAnalysis = chapterAnalysisRepository.findByChapterId(chapterId);
         if (existingAnalysis.isPresent()) {
             ChapterAnalysisEntity analysis = existingAnalysis.get();
@@ -181,6 +188,10 @@ public class CharacterService {
     }
 
     public void prefetchNextChapter(String currentChapterId) {
+        if (cacheOnly) {
+            log.info("Skipping character prefetch in cache-only mode for chapter {}", currentChapterId);
+            return;
+        }
         ChapterEntity current = chapterRepository.findById(currentChapterId).orElse(null);
         if (current == null) return;
 
@@ -241,6 +252,14 @@ public class CharacterService {
             try {
                 log.debug("Waiting for character request in queue...");
                 CharacterRequest request = requestQueue.take();
+                if (cacheOnly) {
+                    if (request instanceof AnalysisRequest ar) {
+                        log.info("Skipping queued character analysis in cache-only mode for chapter {}", ar.chapterId());
+                    } else if (request instanceof PortraitRequest pr) {
+                        log.info("Skipping queued portrait generation in cache-only mode for character {}", pr.characterId());
+                    }
+                    continue;
+                }
                 processedCount++;
 
                 if (request instanceof AnalysisRequest ar) {
@@ -262,6 +281,10 @@ public class CharacterService {
     }
 
     private void processChapterAnalysis(String chapterId) {
+        if (cacheOnly) {
+            log.info("Skipping chapter analysis in cache-only mode for chapter {}", chapterId);
+            return;
+        }
         ChapterEntity chapter = chapterRepository.findByIdWithBook(chapterId).orElse(null);
         if (chapter == null) {
             log.warn("Chapter not found for analysis: {}", chapterId);
@@ -358,6 +381,10 @@ public class CharacterService {
      * Queue portrait generation for a character. Used by CharacterPrefetchService.
      */
     public void queuePortraitGeneration(String characterId) {
+        if (cacheOnly) {
+            log.info("Skipping portrait queue in cache-only mode for character {}", characterId);
+            return;
+        }
         CharacterEntity character = characterRepository.findById(characterId).orElse(null);
         if (character == null) {
             log.warn("Cannot queue portrait generation: character not found {}", characterId);
@@ -555,6 +582,10 @@ public class CharacterService {
     }
 
     private void generatePortrait(String characterId) {
+        if (cacheOnly) {
+            log.info("Skipping portrait generation in cache-only mode for character {}", characterId);
+            return;
+        }
         CharacterEntity character = characterRepository.findByIdWithBookAndChapter(characterId).orElse(null);
         if (character == null) {
             log.warn("Character not found for portrait generation: {}", characterId);
@@ -709,6 +740,10 @@ public class CharacterService {
      */
     @Transactional(readOnly = true)
     public int forceQueuePendingPortraitsForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping portrait re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<CharacterEntity> pendingCharacters = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.PENDING);
         int queued = 0;
         for (CharacterEntity character : pendingCharacters) {
@@ -728,6 +763,10 @@ public class CharacterService {
      */
     @Transactional(readOnly = true)
     public int forceQueuePendingAnalysesForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping analysis re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<ChapterAnalysisEntity> pendingAnalyses = chapterAnalysisRepository
                 .findByChapterBookIdAndStatus(bookId, ChapterAnalysisStatus.PENDING);
         List<ChapterAnalysisEntity> nullStatusAnalyses = chapterAnalysisRepository
@@ -753,6 +792,10 @@ public class CharacterService {
      */
     @Transactional
     public int resetAndRequeueStuckPortraitsForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping portrait reset/re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<CharacterEntity> stuckGenerating = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.GENERATING);
         List<CharacterEntity> stuckPending = characterRepository.findByBookIdAndStatus(bookId, CharacterStatus.PENDING);
 
@@ -790,6 +833,10 @@ public class CharacterService {
      */
     @Transactional
     public int resetAndRequeueStuckAnalysesForBook(String bookId) {
+        if (cacheOnly) {
+            log.info("Skipping analysis reset/re-queue in cache-only mode for book {}", bookId);
+            return 0;
+        }
         List<ChapterAnalysisEntity> stuckGenerating = chapterAnalysisRepository
                 .findByChapterBookIdAndStatus(bookId, ChapterAnalysisStatus.GENERATING);
         List<ChapterAnalysisEntity> stuckPending = chapterAnalysisRepository
