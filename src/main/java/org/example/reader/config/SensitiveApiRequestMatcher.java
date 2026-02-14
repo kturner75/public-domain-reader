@@ -27,6 +27,8 @@ public final class SensitiveApiRequestMatcher {
     private static final Pattern RECAP_CHAT_PATH = Pattern.compile("^/api/recaps/book/[^/]+/chat$");
 
     private static final Pattern QUIZ_GENERATE_PATH = Pattern.compile("^/api/quizzes/chapter/[^/]+/generate$");
+    private static final Pattern LIBRARY_FEATURES_PATH = Pattern.compile("^/api/library/[^/]+/features$");
+    private static final Pattern LIBRARY_DELETE_BOOK_PATH = Pattern.compile("^/api/library/[^/]+$");
 
     private SensitiveApiRequestMatcher() {
     }
@@ -34,7 +36,8 @@ public final class SensitiveApiRequestMatcher {
     public enum EndpointType {
         NONE,
         GENERATION,
-        CHAT
+        CHAT,
+        ADMIN
     }
 
     public static EndpointType classify(String method, String path) {
@@ -66,6 +69,15 @@ public final class SensitiveApiRequestMatcher {
 
         if ("GET".equals(method) && TTS_SPEAK_PATH.matcher(path).matches()) {
             return EndpointType.GENERATION;
+        }
+
+        if ("PATCH".equals(method) && LIBRARY_FEATURES_PATH.matcher(path).matches()) {
+            return EndpointType.ADMIN;
+        }
+
+        if ("DELETE".equals(method)
+                && ("/api/library".equals(path) || LIBRARY_DELETE_BOOK_PATH.matcher(path).matches())) {
+            return EndpointType.ADMIN;
         }
 
         return EndpointType.NONE;

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.example.reader.config.SensitiveApiRequestMatcher.EndpointType.CHAT;
 import static org.example.reader.config.SensitiveApiRequestMatcher.EndpointType.GENERATION;
+import static org.example.reader.config.SensitiveApiRequestMatcher.EndpointType.ADMIN;
 import static org.example.reader.config.SensitiveApiRequestMatcher.EndpointType.NONE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -24,9 +25,17 @@ class SensitiveApiRequestMatcherTest {
     }
 
     @Test
+    void classify_marksAdminEndpoints() {
+        assertEquals(ADMIN, SensitiveApiRequestMatcher.classify("PATCH", "/api/library/book-1/features"));
+        assertEquals(ADMIN, SensitiveApiRequestMatcher.classify("DELETE", "/api/library/book-1"));
+        assertEquals(ADMIN, SensitiveApiRequestMatcher.classify("DELETE", "/api/library"));
+    }
+
+    @Test
     void classify_ignoresNonSensitiveEndpoints() {
         assertEquals(NONE, SensitiveApiRequestMatcher.classify("GET", "/api/import/popular"));
         assertEquals(NONE, SensitiveApiRequestMatcher.classify("POST", "/api/recaps/analytics"));
+        assertEquals(NONE, SensitiveApiRequestMatcher.classify("GET", "/api/library/book-1"));
         assertEquals(NONE, SensitiveApiRequestMatcher.classify(null, "/api/pregen/book/book-1"));
     }
 }
