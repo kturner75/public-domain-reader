@@ -26,9 +26,10 @@ public class SearchController {
     public ResponseEntity<List<SearchResult>> search(
             @RequestParam String q,
             @RequestParam(required = false) String bookId,
+            @RequestParam(required = false) String chapterId,
             @RequestParam(defaultValue = "10") int limit) {
         try {
-            List<SearchResult> results = searchService.search(q, bookId, limit);
+            List<SearchResult> results = searchService.search(q, bookId, chapterId, limit);
             return ResponseEntity.ok(results);
         } catch (IOException | ParseException e) {
             return ResponseEntity.internalServerError().build();

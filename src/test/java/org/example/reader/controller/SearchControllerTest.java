@@ -31,7 +31,7 @@ class SearchControllerTest {
         List<SearchResult> results = List.of(
             new SearchResult("book", "moby-dick", null, null, "Moby Dick", null, 1.5f)
         );
-        when(searchService.search("Moby", null, 10)).thenReturn(results);
+        when(searchService.search("Moby", null, null, 10)).thenReturn(results);
 
         mockMvc.perform(get("/api/search").param("q", "Moby"))
             .andExpect(status().isOk())
@@ -46,7 +46,7 @@ class SearchControllerTest {
         List<SearchResult> results = List.of(
             new SearchResult("paragraph", "moby-dick", "ch1", 0, null, "Call me Ishmael...", 2.0f)
         );
-        when(searchService.search("Ishmael", null, 10)).thenReturn(results);
+        when(searchService.search("Ishmael", null, null, 10)).thenReturn(results);
 
         mockMvc.perform(get("/api/search").param("q", "Ishmael"))
             .andExpect(status().isOk())
@@ -58,7 +58,7 @@ class SearchControllerTest {
 
     @Test
     void search_noResults_returnsEmptyArray() throws Exception {
-        when(searchService.search("nonexistent", null, 10)).thenReturn(List.of());
+        when(searchService.search("nonexistent", null, null, 10)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/search").param("q", "nonexistent"))
             .andExpect(status().isOk())
@@ -71,7 +71,7 @@ class SearchControllerTest {
             new SearchResult("book", "book1", null, null, "Book One", null, 1.0f),
             new SearchResult("book", "book2", null, null, "Book Two", null, 0.9f)
         );
-        when(searchService.search("Book", null, 2)).thenReturn(results);
+        when(searchService.search("Book", null, null, 2)).thenReturn(results);
 
         mockMvc.perform(get("/api/search").param("q", "Book").param("limit", "2"))
             .andExpect(status().isOk())
@@ -83,12 +83,28 @@ class SearchControllerTest {
         List<SearchResult> results = List.of(
             new SearchResult("paragraph", "moby-dick", "ch1", 0, null, "Call me Ishmael...", 2.0f)
         );
-        when(searchService.search("Ishmael", "moby-dick", 10)).thenReturn(results);
+        when(searchService.search("Ishmael", "moby-dick", null, 10)).thenReturn(results);
 
         mockMvc.perform(get("/api/search").param("q", "Ishmael").param("bookId", "moby-dick"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$", hasSize(1)))
             .andExpect(jsonPath("$[0].bookId", is("moby-dick")));
+    }
+
+    @Test
+    void search_withChapterId_filtersResults() throws Exception {
+        List<SearchResult> results = List.of(
+            new SearchResult("paragraph", "moby-dick", "ch2", 4, null, "...white whale...", 1.8f)
+        );
+        when(searchService.search("whale", "moby-dick", "ch2", 10)).thenReturn(results);
+
+        mockMvc.perform(get("/api/search")
+                .param("q", "whale")
+                .param("bookId", "moby-dick")
+                .param("chapterId", "ch2"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$", hasSize(1)))
+            .andExpect(jsonPath("$[0].chapterId", is("ch2")));
     }
 
     @Test
@@ -99,7 +115,7 @@ class SearchControllerTest {
 
     @Test
     void search_serviceThrowsIOException_returns500() throws Exception {
-        when(searchService.search("error", null, 10)).thenThrow(new IOException("Index error"));
+        when(searchService.search("error", null, null, 10)).thenThrow(new IOException("Index error"));
 
         mockMvc.perform(get("/api/search").param("q", "error"))
             .andExpect(status().isInternalServerError());
@@ -107,7 +123,7 @@ class SearchControllerTest {
 
     @Test
     void search_serviceThrowsParseException_returns500() throws Exception {
-        when(searchService.search("bad:query", null, 10)).thenThrow(new ParseException("Invalid syntax"));
+        when(searchService.search("bad:query", null, null, 10)).thenThrow(new ParseException("Invalid syntax"));
 
         mockMvc.perform(get("/api/search").param("q", "bad:query"))
             .andExpect(status().isInternalServerError());
@@ -119,7 +135,7 @@ class SearchControllerTest {
             new SearchResult("book", "moby-dick", null, null, "Moby Dick", null, 2.0f),
             new SearchResult("paragraph", "moby-dick", "ch1", 0, null, "...Moby Dick...", 1.5f)
         );
-        when(searchService.search("Moby", null, 10)).thenReturn(results);
+        when(searchService.search("Moby", null, null, 10)).thenReturn(results);
 
         mockMvc.perform(get("/api/search").param("q", "Moby"))
             .andExpect(status().isOk())

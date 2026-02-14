@@ -24,11 +24,16 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 @Service
 public class SearchService {
 
+    private static final int SNIPPET_MAX_LENGTH = 140;
     private final Directory index;
     private final StandardAnalyzer analyzer;
 
@@ -66,6 +71,10 @@ public class SearchService {
     }
 
     public List<SearchResult> search(String queryStr, String bookId, int maxResults) throws IOException, ParseException {
+        return search(queryStr, bookId, null, maxResults);
+    }
+
+    public List<SearchResult> search(String queryStr, String bookId, String chapterId, int maxResults) throws IOException, ParseException {
         List<SearchResult> results = new ArrayList<>();
 
         try (DirectoryReader reader = DirectoryReader.open(index)) {
@@ -73,19 +82,23 @@ public class SearchService {
             QueryParser parser = new QueryParser("content", analyzer);
             Query contentQuery = parser.parse(queryStr);
 
-            Query finalQuery;
+            BooleanQuery.Builder builder = new BooleanQuery.Builder();
+            builder.add(contentQuery, BooleanClause.Occur.MUST);
+            boolean paragraphOnly = false;
             if (bookId != null && !bookId.isBlank()) {
-                // Filter by bookId and only return paragraph results (not book metadata)
-                BooleanQuery.Builder builder = new BooleanQuery.Builder();
-                builder.add(contentQuery, BooleanClause.Occur.MUST);
-                builder.add(new TermQuery(new Term("bookId", bookId)), BooleanClause.Occur.MUST);
-                builder.add(new TermQuery(new Term("type", "paragraph")), BooleanClause.Occur.MUST);
-                finalQuery = builder.build();
-            } else {
-                finalQuery = contentQuery;
+                builder.add(new TermQuery(new Term("bookId", bookId)), BooleanClause.Occur.FILTER);
+                paragraphOnly = true;
             }
+            if (chapterId != null && !chapterId.isBlank()) {
+                builder.add(new TermQuery(new Term("chapterId", chapterId)), BooleanClause.Occur.FILTER);
+                paragraphOnly = true;
+            }
+            if (paragraphOnly) {
+                builder.add(new TermQuery(new Term("type", "paragraph")), BooleanClause.Occur.FILTER);
+            }
+            Query finalQuery = builder.build();
 
-            ScoreDoc[] hits = searcher.search(finalQuery, maxResults).scoreDocs;
+            ScoreDoc[] hits = searcher.search(finalQuery, Math.max(1, maxResults)).scoreDocs;
 
             for (ScoreDoc hit : hits) {
                 Document doc = searcher.storedFields().document(hit.doc);
@@ -96,7 +109,7 @@ public class SearchService {
                 if ("paragraph".equals(type)) {
                     paragraphIndex = doc.getField("paragraphIndex").numericValue().intValue();
                     String content = doc.get("content");
-                    snippet = content.length() > 100 ? content.substring(0, 100) + "..." : content;
+                    snippet = buildSnippet(content, queryStr);
                 }
 
                 results.add(new SearchResult(
@@ -112,6 +125,67 @@ public class SearchService {
         }
 
         return results;
+    }
+
+    private String buildSnippet(String content, String queryStr) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        String normalized = content.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= SNIPPET_MAX_LENGTH) {
+            return normalized;
+        }
+
+        List<String> terms = extractTerms(queryStr);
+        String lowerContent = normalized.toLowerCase(Locale.ROOT);
+        int matchIndex = -1;
+        for (String term : terms) {
+            int index = lowerContent.indexOf(term);
+            if (index >= 0 && (matchIndex < 0 || index < matchIndex)) {
+                matchIndex = index;
+            }
+        }
+
+        int start = 0;
+        if (matchIndex >= 0) {
+            start = Math.max(0, matchIndex - (SNIPPET_MAX_LENGTH / 2));
+            if (start > 0) {
+                int previousSpace = normalized.lastIndexOf(' ', start);
+                if (previousSpace >= 0) {
+                    start = previousSpace + 1;
+                }
+            }
+        }
+
+        int end = Math.min(normalized.length(), start + SNIPPET_MAX_LENGTH);
+        if (end < normalized.length()) {
+            int nextSpace = normalized.indexOf(' ', end);
+            if (nextSpace >= 0) {
+                end = nextSpace;
+            }
+        }
+
+        String snippet = normalized.substring(start, end).trim();
+        if (start > 0) {
+            snippet = "..." + snippet;
+        }
+        if (end < normalized.length()) {
+            snippet = snippet + "...";
+        }
+        return snippet;
+    }
+
+    private List<String> extractTerms(String queryStr) {
+        if (queryStr == null || queryStr.isBlank()) {
+            return List.of();
+        }
+        String normalized = queryStr.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{Nd}]+", " ");
+        Set<String> terms = new LinkedHashSet<>();
+        Arrays.stream(normalized.split("\\s+"))
+                .map(String::trim)
+                .filter(term -> term.length() >= 2)
+                .forEach(terms::add);
+        return List.copyOf(terms);
     }
 
     public void deleteByBookId(String bookId) throws IOException {
