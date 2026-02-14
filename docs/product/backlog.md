@@ -247,12 +247,15 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P1
 - Effort: L
-- Status: Proposed
+- Status: Done
 - Problem: Reader currently lacks durable annotations/bookmarking despite being a core deep-reading need.
 - Acceptance Criteria:
 - Users can create/edit/delete highlights and notes per paragraph.
 - Users can jump to bookmarks from a reader sidebar/modal.
 - Data persists per book across sessions.
+- Session Log:
+- 2026-02-14: Implemented server-backed paragraph annotations/bookmarks with Flyway migration (`V3__paragraph_annotations.sql`), reader-profile cookie scoping, library annotation/bookmark APIs, and reader UI support for highlight/note/bookmark actions plus bookmark jump overlay and keyboard shortcuts.
+- 2026-02-14: Streamlined reader controls by consolidating annotation actions into a single header menu and moving shortcut reference into a keyboard-help overlay (including `?` quick open).
 
 ### BL-006 - Reader preferences panel (typography/layout controls)
 - Type: Feature
