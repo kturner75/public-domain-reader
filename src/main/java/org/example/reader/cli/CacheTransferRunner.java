@@ -54,6 +54,7 @@ public class CacheTransferRunner {
     private static final String DB_PASSWORD_FLAG = "--db-password";
 
     private static final String FEATURE_RECAPS = "recaps";
+    private static final String FEATURE_QUIZZES = "quizzes";
     private static final String FORMAT_VERSION = "1.0";
 
     private static final Set<String> GLOBAL_OPTIONS = Set.of(
@@ -109,9 +110,10 @@ public class CacheTransferRunner {
             }
         }
 
-        String feature = parsed.optionValue(FEATURE_FLAG).orElse(FEATURE_RECAPS).trim().toLowerCase();
-        if (!FEATURE_RECAPS.equals(feature)) {
-            err.println("Unsupported feature: " + feature + " (v1 supports only 'recaps').");
+        String featureRaw = parsed.optionValue(FEATURE_FLAG).orElse(FEATURE_RECAPS).trim().toLowerCase();
+        Optional<TransferFeature> feature = TransferFeature.fromValue(featureRaw);
+        if (feature.isEmpty()) {
+            err.println("Unsupported feature: " + featureRaw + " (supported: recaps, quizzes).");
             return 1;
         }
 
@@ -120,8 +122,10 @@ public class CacheTransferRunner {
         try (Connection connection = DriverManager.getConnection(dbConfig.url(), dbConfig.user(), dbConfig.password())) {
             if (COMMAND_EXPORT.equals(parsed.command())) {
                 ExportOptions options = buildExportOptions(parsed);
-                Summary summary = exportRecaps(connection, options, out, err);
-                printSummary("export", summary, options.apply(), out);
+                Summary summary = feature.get() == TransferFeature.RECAPS
+                        ? exportRecaps(connection, options, out, err)
+                        : exportQuizzes(connection, options, out, err);
+                printSummary("export", feature.get(), summary, options.apply(), out);
                 return summary.validationErrors() > 0 ? 1 : 0;
             }
 
@@ -130,7 +134,9 @@ public class CacheTransferRunner {
                 connection.setAutoCommit(false);
             }
 
-            Summary summary = importRecaps(connection, options, out, err);
+            Summary summary = feature.get() == TransferFeature.RECAPS
+                    ? importRecaps(connection, options, out, err)
+                    : importQuizzes(connection, options, out, err);
 
             if (options.apply()) {
                 if (summary.validationErrors() > 0) {
@@ -140,7 +146,7 @@ public class CacheTransferRunner {
                 }
             }
 
-            printSummary("import", summary, options.apply(), out);
+            printSummary("import", feature.get(), summary, options.apply(), out);
             return summary.validationErrors() > 0 ? 1 : 0;
         } catch (Exception e) {
             err.println("Cache transfer failed: " + e.getMessage());
@@ -282,7 +288,9 @@ public class CacheTransferRunner {
                 .toList();
 
         for (TransferBook book : books) {
-            book.recaps().sort(Comparator.comparingInt(TransferRecap::chapterIndex));
+            if (book.recaps() != null) {
+                book.recaps().sort(Comparator.comparingInt(TransferRecap::chapterIndex));
+            }
         }
 
         TransferBundle bundle = new TransferBundle(
@@ -311,6 +319,115 @@ public class CacheTransferRunner {
         return summary;
     }
 
+    static Summary exportQuizzes(Connection connection, ExportOptions options, PrintStream out, PrintStream err)
+            throws SQLException, IOException {
+        Summary summary = new Summary();
+
+        Map<String, List<BookRow>> booksByRequestedSourceId = options.sourceIds().isEmpty()
+                ? Map.of()
+                : findBooksBySourceId(connection, options.sourceIds());
+        if (!options.sourceIds().isEmpty()) {
+            summary.booksScanned = options.sourceIds().size();
+            for (String requestedSourceId : options.sourceIds()) {
+                if (booksByRequestedSourceId.getOrDefault(requestedSourceId, List.of()).isEmpty()) {
+                    summary.booksMissing++;
+                    out.println("Book missing for sourceId=" + requestedSourceId);
+                }
+            }
+            int matched = booksByRequestedSourceId.values().stream().mapToInt(List::size).sum();
+            summary.booksMatched = matched;
+        }
+
+        List<QuizExportRow> quizRows = queryCompletedQuizRows(connection);
+        Set<String> scannedBooksAllCached = new HashSet<>();
+        Set<String> missingBookIds = new HashSet<>();
+        Set<String> allowedBookIds = new HashSet<>();
+        if (!options.sourceIds().isEmpty()) {
+            for (List<BookRow> rows : booksByRequestedSourceId.values()) {
+                for (BookRow row : rows) {
+                    allowedBookIds.add(row.id());
+                }
+            }
+        }
+
+        Map<String, TransferBookBuilder> builders = new LinkedHashMap<>();
+
+        for (QuizExportRow row : quizRows) {
+            if (!options.sourceIds().isEmpty() && !allowedBookIds.contains(row.bookId())) {
+                continue;
+            }
+
+            if (options.allCached()) {
+                scannedBooksAllCached.add(row.bookId());
+            }
+
+            if (isBlank(row.source()) || isBlank(row.sourceId())) {
+                if (missingBookIds.add(row.bookId())) {
+                    summary.booksMissing++;
+                    out.println("Skipping book with missing source/sourceId: bookId=" + row.bookId());
+                }
+                continue;
+            }
+
+            String key = row.source() + "\u0000" + row.sourceId();
+            TransferBookBuilder builder = builders.computeIfAbsent(
+                    key,
+                    ignored -> new TransferBookBuilder(row.source(), row.sourceId(), row.title(), row.author())
+            );
+            builder.quizzes().add(new TransferQuiz(
+                    row.chapterIndex(),
+                    ChapterStatus.COMPLETED.value(),
+                    row.promptVersion(),
+                    row.modelName(),
+                    formatDateTime(row.generatedAt()),
+                    formatDateTime(row.updatedAt()),
+                    row.payloadJson()
+            ));
+            summary.quizzesExported++;
+        }
+
+        if (options.allCached()) {
+            summary.booksScanned = scannedBooksAllCached.size();
+            summary.booksMatched = scannedBooksAllCached.size() - missingBookIds.size();
+        }
+
+        List<TransferBook> books = builders.values().stream()
+                .map(TransferBookBuilder::build)
+                .sorted(Comparator.comparing(TransferBook::source).thenComparing(TransferBook::sourceId))
+                .toList();
+
+        for (TransferBook book : books) {
+            if (book.quizzes() != null) {
+                book.quizzes().sort(Comparator.comparingInt(TransferQuiz::chapterIndex));
+            }
+        }
+
+        TransferBundle bundle = new TransferBundle(
+                FORMAT_VERSION,
+                DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+                List.of(FEATURE_QUIZZES),
+                books
+        );
+
+        if (!options.apply()) {
+            out.println("Dry-run: export file not written (use --apply to write JSON).");
+            return summary;
+        }
+
+        Path outputPath = options.outputPath();
+        if (outputPath == null) {
+            summary.validationErrors++;
+            err.println("Missing output path.");
+            return summary;
+        }
+        if (outputPath.getParent() != null) {
+            Files.createDirectories(outputPath.getParent());
+        }
+        OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValue(outputPath.toFile(), bundle);
+        out.println("Wrote quiz transfer JSON: " + outputPath.toAbsolutePath());
+        return summary;
+    }
+
     static Summary importRecaps(Connection connection, ImportOptions options, PrintStream out, PrintStream err)
             throws IOException, SQLException {
         Summary summary = new Summary();
@@ -330,7 +447,7 @@ public class CacheTransferRunner {
             return summary;
         }
 
-        List<String> validationErrors = validateBundle(bundle);
+        List<String> validationErrors = validateBundle(bundle, TransferFeature.RECAPS);
         summary.validationErrors += validationErrors.size();
         if (!validationErrors.isEmpty()) {
             for (String validationError : validationErrors) {
@@ -390,7 +507,86 @@ public class CacheTransferRunner {
         return summary;
     }
 
-    private static List<String> validateBundle(TransferBundle bundle) {
+    static Summary importQuizzes(Connection connection, ImportOptions options, PrintStream out, PrintStream err)
+            throws IOException, SQLException {
+        Summary summary = new Summary();
+
+        if (!Files.exists(options.inputPath())) {
+            summary.validationErrors++;
+            err.println("Input file does not exist: " + options.inputPath().toAbsolutePath());
+            return summary;
+        }
+
+        TransferBundle bundle;
+        try {
+            bundle = OBJECT_MAPPER.readValue(options.inputPath().toFile(), TransferBundle.class);
+        } catch (Exception e) {
+            summary.validationErrors++;
+            err.println("Invalid JSON: " + e.getMessage());
+            return summary;
+        }
+
+        List<String> validationErrors = validateBundle(bundle, TransferFeature.QUIZZES);
+        summary.validationErrors += validationErrors.size();
+        if (!validationErrors.isEmpty()) {
+            for (String validationError : validationErrors) {
+                err.println("Validation error: " + validationError);
+            }
+            return summary;
+        }
+
+        for (TransferBook book : nullSafeList(bundle.books())) {
+            summary.booksScanned++;
+            Optional<String> localBookId = findBookId(connection, book.source(), book.sourceId());
+            if (localBookId.isEmpty()) {
+                summary.booksMissing++;
+                out.println("Book not found locally: " + book.source() + "/" + book.sourceId());
+                continue;
+            }
+
+            summary.booksMatched++;
+            Map<Integer, String> chaptersByIndex = findChapterIdsByIndex(connection, localBookId.get());
+
+            for (TransferQuiz quiz : nullSafeList(book.quizzes())) {
+                String chapterId = chaptersByIndex.get(quiz.chapterIndex());
+                if (chapterId == null) {
+                    summary.chaptersMissing++;
+                    out.println("Chapter missing for book " + book.source() + "/" + book.sourceId()
+                            + " chapterIndex=" + quiz.chapterIndex());
+                    continue;
+                }
+
+                Optional<String> existingQuizId = findQuizIdByChapter(connection, chapterId);
+                if (existingQuizId.isPresent() && options.onConflict() == OnConflict.SKIP) {
+                    summary.quizzesSkippedConflicts++;
+                    continue;
+                }
+
+                LocalDateTime generatedAt = parseDateTime(quiz.generatedAt());
+                LocalDateTime updatedAt = parseDateTime(quiz.updatedAt());
+                if (updatedAt == null) {
+                    updatedAt = generatedAt != null ? generatedAt : LocalDateTime.now(ZoneOffset.UTC);
+                }
+
+                if (options.apply()) {
+                    if (existingQuizId.isPresent()) {
+                        updateQuiz(connection, existingQuizId.get(), quiz, generatedAt, updatedAt);
+                    } else {
+                        insertQuiz(connection, chapterId, quiz, generatedAt, updatedAt);
+                    }
+                }
+
+                summary.quizzesImported++;
+            }
+        }
+
+        if (!options.apply()) {
+            out.println("Dry-run: no database writes applied (use --apply to persist changes).");
+        }
+        return summary;
+    }
+
+    private static List<String> validateBundle(TransferBundle bundle, TransferFeature feature) {
         List<String> errors = new ArrayList<>();
         if (bundle == null) {
             errors.add("Input is empty.");
@@ -399,8 +595,9 @@ public class CacheTransferRunner {
         if (!FORMAT_VERSION.equals(bundle.formatVersion())) {
             errors.add("Unsupported formatVersion: " + bundle.formatVersion());
         }
-        if (bundle.features() == null || !bundle.features().contains(FEATURE_RECAPS)) {
-            errors.add("features must include 'recaps'.");
+        String expectedFeature = feature.value();
+        if (bundle.features() == null || !bundle.features().contains(expectedFeature)) {
+            errors.add("features must include '" + expectedFeature + "'.");
         }
         if (bundle.books() == null) {
             errors.add("books must be present.");
@@ -420,32 +617,64 @@ public class CacheTransferRunner {
             if (isBlank(book.sourceId())) {
                 errors.add(bookPrefix + ".sourceId is required.");
             }
-            if (book.recaps() == null) {
-                errors.add(bookPrefix + ".recaps must be present.");
-                continue;
-            }
-            for (int j = 0; j < book.recaps().size(); j++) {
-                TransferRecap recap = book.recaps().get(j);
-                String recapPrefix = bookPrefix + ".recaps[" + j + "]";
-                if (recap == null) {
-                    errors.add(recapPrefix + " must not be null.");
+            if (feature == TransferFeature.RECAPS) {
+                if (book.recaps() == null) {
+                    errors.add(bookPrefix + ".recaps must be present.");
                     continue;
                 }
-                if (recap.chapterIndex() < 0) {
-                    errors.add(recapPrefix + ".chapterIndex must be >= 0.");
+                for (int j = 0; j < book.recaps().size(); j++) {
+                    TransferRecap recap = book.recaps().get(j);
+                    String recapPrefix = bookPrefix + ".recaps[" + j + "]";
+                    if (recap == null) {
+                        errors.add(recapPrefix + " must not be null.");
+                        continue;
+                    }
+                    if (recap.chapterIndex() < 0) {
+                        errors.add(recapPrefix + ".chapterIndex must be >= 0.");
+                    }
+                    if (isBlank(recap.payloadJson())) {
+                        errors.add(recapPrefix + ".payloadJson is required.");
+                    }
+                    String status = recap.status();
+                    if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
+                        errors.add(recapPrefix + ".status must be COMPLETED.");
+                    }
+                    if (!isBlank(recap.generatedAt()) && parseDateTimeSafe(recap.generatedAt()) == null) {
+                        errors.add(recapPrefix + ".generatedAt is not a valid timestamp.");
+                    }
+                    if (!isBlank(recap.updatedAt()) && parseDateTimeSafe(recap.updatedAt()) == null) {
+                        errors.add(recapPrefix + ".updatedAt is not a valid timestamp.");
+                    }
                 }
-                if (isBlank(recap.payloadJson())) {
-                    errors.add(recapPrefix + ".payloadJson is required.");
+                continue;
+            }
+
+            if (book.quizzes() == null) {
+                errors.add(bookPrefix + ".quizzes must be present.");
+                continue;
+            }
+            for (int j = 0; j < book.quizzes().size(); j++) {
+                TransferQuiz quiz = book.quizzes().get(j);
+                String quizPrefix = bookPrefix + ".quizzes[" + j + "]";
+                if (quiz == null) {
+                    errors.add(quizPrefix + " must not be null.");
+                    continue;
                 }
-                String status = recap.status();
+                if (quiz.chapterIndex() < 0) {
+                    errors.add(quizPrefix + ".chapterIndex must be >= 0.");
+                }
+                if (isBlank(quiz.payloadJson())) {
+                    errors.add(quizPrefix + ".payloadJson is required.");
+                }
+                String status = quiz.status();
                 if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
-                    errors.add(recapPrefix + ".status must be COMPLETED.");
+                    errors.add(quizPrefix + ".status must be COMPLETED.");
                 }
-                if (!isBlank(recap.generatedAt()) && parseDateTimeSafe(recap.generatedAt()) == null) {
-                    errors.add(recapPrefix + ".generatedAt is not a valid timestamp.");
+                if (!isBlank(quiz.generatedAt()) && parseDateTimeSafe(quiz.generatedAt()) == null) {
+                    errors.add(quizPrefix + ".generatedAt is not a valid timestamp.");
                 }
-                if (!isBlank(recap.updatedAt()) && parseDateTimeSafe(recap.updatedAt()) == null) {
-                    errors.add(recapPrefix + ".updatedAt is not a valid timestamp.");
+                if (!isBlank(quiz.updatedAt()) && parseDateTimeSafe(quiz.updatedAt()) == null) {
+                    errors.add(quizPrefix + ".updatedAt is not a valid timestamp.");
                 }
             }
         }
@@ -470,6 +699,41 @@ public class CacheTransferRunner {
              ResultSet rs = statement.executeQuery()) {
             while (rs.next()) {
                 rows.add(new RecapExportRow(
+                        rs.getString("book_id"),
+                        rs.getString("source"),
+                        rs.getString("source_id"),
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getInt("chapter_index"),
+                        rs.getString("prompt_version"),
+                        rs.getString("model_name"),
+                        rs.getObject("generated_at", LocalDateTime.class),
+                        rs.getObject("updated_at", LocalDateTime.class),
+                        rs.getString("payload_json")
+                ));
+            }
+        }
+        return rows;
+    }
+
+    private static List<QuizExportRow> queryCompletedQuizRows(Connection connection) throws SQLException {
+        String sql = """
+                select b.id as book_id, b.source, b.source_id, b.title, b.author,
+                       c.chapter_index, cq.prompt_version, cq.model_name,
+                       cq.generated_at, cq.updated_at, cq.payload_json
+                from chapter_quizzes cq
+                join chapters c on cq.chapter_id = c.id
+                join books b on c.book_id = b.id
+                where cq.status = 'COMPLETED'
+                  and cq.payload_json is not null
+                  and trim(cq.payload_json) <> ''
+                order by b.source, b.source_id, c.chapter_index
+                """;
+        List<QuizExportRow> rows = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new QuizExportRow(
                         rs.getString("book_id"),
                         rs.getString("source"),
                         rs.getString("source_id"),
@@ -557,6 +821,19 @@ public class CacheTransferRunner {
         return Optional.empty();
     }
 
+    private static Optional<String> findQuizIdByChapter(Connection connection, String chapterId) throws SQLException {
+        String sql = "select id from chapter_quizzes where chapter_id = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, chapterId);
+            try (ResultSet rs = statement.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.ofNullable(rs.getString(1));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
     private static void insertRecap(Connection connection, String chapterId, TransferRecap recap,
                                     LocalDateTime generatedAt, LocalDateTime updatedAt) throws SQLException {
         String sql = """
@@ -606,6 +883,55 @@ public class CacheTransferRunner {
         }
     }
 
+    private static void insertQuiz(Connection connection, String chapterId, TransferQuiz quiz,
+                                   LocalDateTime generatedAt, LocalDateTime updatedAt) throws SQLException {
+        String sql = """
+                insert into chapter_quizzes (
+                    id, chapter_id, status, updated_at, generated_at,
+                    prompt_version, model_name, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, UUID.randomUUID().toString());
+            statement.setString(2, chapterId);
+            statement.setString(3, ChapterStatus.COMPLETED.value());
+            statement.setTimestamp(4, Timestamp.valueOf(updatedAt));
+            if (generatedAt == null) {
+                statement.setTimestamp(5, null);
+            } else {
+                statement.setTimestamp(5, Timestamp.valueOf(generatedAt));
+            }
+            statement.setString(6, blankToNull(quiz.promptVersion()));
+            statement.setString(7, blankToNull(quiz.modelName()));
+            statement.setString(8, quiz.payloadJson());
+            statement.executeUpdate();
+        }
+    }
+
+    private static void updateQuiz(Connection connection, String quizId, TransferQuiz quiz,
+                                   LocalDateTime generatedAt, LocalDateTime updatedAt) throws SQLException {
+        String sql = """
+                update chapter_quizzes
+                set status = ?, updated_at = ?, generated_at = ?,
+                    prompt_version = ?, model_name = ?, payload_json = ?
+                where id = ?
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, ChapterStatus.COMPLETED.value());
+            statement.setTimestamp(2, Timestamp.valueOf(updatedAt));
+            if (generatedAt == null) {
+                statement.setTimestamp(3, null);
+            } else {
+                statement.setTimestamp(3, Timestamp.valueOf(generatedAt));
+            }
+            statement.setString(4, blankToNull(quiz.promptVersion()));
+            statement.setString(5, blankToNull(quiz.modelName()));
+            statement.setString(6, quiz.payloadJson());
+            statement.setString(7, quizId);
+            statement.executeUpdate();
+        }
+    }
+
     private static String formatDateTime(LocalDateTime value) {
         if (value == null) {
             return null;
@@ -647,31 +973,40 @@ public class CacheTransferRunner {
         return value == null || value.trim().isEmpty();
     }
 
-    private static void printSummary(String command, Summary summary, boolean apply, PrintStream out) {
+    private static void printSummary(String command, TransferFeature feature, Summary summary, boolean apply, PrintStream out) {
         out.println("----------");
         out.println("Cache Transfer Summary (" + command + ")");
         out.println("Mode: " + (apply ? "apply" : "dry-run"));
         out.println("Books scanned: " + summary.booksScanned());
         out.println("Books matched: " + summary.booksMatched());
         out.println("Books missing: " + summary.booksMissing());
-        if (COMMAND_EXPORT.equals(command)) {
-            out.println("Recaps exported: " + summary.recapsExported());
+        if (feature == TransferFeature.RECAPS) {
+            if (COMMAND_EXPORT.equals(command)) {
+                out.println("Recaps exported: " + summary.recapsExported());
+            } else {
+                out.println("Recaps imported: " + summary.recapsImported());
+            }
+            out.println("Recaps skipped (conflict): " + summary.recapsSkippedConflicts());
         } else {
-            out.println("Recaps imported: " + summary.recapsImported());
+            if (COMMAND_EXPORT.equals(command)) {
+                out.println("Quizzes exported: " + summary.quizzesExported());
+            } else {
+                out.println("Quizzes imported: " + summary.quizzesImported());
+            }
+            out.println("Quizzes skipped (conflict): " + summary.quizzesSkippedConflicts());
         }
-        out.println("Recaps skipped (conflict): " + summary.recapsSkippedConflicts());
         out.println("Chapters missing: " + summary.chaptersMissing());
         out.println("Validation errors: " + summary.validationErrors());
     }
 
     private static void printUsage(PrintStream out) {
         out.println("Usage:");
-        out.println("  CacheTransferRunner export --feature recaps (--all-cached | --book-source-id <id>[,<id>...]) [--output <path>] [--apply]");
-        out.println("  CacheTransferRunner import --feature recaps --input <path> [--on-conflict skip|overwrite] [--apply]");
+        out.println("  CacheTransferRunner export --feature recaps|quizzes (--all-cached | --book-source-id <id>[,<id>...]) [--output <path>] [--apply]");
+        out.println("  CacheTransferRunner import --feature recaps|quizzes --input <path> [--on-conflict skip|overwrite] [--apply]");
         out.println("");
         out.println("Notes:");
         out.println("  --apply is required to write changes. Without --apply, commands run in dry-run mode.");
-        out.println("  v1 supports only --feature recaps.");
+        out.println("  Supported features: recaps, quizzes.");
     }
 
     private static Set<String> parseCsvSet(String raw) {
@@ -811,6 +1146,33 @@ public class CacheTransferRunner {
         }
     }
 
+    enum TransferFeature {
+        RECAPS(FEATURE_RECAPS),
+        QUIZZES(FEATURE_QUIZZES);
+
+        private final String value;
+
+        TransferFeature(String value) {
+            this.value = value;
+        }
+
+        String value() {
+            return value;
+        }
+
+        static Optional<TransferFeature> fromValue(String raw) {
+            if (isBlank(raw)) {
+                return Optional.empty();
+            }
+            for (TransferFeature feature : values()) {
+                if (feature.value.equalsIgnoreCase(raw.trim())) {
+                    return Optional.of(feature);
+                }
+            }
+            return Optional.empty();
+        }
+    }
+
     static class Summary {
         private int booksScanned;
         private int booksMatched;
@@ -818,6 +1180,9 @@ public class CacheTransferRunner {
         private int recapsExported;
         private int recapsImported;
         private int recapsSkippedConflicts;
+        private int quizzesExported;
+        private int quizzesImported;
+        private int quizzesSkippedConflicts;
         private int chaptersMissing;
         private int validationErrors;
 
@@ -843,6 +1208,18 @@ public class CacheTransferRunner {
 
         int recapsSkippedConflicts() {
             return recapsSkippedConflicts;
+        }
+
+        int quizzesExported() {
+            return quizzesExported;
+        }
+
+        int quizzesImported() {
+            return quizzesImported;
+        }
+
+        int quizzesSkippedConflicts() {
+            return quizzesSkippedConflicts;
         }
 
         int chaptersMissing() {
@@ -872,12 +1249,28 @@ public class CacheTransferRunner {
     ) {
     }
 
+    record QuizExportRow(
+            String bookId,
+            String source,
+            String sourceId,
+            String title,
+            String author,
+            int chapterIndex,
+            String promptVersion,
+            String modelName,
+            LocalDateTime generatedAt,
+            LocalDateTime updatedAt,
+            String payloadJson
+    ) {
+    }
+
     static class TransferBookBuilder {
         private final String source;
         private final String sourceId;
         private final String title;
         private final String author;
         private final List<TransferRecap> recaps = new ArrayList<>();
+        private final List<TransferQuiz> quizzes = new ArrayList<>();
 
         TransferBookBuilder(String source, String sourceId, String title, String author) {
             this.source = source;
@@ -890,8 +1283,12 @@ public class CacheTransferRunner {
             return recaps;
         }
 
+        List<TransferQuiz> quizzes() {
+            return quizzes;
+        }
+
         TransferBook build() {
-            return new TransferBook(source, sourceId, title, author, recaps);
+            return new TransferBook(source, sourceId, title, author, recaps, quizzes);
         }
     }
 
@@ -910,12 +1307,25 @@ public class CacheTransferRunner {
             String sourceId,
             String title,
             String author,
-            List<TransferRecap> recaps
+            List<TransferRecap> recaps,
+            List<TransferQuiz> quizzes
     ) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record TransferRecap(
+            int chapterIndex,
+            String status,
+            String promptVersion,
+            String modelName,
+            String generatedAt,
+            String updatedAt,
+            String payloadJson
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record TransferQuiz(
             int chapterIndex,
             String status,
             String promptVersion,

@@ -54,6 +54,36 @@ class CacheTransferRunnerTest {
     }
 
     @Test
+    void exportApplyAllCached_writesQuizBundleJson() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_export_quizzes;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedExportData(dbUrl);
+
+        Path output = tempDir.resolve("quizzes-export.json");
+        RunResult result = runCli(new String[]{
+                "export",
+                "--feature", "quizzes",
+                "--all-cached",
+                "--apply",
+                "--output", output.toString(),
+                "--db-url", dbUrl
+        });
+
+        assertEquals(0, result.exitCode());
+        assertTrue(Files.exists(output));
+
+        JsonNode root = OBJECT_MAPPER.readTree(output.toFile());
+        assertEquals("1.0", root.get("formatVersion").asText());
+        assertEquals("quizzes", root.get("features").get(0).asText());
+        assertEquals(1, root.get("books").size());
+        assertEquals("gutenberg", root.get("books").get(0).get("source").asText());
+        assertEquals("1342", root.get("books").get(0).get("sourceId").asText());
+        assertEquals(1, root.get("books").get(0).get("quizzes").size());
+        assertEquals(0, root.get("books").get(0).get("quizzes").get(0).get("chapterIndex").asInt());
+        assertEquals("COMPLETED", root.get("books").get(0).get("quizzes").get(0).get("status").asText());
+    }
+
+    @Test
     void exportApplyBookSourceIds_supportsMultiBookExport() throws Exception {
         String dbUrl = "jdbc:h2:mem:cache_transfer_export_multi;DB_CLOSE_DELAY=-1";
         createSchema(dbUrl);
@@ -132,6 +162,63 @@ class CacheTransferRunnerTest {
         });
         assertEquals(0, overwriteResult.exitCode());
         assertEquals("{\"shortSummary\":\"new-summary\"}", readPayload(dbUrl, "recap-1"));
+    }
+
+    @Test
+    void importApplyQuizzes_skipAndOverwriteConflictPoliciesBehaveAsExpected() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_import_quizzes;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedImportData(dbUrl);
+
+        Path input = tempDir.resolve("import-quizzes.json");
+        Files.writeString(input, """
+                {
+                  "formatVersion": "1.0",
+                  "exportedAt": "2026-02-11T21:30:00Z",
+                  "features": ["quizzes"],
+                  "books": [
+                    {
+                      "source": "gutenberg",
+                      "sourceId": "1342",
+                      "title": "Pride and Prejudice",
+                      "author": "Jane Austen",
+                      "quizzes": [
+                        {
+                          "chapterIndex": 0,
+                          "status": "COMPLETED",
+                          "promptVersion": "v2",
+                          "modelName": "qwen2.5:32b",
+                          "generatedAt": "2026-02-11T18:09:25Z",
+                          "updatedAt": "2026-02-11T18:09:25Z",
+                          "payloadJson": "{\\"questions\\":[{\\"question\\":\\"Updated?\\"}]}"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        RunResult skipResult = runCli(new String[]{
+                "import",
+                "--feature", "quizzes",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "skip",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, skipResult.exitCode());
+        assertEquals("{\"questions\":[{\"question\":\"Existing?\"}]}", readQuizPayload(dbUrl, "quiz-1"));
+
+        RunResult overwriteResult = runCli(new String[]{
+                "import",
+                "--feature", "quizzes",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "overwrite",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, overwriteResult.exitCode());
+        assertEquals("{\"questions\":[{\"question\":\"Updated?\"}]}", readQuizPayload(dbUrl, "quiz-1"));
     }
 
     @Test
@@ -241,6 +328,18 @@ class CacheTransferRunnerTest {
                         payload_json clob
                     )
                     """);
+            statement.execute("""
+                    create table chapter_quizzes (
+                        id varchar(64) primary key,
+                        chapter_id varchar(64) not null unique,
+                        status varchar(32) not null,
+                        updated_at timestamp not null,
+                        generated_at timestamp,
+                        prompt_version varchar(100),
+                        model_name varchar(200),
+                        payload_json clob
+                    )
+                    """);
         }
     }
 
@@ -270,6 +369,14 @@ class CacheTransferRunnerTest {
             statement.execute("""
                     insert into chapter_recaps (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
                     values ('recap-2', 'chapter-2', 'FAILED', TIMESTAMP '2026-02-11 18:09:25', null, 'v1', 'qwen2.5:32b', '{"shortSummary":"failed"}')
+                    """);
+            statement.execute("""
+                    insert into chapter_quizzes (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
+                    values ('quiz-1', 'chapter-1', 'COMPLETED', TIMESTAMP '2026-02-11 18:09:25', TIMESTAMP '2026-02-11 18:09:25', 'v1', 'qwen2.5:32b', '{"questions":[{"question":"Existing?"}]}')
+                    """);
+            statement.execute("""
+                    insert into chapter_quizzes (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
+                    values ('quiz-2', 'chapter-2', 'FAILED', TIMESTAMP '2026-02-11 18:09:25', null, 'v1', 'qwen2.5:32b', '{"questions":[{"question":"Failed?"}]}')
                     """);
         }
     }
@@ -302,6 +409,10 @@ class CacheTransferRunnerTest {
                     insert into chapter_recaps (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
                     values ('recap-1', 'chapter-1', 'COMPLETED', TIMESTAMP '2026-02-11 18:09:25', TIMESTAMP '2026-02-11 18:09:25', 'v1', 'qwen2.5:32b', '{"shortSummary":"existing-summary"}')
                     """);
+            statement.execute("""
+                    insert into chapter_quizzes (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
+                    values ('quiz-1', 'chapter-1', 'COMPLETED', TIMESTAMP '2026-02-11 18:09:25', TIMESTAMP '2026-02-11 18:09:25', 'v1', 'qwen2.5:32b', '{"questions":[{"question":"Existing?"}]}')
+                    """);
         }
     }
 
@@ -313,6 +424,17 @@ class CacheTransferRunnerTest {
                 return rs.getString(1);
             }
             throw new IllegalStateException("Recap not found: " + recapId);
+        }
+    }
+
+    private static String readQuizPayload(String dbUrl, String quizId) throws Exception {
+        try (Connection connection = DriverManager.getConnection(dbUrl, "sa", "");
+             Statement statement = connection.createStatement();
+             var rs = statement.executeQuery("select payload_json from chapter_quizzes where id = '" + quizId + "'")) {
+            if (rs.next()) {
+                return rs.getString(1);
+            }
+            throw new IllegalStateException("Quiz not found: " + quizId);
         }
     }
 

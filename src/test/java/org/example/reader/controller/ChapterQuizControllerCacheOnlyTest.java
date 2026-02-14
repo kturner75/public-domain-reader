@@ -41,7 +41,8 @@ class ChapterQuizControllerCacheOnlyTest {
         mockMvc.perform(get("/api/quizzes/status"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cacheOnly", is(true)))
-                .andExpect(jsonPath("$.available", is(false)));
+                .andExpect(jsonPath("$.available", is(true)))
+                .andExpect(jsonPath("$.generationAvailable", is(false)));
     }
 
     @Test
@@ -53,10 +54,11 @@ class ChapterQuizControllerCacheOnlyTest {
     }
 
     @Test
-    void getChapterQuiz_cacheOnlyMode_returnsForbidden() throws Exception {
+    void getChapterQuiz_cacheOnlyMode_allowsCachedReads() throws Exception {
         when(chapterQuizService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
+        when(chapterQuizService.getChapterQuiz("chapter-1")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/quizzes/chapter/chapter-1"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
     }
 }

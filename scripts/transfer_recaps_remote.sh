@@ -20,7 +20,7 @@ REMOTE_PROJECT_DIR=""
 REMOTE_DB_URL=""
 REMOTE_DB_USER="${REMOTE_DB_USER:-sa}"
 REMOTE_DB_PASSWORD="${REMOTE_DB_PASSWORD:-}"
-REMOTE_IMPORT_PATH="${REMOTE_IMPORT_PATH:-/tmp/public-domain-reader-recaps-transfer.json}"
+REMOTE_IMPORT_PATH="${REMOTE_IMPORT_PATH:-}"
 REMOTE_JAR_PATH=""
 REMOTE_HOME_DIR=""
 ON_CONFLICT="${ON_CONFLICT:-skip}"
@@ -50,6 +50,7 @@ Required:
   --remote-db-url <jdbc-url>       Remote DB URL for import.
 
 Options:
+  --feature <recaps|quizzes>      Transfer feature (default: ${FEATURE}).
   --export-path <path>             Local transfer JSON path.
   --export-dir <path>              Used when --export-path is omitted (default: ${EXPORT_DIR}).
 
@@ -59,7 +60,7 @@ Options:
 
   --remote-db-user <user>          Remote DB user (default: ${REMOTE_DB_USER}).
   --remote-db-password <pass>      Remote DB password (default: empty).
-  --remote-import-path <path>      Remote JSON path (default: ${REMOTE_IMPORT_PATH}).
+  --remote-import-path <path>      Remote JSON path (default: /tmp/public-domain-reader-<feature>-transfer.json).
   --remote-runner <auto|maven|jar> Remote runner strategy (default: ${REMOTE_RUNNER}).
   --remote-jar-path <path>         Remote jar for runner=jar (default: <remote-project-dir>/target/public-domain-reader-1.0-SNAPSHOT.jar).
   --remote-java-bin <bin>          Java binary for runner=jar (default: ${REMOTE_JAVA_BIN}).
@@ -234,6 +235,11 @@ ensure_remote_runner() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --feature)
+      [[ $# -ge 2 ]] || fail "--feature requires a value"
+      FEATURE="$2"
+      shift 2
+      ;;
     --book-source-id)
       [[ $# -ge 2 ]] || fail "--book-source-id requires a value"
       SOURCE_IDS="$2"
@@ -362,6 +368,7 @@ done
 [[ -n "$REMOTE_DB_URL" ]] || fail "--remote-db-url is required"
 [[ "$ON_CONFLICT" == "skip" || "$ON_CONFLICT" == "overwrite" ]] || fail "--on-conflict must be skip or overwrite"
 [[ "$REMOTE_RUNNER" == "auto" || "$REMOTE_RUNNER" == "maven" || "$REMOTE_RUNNER" == "jar" ]] || fail "--remote-runner must be one of: auto, maven, jar"
+[[ "$FEATURE" == "recaps" || "$FEATURE" == "quizzes" ]] || fail "--feature must be recaps or quizzes"
 
 if [[ "$ALL_CACHED" == "true" && -n "$SOURCE_IDS" ]]; then
   fail "--all-cached and --book-source-id are mutually exclusive"
@@ -387,6 +394,9 @@ done
 if [[ -z "$REMOTE_JAR_PATH" ]]; then
   REMOTE_JAR_PATH="${REMOTE_PROJECT_DIR}/target/public-domain-reader-1.0-SNAPSHOT.jar"
 fi
+if [[ -z "$REMOTE_IMPORT_PATH" ]]; then
+  REMOTE_IMPORT_PATH="/tmp/public-domain-reader-${FEATURE}-transfer.json"
+fi
 
 REMOTE_HOME_DIR="$(get_remote_home_dir)"
 ensure_remote_runner
@@ -396,10 +406,10 @@ if [[ -z "$EXPORT_PATH" ]]; then
   mkdir -p "$EXPORT_DIR"
   export_selector="${SOURCE_IDS//,/__}"
   export_selector="${export_selector:-all-cached}"
-  EXPORT_PATH="${EXPORT_DIR}/recaps-transfer-${export_selector}-${ts}.json"
+  EXPORT_PATH="${EXPORT_DIR}/${FEATURE}-transfer-${export_selector}-${ts}.json"
 fi
 
-echo "Step 1/4: Export recaps locally -> ${EXPORT_PATH}"
+echo "Step 1/4: Export ${FEATURE} locally -> ${EXPORT_PATH}"
 export_args="export --feature ${FEATURE}"
 if [[ "$ALL_CACHED" == "true" ]]; then
   export_args="${export_args} --all-cached"
