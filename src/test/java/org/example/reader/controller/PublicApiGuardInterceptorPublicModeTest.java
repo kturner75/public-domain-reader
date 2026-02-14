@@ -5,6 +5,7 @@ import org.example.reader.config.PublicApiGuardInterceptor;
 import org.example.reader.config.PublicApiGuardMvcConfig;
 import org.example.reader.service.PreGenerationService;
 import org.example.reader.service.PreGenerationService.PreGenResult;
+import org.example.reader.service.PreGenerationJobService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -40,6 +41,9 @@ class PublicApiGuardInterceptorPublicModeTest {
 
     @MockitoBean
     private PreGenerationService preGenerationService;
+
+    @MockitoBean
+    private PreGenerationJobService preGenerationJobService;
 
     @Test
     void sensitiveEndpointWithoutApiKey_returnsUnauthorized() throws Exception {

@@ -2,24 +2,29 @@ package org.example.reader.controller;
 
 import org.example.reader.service.PreGenerationService;
 import org.example.reader.service.PreGenerationService.PreGenResult;
+import org.example.reader.service.PreGenerationJobService;
+import org.example.reader.service.PreGenerationJobService.PreGenJobStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * REST endpoint for triggering pre-generation of book assets.
- * This is a long-running operation that will block until all assets are generated.
+ * REST endpoints for triggering pre-generation of book assets.
+ * Supports both legacy blocking routes and async job-based routes.
  */
 @RestController
 @RequestMapping("/api/pregen")
 public class PreGenerationController {
 
     private final PreGenerationService preGenerationService;
+    private final PreGenerationJobService preGenerationJobService;
     private final boolean cacheOnly;
 
     public PreGenerationController(PreGenerationService preGenerationService,
+                                   PreGenerationJobService preGenerationJobService,
                                    @org.springframework.beans.factory.annotation.Value("${generation.cache-only:false}")
                                    boolean cacheOnly) {
         this.preGenerationService = preGenerationService;
+        this.preGenerationJobService = preGenerationJobService;
         this.cacheOnly = cacheOnly;
     }
 
@@ -64,5 +69,46 @@ public class PreGenerationController {
         } else {
             return ResponseEntity.badRequest().body(result);
         }
+    }
+
+    @PostMapping("/jobs/book/{bookId}")
+    public ResponseEntity<PreGenJobStatus> startJobForBook(@PathVariable String bookId) {
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        PreGenJobStatus jobStatus = preGenerationJobService.startBookJob(bookId);
+        return ResponseEntity.accepted().body(jobStatus);
+    }
+
+    @PostMapping("/jobs/gutenberg/{gutenbergId}")
+    public ResponseEntity<PreGenJobStatus> startJobForGutenbergId(@PathVariable int gutenbergId) {
+        if (cacheOnly) {
+            return ResponseEntity.status(409).build();
+        }
+        PreGenJobStatus jobStatus = preGenerationJobService.startGutenbergJob(gutenbergId);
+        return ResponseEntity.accepted().body(jobStatus);
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<PreGenJobStatus> getJobStatus(@PathVariable String jobId) {
+        return preGenerationJobService.getJobStatus(jobId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/jobs/{jobId}/cancel")
+    public ResponseEntity<PreGenJobStatus> cancelJob(@PathVariable String jobId) {
+        return cancelJobInternal(jobId);
+    }
+
+    @DeleteMapping("/jobs/{jobId}")
+    public ResponseEntity<PreGenJobStatus> cancelJobDelete(@PathVariable String jobId) {
+        return cancelJobInternal(jobId);
+    }
+
+    private ResponseEntity<PreGenJobStatus> cancelJobInternal(String jobId) {
+        return preGenerationJobService.cancelJob(jobId)
+                .map(job -> ResponseEntity.accepted().body(job))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

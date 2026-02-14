@@ -1,6 +1,7 @@
 package org.example.reader.controller;
 
 import org.example.reader.service.PreGenerationService;
+import org.example.reader.service.PreGenerationJobService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -24,6 +25,9 @@ class PreGenerationControllerCacheOnlyTest {
     @MockitoBean
     private PreGenerationService preGenerationService;
 
+    @MockitoBean
+    private PreGenerationJobService preGenerationJobService;
+
     @Test
     void preGenerateForBook_cacheOnly_returnsConflict() throws Exception {
         mockMvc.perform(post("/api/pregen/book/book-1"))
@@ -37,6 +41,14 @@ class PreGenerationControllerCacheOnlyTest {
         mockMvc.perform(post("/api/pregen/gutenberg/1234"))
                 .andExpect(status().isConflict());
 
-        verifyNoInteractions(preGenerationService);
+        verifyNoInteractions(preGenerationService, preGenerationJobService);
+    }
+
+    @Test
+    void startJobForBook_cacheOnly_returnsConflict() throws Exception {
+        mockMvc.perform(post("/api/pregen/jobs/book/book-1"))
+                .andExpect(status().isConflict());
+
+        verifyNoInteractions(preGenerationService, preGenerationJobService);
     }
 }

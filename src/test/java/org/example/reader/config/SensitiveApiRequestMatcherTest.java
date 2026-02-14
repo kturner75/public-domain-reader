@@ -13,6 +13,11 @@ class SensitiveApiRequestMatcherTest {
     @Test
     void classify_marksGenerationEndpoints() {
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/pregen/book/book-1"));
+        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/pregen/jobs/book/book-1"));
+        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/pregen/jobs/gutenberg/1234"));
+        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/pregen/jobs/job-1/cancel"));
+        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("GET", "/api/pregen/jobs/job-1"));
+        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("DELETE", "/api/pregen/jobs/job-1"));
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/illustrations/chapter/ch-1/request"));
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/quizzes/chapter/ch-1/generate"));
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("GET", "/api/tts/speak/book-1/chapter-2/3"));
