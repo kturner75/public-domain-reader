@@ -27,6 +27,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,6 +66,7 @@ class ChapterRecapServiceTest {
                 recapMetricsService,
                 new ObjectMapper()
         );
+        ReflectionTestUtils.setField(chapterRecapService, "workerId", "test-worker");
     }
 
     @Test
@@ -210,6 +212,8 @@ class ChapterRecapServiceTest {
         ReflectionTestUtils.setField(chapterRecapService, "maxContextChars", 4000);
         when(reasoningProvider.isAvailable()).thenReturn(true);
         when(reasoningProvider.getProviderName()).thenReturn("xai");
+        when(chapterRecapRepository.claimGenerationLease(any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
         when(reasoningProvider.generate(any(), any())).thenReturn("""
                 {
                   "shortSummary": "Holmes explains the case.",
@@ -246,6 +250,7 @@ class ChapterRecapServiceTest {
         ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
 
         verify(reasoningProvider, never()).generate(any(), any());
+        verify(chapterRecapRepository, never()).claimGenerationLease(any(), any(), any(), any(), any(), any());
         verify(chapterRepository, never()).findByIdWithBook("chapter-1");
         verify(chapterRecapRepository, never()).save(any(ChapterRecapEntity.class));
     }
@@ -254,6 +259,8 @@ class ChapterRecapServiceTest {
     void processChapterRecap_llmFailure_fallsBackToLocalRecap() {
         ReflectionTestUtils.setField(chapterRecapService, "maxContextChars", 4000);
         when(reasoningProvider.isAvailable()).thenReturn(true);
+        when(chapterRecapRepository.claimGenerationLease(any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
         when(reasoningProvider.generate(any(), any())).thenThrow(new RuntimeException("Ollama 500"));
 
         ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
@@ -280,6 +287,76 @@ class ChapterRecapServiceTest {
         assertEquals("local-extractive", saved.getModelName());
         assertNotNull(saved.getPayloadJson());
         assertFalse(saved.getPayloadJson().isBlank());
+    }
+
+    @Test
+    void processChapterRecap_whenLeaseClaimFails_skipsGeneration() {
+        when(chapterRecapRepository.claimGenerationLease(any(), any(), any(), any(), any(), any()))
+                .thenReturn(0);
+
+        ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
+
+        verify(chapterRepository, never()).findByIdWithBook("chapter-1");
+        verify(reasoningProvider, never()).generate(any(), any());
+        verify(chapterRecapRepository, never()).save(any(ChapterRecapEntity.class));
+    }
+
+    @Test
+    void processChapterRecap_failureBeforeMaxRetries_requeuesAsPending() {
+        ReflectionTestUtils.setField(chapterRecapService, "maxRetryAttempts", 3);
+        ReflectionTestUtils.setField(chapterRecapService, "initialRetryDelaySeconds", 30);
+        ReflectionTestUtils.setField(chapterRecapService, "maxRetryDelaySeconds", 300);
+
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        ChapterRecapEntity recap = new ChapterRecapEntity(chapter);
+        recap.setStatus(ChapterRecapStatus.GENERATING);
+        recap.setRetryCount(0);
+
+        when(chapterRecapRepository.claimGenerationLease(any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(chapterRepository.findByIdWithBook("chapter-1")).thenReturn(Optional.of(chapter));
+        when(paragraphRepository.findByChapterIdOrderByParagraphIndex("chapter-1"))
+                .thenThrow(new RuntimeException("paragraph store unavailable"));
+        when(chapterRecapRepository.findByChapterId("chapter-1")).thenReturn(Optional.of(recap));
+        when(chapterRecapRepository.save(any(ChapterRecapEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
+
+        ArgumentCaptor<ChapterRecapEntity> captor = ArgumentCaptor.forClass(ChapterRecapEntity.class);
+        verify(chapterRecapRepository).save(captor.capture());
+        ChapterRecapEntity saved = captor.getValue();
+        assertEquals(ChapterRecapStatus.PENDING, saved.getStatus());
+        assertEquals(1, saved.getRetryCount());
+        assertNotNull(saved.getNextRetryAt());
+        verify(recapMetricsService).recordGenerationFailed(anyLong());
+    }
+
+    @Test
+    void processChapterRecap_failureAtMaxRetries_marksFailed() {
+        ReflectionTestUtils.setField(chapterRecapService, "maxRetryAttempts", 3);
+
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        ChapterRecapEntity recap = new ChapterRecapEntity(chapter);
+        recap.setStatus(ChapterRecapStatus.GENERATING);
+        recap.setRetryCount(2);
+
+        when(chapterRecapRepository.claimGenerationLease(any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(chapterRepository.findByIdWithBook("chapter-1")).thenReturn(Optional.of(chapter));
+        when(paragraphRepository.findByChapterIdOrderByParagraphIndex("chapter-1"))
+                .thenThrow(new RuntimeException("paragraph store unavailable"));
+        when(chapterRecapRepository.findByChapterId("chapter-1")).thenReturn(Optional.of(recap));
+        when(chapterRecapRepository.save(any(ChapterRecapEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReflectionTestUtils.invokeMethod(chapterRecapService, "processChapterRecap", "chapter-1");
+
+        ArgumentCaptor<ChapterRecapEntity> captor = ArgumentCaptor.forClass(ChapterRecapEntity.class);
+        verify(chapterRecapRepository).save(captor.capture());
+        ChapterRecapEntity saved = captor.getValue();
+        assertEquals(ChapterRecapStatus.FAILED, saved.getStatus());
+        assertEquals(3, saved.getRetryCount());
+        assertNull(saved.getNextRetryAt());
+        verify(recapMetricsService).recordGenerationFailed(anyLong());
     }
 
     private ChapterEntity createChapter(String bookId, String chapterId, int index, String title) {

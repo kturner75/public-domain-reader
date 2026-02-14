@@ -36,6 +36,18 @@ public class ChapterRecapEntity {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    @Column(length = 120)
+    private String leaseOwner;
+
+    @Column
+    private LocalDateTime leaseExpiresAt;
+
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int retryCount;
+
+    @Column
+    private LocalDateTime nextRetryAt;
+
     @Column
     private LocalDateTime generatedAt;
 
@@ -55,6 +67,7 @@ public class ChapterRecapEntity {
     public ChapterRecapEntity(ChapterEntity chapter) {
         this.chapter = chapter;
         this.status = ChapterRecapStatus.PENDING;
+        this.retryCount = 0;
     }
 
     @PrePersist
@@ -104,6 +117,38 @@ public class ChapterRecapEntity {
 
     public void setGeneratedAt(LocalDateTime generatedAt) {
         this.generatedAt = generatedAt;
+    }
+
+    public String getLeaseOwner() {
+        return leaseOwner;
+    }
+
+    public void setLeaseOwner(String leaseOwner) {
+        this.leaseOwner = leaseOwner;
+    }
+
+    public LocalDateTime getLeaseExpiresAt() {
+        return leaseExpiresAt;
+    }
+
+    public void setLeaseExpiresAt(LocalDateTime leaseExpiresAt) {
+        this.leaseExpiresAt = leaseExpiresAt;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public LocalDateTime getNextRetryAt() {
+        return nextRetryAt;
+    }
+
+    public void setNextRetryAt(LocalDateTime nextRetryAt) {
+        this.nextRetryAt = nextRetryAt;
     }
 
     public String getPromptVersion() {

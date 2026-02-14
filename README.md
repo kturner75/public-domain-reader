@@ -84,13 +84,21 @@ scripts/deploy_remote.sh --ssh-target pdr --ssh-key ~/.ssh/kevin
 
 Use these settings as baseline profiles in `src/main/resources/application.properties` (or env overrides).
 
-| Profile | `generation.cache-only` | `tts.cache-only` | `ai.chat.enabled` | Intended behavior |
-|---|---:|---:|---:|---|
-| `local-dev` | `false` | `false` | `true` | Full generation + chat for development and feature testing. |
-| `public-cache-only-with-chat` | `true` | `true` | `true` | No new artifact generation on cache misses; cached assets still serve; character/recap chat still works when provider is available. |
-| `full-generation` | `false` | `false` | `true` | Generate artifacts on demand and keep chat enabled. |
+| Profile | `deployment.mode` | `generation.cache-only` | `tts.cache-only` | `ai.chat.enabled` | Intended behavior |
+|---|---|---:|---:|---:|---|
+| `local-dev` | `local` | `false` | `false` | `true` | Full generation + chat for development and feature testing. |
+| `public-cache-only-with-chat` | `public` | `true` | `true` | `true` | No new artifact generation on cache misses; cached assets still serve; character/recap chat still works when provider is available. |
+| `full-generation` | `public` | `false` | `false` | `true` | Generate artifacts on demand and keep chat enabled (with auth/rate limits in public mode). |
 
 Notes:
 - `generation.cache-only=true` blocks artifact generation workflows (recaps/quizzes/illustrations/character generation pipelines) but does not disable chat.
 - Chat availability is controlled by `ai.chat.enabled` plus chat provider availability/configuration.
 - Keep `tts.cache-only=true` on public environments when TTS generation costs should be avoided.
+- When `deployment.mode=public`, sensitive generation/chat APIs require authentication:
+  - `X-API-Key` matching `security.public.api-key` (or env `PUBLIC_API_KEY`), or
+  - collaborator session login via `/api/auth/login` using `security.public.collaborator.password` (or env `PUBLIC_COLLABORATOR_PASSWORD`).
+- Public-mode rate limits are controlled by `security.public.rate-limit.window-seconds`, `security.public.rate-limit.generation-requests`, and `security.public.rate-limit.chat-requests`; authenticated requests can use separate limits via `security.public.rate-limit.authenticated-generation-requests` and `security.public.rate-limit.authenticated-chat-requests`.
+- Queue-backed generation services can recover persisted pending/stuck work on startup when `generation.queue.recovery.enabled=true`.
+- Recap, illustration, and character workers use DB lease claims for cross-instance coordination; tune with `recap.generation.lease-minutes`, `illustration.generation.lease-minutes`, `character.analysis.lease-minutes`, `character.portrait.lease-minutes`, and optional worker IDs (`recap.generation.worker-id`, `illustration.generation.worker-id`, `character.generation.worker-id`).
+- Retry/backoff is explicit and persisted for recap/illustration/portrait/analysis jobs (`retryCount`, `nextRetryAt`) with configurable limits via `generation.retry.max-attempts`, `generation.retry.initial-delay-seconds`, and `generation.retry.max-delay-seconds`.
+- Aggregate generation status can be queried without log inspection via `GET /api/generation/status` and `GET /api/generation/book/{bookId}/status`.
