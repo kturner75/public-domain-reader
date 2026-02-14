@@ -80,6 +80,7 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Navigate from character detail to first appearance in text.
 - Character chat (primary characters only), with reading-position context guardrails.
 - Chat history persisted in `localStorage` per book/character.
+- `generation.cache-only` does not disable character chat; chat remains available when `ai.chat.enabled=true` and the chat provider is available.
 
 ## Pre-Generation and Operations
 
@@ -98,6 +99,7 @@ This inventory reflects implemented behavior in backend controllers/services and
 - JPA entities for books/chapters/paragraphs/illustrations/characters.
 - LLM provider abstraction with configurable reasoning/chat providers.
 - Runtime feature and generation behavior configured via `application.properties`.
+- `generation.cache-only` is artifact-generation-only (recaps/quizzes/illustrations/character generation pipelines); cached reads still work, and chat is controlled separately by `ai.chat.enabled`.
 
 ## Test Coverage (Current)
 

@@ -163,14 +163,11 @@ html, body {
 }
 
 .cache-only-indicator {
-    padding: 0.2rem 0.55rem;
-    border: 1px solid var(--border-color);
-    border-radius: 999px;
-    font-size: 0.7rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--muted-color);
-    background: rgba(0, 0, 0, 0.04);
+    margin-left: 0.65rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.02em;
+    color: #999;
+    opacity: 0.9;
 }
 
 .recap-enable-btn {

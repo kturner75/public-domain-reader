@@ -21,6 +21,19 @@ This runbook covers:
     - Maven (`mvn`) in PATH, or
     - Java + deployed app jar (`public-domain-reader-1.0-SNAPSHOT.jar`).
 
+## Production Safety Flags
+
+Recommended baseline when running a public server that should not generate new artifacts on demand:
+
+- `generation.cache-only=true`
+- `tts.cache-only=true` (if you also want TTS to be cache-only)
+- `ai.chat.enabled=true` (optional; allows character/recap chat while generation remains blocked)
+
+Behavior summary:
+- Artifact generation endpoints return conflict when `generation.cache-only=true`.
+- Cached recap/quiz/image/audio reads continue to work.
+- Character chat and recap chat are still available when `ai.chat.enabled=true` and the configured chat provider is available.
+
 ## 1) Deploy Latest Code
 
 ```bash

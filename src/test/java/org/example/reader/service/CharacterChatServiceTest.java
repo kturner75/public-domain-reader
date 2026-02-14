@@ -8,14 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.never;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,12 +34,9 @@ class CharacterChatServiceTest {
     }
 
     @Test
-    void chat_cacheOnlyMode_returnsCacheOnlyMessage() {
-        ReflectionTestUtils.setField(characterChatService, "cacheOnly", true);
-
-        String response = characterChatService.chat("character-1", "Hello", List.of(), 0, 0);
-
-        assertEquals("Character chat is unavailable in cache-only mode.", response);
-        verify(llmProvider, never()).generate(anyString(), any());
+    void isChatProviderAvailable_delegatesToProviderAvailability() {
+        when(llmProvider.isAvailable()).thenReturn(true);
+        assertTrue(characterChatService.isChatProviderAvailable());
+        verify(llmProvider).isAvailable();
     }
 }

@@ -30,6 +30,9 @@ public class ChapterRecapController {
     @Value("${ai.reasoning.enabled:true}")
     private boolean reasoningEnabled;
 
+    @Value("${ai.chat.enabled:false}")
+    private boolean chatEnabled;
+
     @Value("${generation.cache-only:false}")
     private boolean cacheOnly;
 
@@ -54,6 +57,7 @@ public class ChapterRecapController {
         Map<String, Object> status = new HashMap<>();
         status.put("enabled", recapEnabled);
         status.put("reasoningEnabled", reasoningEnabled);
+        status.put("chatEnabled", chatEnabled);
         status.put("cacheOnly", cacheOnly);
         status.put("chatProviderAvailable", chapterRecapChatService.isChatProviderAvailable());
         status.put("available", recapEnabled && reasoningEnabled);
@@ -72,6 +76,7 @@ public class ChapterRecapController {
         Map<String, Object> status = new HashMap<>();
         status.put("enabled", recapEnabled);
         status.put("reasoningEnabled", reasoningEnabled);
+        status.put("chatEnabled", chatEnabled);
         status.put("cacheOnly", cacheOnly);
         status.put("chatProviderAvailable", chapterRecapChatService.isChatProviderAvailable());
         status.put("rolloutMode", recapRolloutService.getRolloutMode());
@@ -154,10 +159,10 @@ public class ChapterRecapController {
         if (!isBookAvailableForRecap(bookId)) {
             return ResponseEntity.status(403).build();
         }
-        if (cacheOnly) {
+        if (!chatEnabled) {
             recapMetricsService.recordChatRejected();
-            return ResponseEntity.status(409).body(new RecapChatResponse(
-                    "Recap chat is unavailable in cache-only mode.",
+            return ResponseEntity.status(403).body(new RecapChatResponse(
+                    "Chat is disabled in this environment.",
                     bookId,
                     System.currentTimeMillis()
             ));
