@@ -25,6 +25,18 @@ public class ChapterAnalysisEntity {
     @Column
     private ChapterAnalysisStatus status;
 
+    @Column(length = 120)
+    private String leaseOwner;
+
+    @Column
+    private LocalDateTime leaseExpiresAt;
+
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int retryCount;
+
+    @Column
+    private LocalDateTime nextRetryAt;
+
     public ChapterAnalysisEntity() {}
 
     public ChapterAnalysisEntity(ChapterEntity chapter) {
@@ -32,6 +44,7 @@ public class ChapterAnalysisEntity {
         this.analyzedAt = LocalDateTime.now();
         this.characterCount = 0;
         this.status = ChapterAnalysisStatus.PENDING;
+        this.retryCount = 0;
     }
 
     @PrePersist
@@ -56,4 +69,16 @@ public class ChapterAnalysisEntity {
 
     public ChapterAnalysisStatus getStatus() { return status; }
     public void setStatus(ChapterAnalysisStatus status) { this.status = status; }
+
+    public String getLeaseOwner() { return leaseOwner; }
+    public void setLeaseOwner(String leaseOwner) { this.leaseOwner = leaseOwner; }
+
+    public LocalDateTime getLeaseExpiresAt() { return leaseExpiresAt; }
+    public void setLeaseExpiresAt(LocalDateTime leaseExpiresAt) { this.leaseExpiresAt = leaseExpiresAt; }
+
+    public int getRetryCount() { return retryCount; }
+    public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
+
+    public LocalDateTime getNextRetryAt() { return nextRetryAt; }
+    public void setNextRetryAt(LocalDateTime nextRetryAt) { this.nextRetryAt = nextRetryAt; }
 }

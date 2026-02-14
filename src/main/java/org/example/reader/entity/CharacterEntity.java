@@ -49,6 +49,16 @@ public class CharacterEntity {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(length = 120)
+    private String leaseOwner;
+
+    private LocalDateTime leaseExpiresAt;
+
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int retryCount;
+
+    private LocalDateTime nextRetryAt;
+
     private LocalDateTime completedAt;
 
     public CharacterEntity() {}
@@ -62,6 +72,7 @@ public class CharacterEntity {
         this.firstParagraphIndex = firstParagraphIndex;
         this.status = CharacterStatus.PENDING;
         this.createdAt = LocalDateTime.now();
+        this.retryCount = 0;
     }
 
     // Getters and setters
@@ -100,6 +111,18 @@ public class CharacterEntity {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public String getLeaseOwner() { return leaseOwner; }
+    public void setLeaseOwner(String leaseOwner) { this.leaseOwner = leaseOwner; }
+
+    public LocalDateTime getLeaseExpiresAt() { return leaseExpiresAt; }
+    public void setLeaseExpiresAt(LocalDateTime leaseExpiresAt) { this.leaseExpiresAt = leaseExpiresAt; }
+
+    public int getRetryCount() { return retryCount; }
+    public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
+
+    public LocalDateTime getNextRetryAt() { return nextRetryAt; }
+    public void setNextRetryAt(LocalDateTime nextRetryAt) { this.nextRetryAt = nextRetryAt; }
 
     public LocalDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }

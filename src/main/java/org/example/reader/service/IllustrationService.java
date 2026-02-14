@@ -21,12 +21,16 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -45,10 +49,28 @@ public class IllustrationService {
 
     private final BlockingQueue<GenerationRequest> generationQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running = true;
 
     @Value("${generation.cache-only:false}")
     private boolean cacheOnly;
+
+    @Value("${illustration.generation.lease-minutes:20}")
+    private int illustrationLeaseMinutes;
+
+    @Value("${illustration.generation.worker-id:}")
+    private String configuredWorkerId;
+
+    @Value("${generation.retry.max-attempts:3}")
+    private int maxRetryAttempts;
+
+    @Value("${generation.retry.initial-delay-seconds:30}")
+    private int initialRetryDelaySeconds;
+
+    @Value("${generation.retry.max-delay-seconds:600}")
+    private int maxRetryDelaySeconds;
+
+    private String workerId;
 
     // Self-injection to enable @Transactional on self-invocation
     private IllustrationService self;
@@ -80,8 +102,11 @@ public class IllustrationService {
 
     @PostConstruct
     public void init() {
+        workerId = (configuredWorkerId != null && !configuredWorkerId.isBlank())
+                ? configuredWorkerId
+                : "illustration-" + UUID.randomUUID();
         executor.submit(this::processQueue);
-        log.info("Illustration service started with background queue processor");
+        log.info("Illustration service started with background queue processor (workerId={})", workerId);
     }
 
     /**
@@ -95,6 +120,7 @@ public class IllustrationService {
     public void shutdown() {
         running = false;
         executor.shutdownNow();
+        retryScheduler.shutdownNow();
         log.info("Illustration service shutting down");
     }
 
@@ -142,6 +168,12 @@ public class IllustrationService {
                 return;
             }
             if (status == IllustrationStatus.PENDING) {
+                if (existing.get().getNextRetryAt() != null
+                        && existing.get().getNextRetryAt().isAfter(LocalDateTime.now())) {
+                    long delayMs = Duration.between(LocalDateTime.now(), existing.get().getNextRetryAt()).toMillis();
+                    scheduleRetryRequest(new IllustrationRequest(chapterId), delayMs);
+                    return;
+                }
                 // Check if it's been stuck for more than 5 minutes
                 if (existing.get().getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(5))) {
                     log.info("Re-queuing stuck PENDING illustration for chapter {}", chapterId);
@@ -301,34 +333,22 @@ public class IllustrationService {
             log.info("Skipping illustration generation in cache-only mode for chapter {}", chapterId);
             return;
         }
+        if (!tryClaimGenerationLease(chapterId)) {
+            log.debug("Skipping illustration generation for chapter {} because lease claim failed", chapterId);
+            rescheduleDeferredRetryIfNeeded(chapterId, customPrompt);
+            return;
+        }
         log.info("Starting illustration generation for chapter: {}{}", chapterId,
                 customPrompt != null ? " (with custom prompt)" : "");
-
-        IllustrationEntity illustration = illustrationRepository.findByChapterId(chapterId).orElse(null);
-        if (illustration == null) {
-            log.warn("Illustration record not found for chapter: {}", chapterId);
-            return;
-        }
-
-        // Skip if already completed or being generated (handles duplicate queue entries)
-        // But allow regeneration requests (customPrompt != null) to proceed
-        if (customPrompt == null && (illustration.getStatus() == IllustrationStatus.COMPLETED ||
-                illustration.getStatus() == IllustrationStatus.GENERATING)) {
-            log.debug("Skipping illustration for chapter {} - already {}", chapterId, illustration.getStatus());
-            return;
-        }
 
         // Fetch chapter with book eagerly to avoid lazy loading issues in background thread
         ChapterEntity chapter = chapterRepository.findByIdWithBook(chapterId).orElse(null);
         if (chapter == null) {
             log.error("Chapter not found: {}", chapterId);
-            self.updateIllustrationStatus(chapterId, IllustrationStatus.FAILED, null, "Chapter not found");
+            self.handleGenerationFailure(chapterId, "Chapter not found", customPrompt, false);
             return;
         }
         BookEntity book = chapter.getBook();
-
-        // Update status to generating
-        self.updateIllustrationStatus(chapterId, IllustrationStatus.GENERATING, null, null);
 
         try {
             String imagePrompt;
@@ -367,13 +387,13 @@ public class IllustrationService {
                 self.updateIllustrationStatus(chapterId, IllustrationStatus.COMPLETED, cacheKey, null);
                 log.info("Illustration completed for chapter: {}", chapterId);
             } else {
-                self.updateIllustrationStatus(chapterId, IllustrationStatus.FAILED, null, result.errorMessage());
-                log.error("Illustration generation failed: {}", result.errorMessage());
+                self.handleGenerationFailure(chapterId, result.errorMessage(), customPrompt, true);
+                log.warn("Illustration generation failed for chapter {}: {}", chapterId, result.errorMessage());
             }
 
         } catch (Exception e) {
             log.error("Failed to generate illustration for chapter: {}", chapterId, e);
-            self.updateIllustrationStatus(chapterId, IllustrationStatus.FAILED, null, e.getMessage());
+            self.handleGenerationFailure(chapterId, e.getMessage(), customPrompt, true);
         }
     }
 
@@ -397,6 +417,12 @@ public class IllustrationService {
         }
         if (status == IllustrationStatus.COMPLETED) {
             illustration.setCompletedAt(LocalDateTime.now());
+        }
+        if (status != IllustrationStatus.PENDING) {
+            illustration.setNextRetryAt(null);
+        }
+        if (status != IllustrationStatus.GENERATING) {
+            clearIllustrationLease(illustration);
         }
         illustrationRepository.save(illustration);
         log.debug("Updated illustration status for chapter {}: {}", chapterId, status);
@@ -479,6 +505,9 @@ public class IllustrationService {
         illustration.setErrorMessage(null);
         illustration.setImageFilename(null);
         illustration.setCompletedAt(null);
+        illustration.setRetryCount(0);
+        illustration.setNextRetryAt(null);
+        clearIllustrationLease(illustration);
         illustrationRepository.save(illustration);
 
         // Add to queue for regeneration
@@ -547,6 +576,9 @@ public class IllustrationService {
         int reset = 0;
         for (IllustrationEntity illustration : stuckGenerating) {
             illustration.setStatus(IllustrationStatus.PENDING);
+            illustration.setRetryCount(0);
+            illustration.setNextRetryAt(null);
+            clearIllustrationLease(illustration);
             illustrationRepository.save(illustration);
             reset++;
         }
@@ -573,4 +605,107 @@ public class IllustrationService {
     }
     private record IllustrationRequest(String chapterId) implements GenerationRequest {}
     private record RegenerateRequest(String chapterId, String customPrompt) implements GenerationRequest {}
+
+    private boolean tryClaimGenerationLease(String chapterId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime leaseExpiresAt = now.plusMinutes(Math.max(1, illustrationLeaseMinutes));
+        int claimed = illustrationRepository.claimGenerationLease(
+                chapterId,
+                now,
+                leaseExpiresAt,
+                workerId,
+                IllustrationStatus.PENDING,
+                IllustrationStatus.GENERATING
+        );
+        return claimed > 0;
+    }
+
+    private void clearIllustrationLease(IllustrationEntity illustration) {
+        illustration.setLeaseOwner(null);
+        illustration.setLeaseExpiresAt(null);
+    }
+
+    @Transactional
+    public void handleGenerationFailure(
+            String chapterId,
+            String errorMessage,
+            String customPrompt,
+            boolean retryable) {
+        IllustrationEntity illustration = illustrationRepository.findByChapterId(chapterId).orElse(null);
+        if (illustration == null) {
+            log.warn("Cannot record illustration failure: illustration not found for chapter {}", chapterId);
+            return;
+        }
+
+        int nextRetryCount = Math.max(0, illustration.getRetryCount()) + 1;
+        illustration.setErrorMessage(errorMessage);
+        illustration.setRetryCount(nextRetryCount);
+        clearIllustrationLease(illustration);
+
+        int configuredMaxAttempts = Math.max(1, maxRetryAttempts);
+        if (retryable && nextRetryCount < configuredMaxAttempts) {
+            long delayMs = computeRetryDelayMillis(nextRetryCount);
+            LocalDateTime nextRetryAt = LocalDateTime.now().plus(Duration.ofMillis(delayMs));
+            illustration.setStatus(IllustrationStatus.PENDING);
+            illustration.setNextRetryAt(nextRetryAt);
+            illustrationRepository.save(illustration);
+            scheduleRetryRequest(buildRetryRequest(chapterId, customPrompt), delayMs);
+            log.warn(
+                    "Retrying illustration generation for chapter {} in {}s (attempt {}/{})",
+                    chapterId,
+                    Math.max(1L, delayMs / 1000L),
+                    nextRetryCount + 1,
+                    configuredMaxAttempts
+            );
+            return;
+        }
+
+        illustration.setStatus(IllustrationStatus.FAILED);
+        illustration.setNextRetryAt(null);
+        illustrationRepository.save(illustration);
+    }
+
+    private void rescheduleDeferredRetryIfNeeded(String chapterId, String customPrompt) {
+        illustrationRepository.findByChapterId(chapterId).ifPresent(illustration -> {
+            if (illustration.getStatus() != IllustrationStatus.PENDING || illustration.getNextRetryAt() == null) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            if (!illustration.getNextRetryAt().isAfter(now)) {
+                generationQueue.offer(buildRetryRequest(chapterId, customPrompt));
+                return;
+            }
+            long delayMs = Duration.between(now, illustration.getNextRetryAt()).toMillis();
+            scheduleRetryRequest(buildRetryRequest(chapterId, customPrompt), delayMs);
+        });
+    }
+
+    private GenerationRequest buildRetryRequest(String chapterId, String customPrompt) {
+        if (customPrompt != null && !customPrompt.isBlank()) {
+            return new RegenerateRequest(chapterId, customPrompt);
+        }
+        return new IllustrationRequest(chapterId);
+    }
+
+    private long computeRetryDelayMillis(int retryCount) {
+        long baseSeconds = Math.max(1, initialRetryDelaySeconds);
+        long maxSeconds = Math.max(baseSeconds, maxRetryDelaySeconds);
+        long delaySeconds = baseSeconds;
+        for (int i = 1; i < retryCount; i++) {
+            if (delaySeconds >= maxSeconds) {
+                break;
+            }
+            delaySeconds = Math.min(maxSeconds, delaySeconds * 2);
+        }
+        return Math.max(1L, delaySeconds) * 1000L;
+    }
+
+    private void scheduleRetryRequest(GenerationRequest request, long delayMs) {
+        long normalizedDelayMs = Math.max(0L, delayMs);
+        retryScheduler.schedule(() -> {
+            if (running) {
+                generationQueue.offer(request);
+            }
+        }, normalizedDelayMs, TimeUnit.MILLISECONDS);
+    }
 }

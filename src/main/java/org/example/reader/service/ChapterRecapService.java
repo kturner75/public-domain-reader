@@ -27,15 +27,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -54,6 +58,7 @@ public class ChapterRecapService {
     private final RecapMetricsService recapMetricsService;
     private final BlockingQueue<String> requestQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running = true;
 
     @Value("${recap.generation.max-context-chars:6000}")
@@ -62,8 +67,25 @@ public class ChapterRecapService {
     @Value("${recap.generation.stuck-threshold-minutes:15}")
     private int stuckThresholdMinutes;
 
+    @Value("${recap.generation.lease-minutes:20}")
+    private int recapLeaseMinutes;
+
+    @Value("${recap.generation.worker-id:}")
+    private String configuredWorkerId;
+
+    @Value("${generation.retry.max-attempts:3}")
+    private int maxRetryAttempts;
+
+    @Value("${generation.retry.initial-delay-seconds:30}")
+    private int initialRetryDelaySeconds;
+
+    @Value("${generation.retry.max-delay-seconds:600}")
+    private int maxRetryDelaySeconds;
+
     @Value("${generation.cache-only:false}")
     private boolean cacheOnly;
+
+    private String workerId;
 
     public ChapterRecapService(
             ChapterRecapRepository chapterRecapRepository,
@@ -84,14 +106,18 @@ public class ChapterRecapService {
 
     @PostConstruct
     public void init() {
+        workerId = (configuredWorkerId != null && !configuredWorkerId.isBlank())
+                ? configuredWorkerId
+                : "pdr-" + UUID.randomUUID();
         executor.submit(this::processQueue);
-        log.info("Chapter recap service started with background queue processor");
+        log.info("Chapter recap service started with background queue processor (workerId={})", workerId);
     }
 
     @PreDestroy
     public void shutdown() {
         running = false;
         executor.shutdownNow();
+        retryScheduler.shutdownNow();
         log.info("Chapter recap service shutting down");
     }
 
@@ -159,6 +185,9 @@ public class ChapterRecapService {
             }
 
             recap.setStatus(ChapterRecapStatus.PENDING);
+            recap.setRetryCount(0);
+            recap.setNextRetryAt(null);
+            clearRecapLease(recap);
             chapterRecapRepository.save(recap);
             queueRecapRequest(chapterId);
             return;
@@ -197,6 +226,9 @@ public class ChapterRecapService {
         }
         for (ChapterRecapEntity recap : nullStatusRecaps) {
             recap.setStatus(ChapterRecapStatus.PENDING);
+            recap.setRetryCount(0);
+            recap.setNextRetryAt(null);
+            clearRecapLease(recap);
             chapterRecapRepository.save(recap);
             if (offerIfNotQueued(recap.getChapter().getId())) {
                 queued++;
@@ -223,6 +255,9 @@ public class ChapterRecapService {
 
         for (ChapterRecapEntity recap : stuckGenerating) {
             recap.setStatus(ChapterRecapStatus.PENDING);
+            recap.setRetryCount(0);
+            recap.setNextRetryAt(null);
+            clearRecapLease(recap);
             chapterRecapRepository.save(recap);
         }
 
@@ -239,6 +274,9 @@ public class ChapterRecapService {
         }
         for (ChapterRecapEntity recap : nullStatusRecaps) {
             recap.setStatus(ChapterRecapStatus.PENDING);
+            recap.setRetryCount(0);
+            recap.setNextRetryAt(null);
+            clearRecapLease(recap);
             chapterRecapRepository.save(recap);
             if (offerIfNotQueued(recap.getChapter().getId())) {
                 requeued++;
@@ -260,6 +298,8 @@ public class ChapterRecapService {
 
         ChapterRecapPayload normalizedPayload = normalizePayload(payload);
         recap.setStatus(ChapterRecapStatus.COMPLETED);
+        recap.setNextRetryAt(null);
+        clearRecapLease(recap);
         recap.setGeneratedAt(LocalDateTime.now());
         recap.setPromptVersion(promptVersion);
         recap.setModelName(modelName);
@@ -271,6 +311,12 @@ public class ChapterRecapService {
     public void updateRecapStatus(String chapterId, ChapterRecapStatus status) {
         chapterRecapRepository.findByChapterId(chapterId).ifPresent(recap -> {
             recap.setStatus(status);
+            if (status != ChapterRecapStatus.PENDING) {
+                recap.setNextRetryAt(null);
+            }
+            if (status != ChapterRecapStatus.GENERATING) {
+                clearRecapLease(recap);
+            }
             chapterRecapRepository.save(recap);
         });
     }
@@ -310,19 +356,19 @@ public class ChapterRecapService {
             log.info("Skipping queued recap generation in cache-only mode for chapter {}", chapterId);
             return;
         }
+        if (!tryClaimGenerationLease(chapterId)) {
+            log.debug("Skipping recap generation for chapter {} because lease claim failed", chapterId);
+            rescheduleDeferredRetryIfNeeded(chapterId);
+            return;
+        }
         Optional<ChapterEntity> chapterOpt = chapterRepository.findByIdWithBook(chapterId);
         if (chapterOpt.isEmpty()) {
             log.warn("Cannot generate recap; chapter not found: {}", chapterId);
-            return;
-        }
-        Optional<ChapterRecapEntity> recapOpt = chapterRecapRepository.findByChapterId(chapterId);
-        if (recapOpt.isPresent() && recapOpt.get().getStatus() == ChapterRecapStatus.COMPLETED) {
-            log.debug("Skipping recap generation for chapter {} because recap is already completed", chapterId);
+            handleRecapFailure(chapterId, false);
             return;
         }
 
         ChapterEntity chapter = chapterOpt.get();
-        updateRecapStatus(chapterId, ChapterRecapStatus.GENERATING);
         long startedAtMs = System.currentTimeMillis();
         try {
             List<String> paragraphs = loadChapterParagraphs(chapter.getId());
@@ -338,8 +384,22 @@ public class ChapterRecapService {
             long durationMs = Math.max(0L, System.currentTimeMillis() - startedAtMs);
             recapMetricsService.recordGenerationFailed(durationMs);
             log.error("Failed to generate recap for chapter {}", chapterId, e);
-            updateRecapStatus(chapterId, ChapterRecapStatus.FAILED);
+            handleRecapFailure(chapterId, true);
         }
+    }
+
+    private boolean tryClaimGenerationLease(String chapterId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime leaseExpiresAt = now.plusMinutes(Math.max(1, recapLeaseMinutes));
+        int claimed = chapterRecapRepository.claimGenerationLease(
+                chapterId,
+                now,
+                leaseExpiresAt,
+                workerId,
+                ChapterRecapStatus.PENDING,
+                ChapterRecapStatus.GENERATING
+        );
+        return claimed > 0;
     }
 
     private RecapGenerationResult generateRecapPayload(ChapterEntity chapter, List<String> paragraphs) {
@@ -390,6 +450,83 @@ public class ChapterRecapService {
         }
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(Math.max(1, stuckThresholdMinutes));
         return updatedAt.isBefore(cutoff);
+    }
+
+    private void clearRecapLease(ChapterRecapEntity recap) {
+        recap.setLeaseOwner(null);
+        recap.setLeaseExpiresAt(null);
+    }
+
+    @Transactional
+    public void handleRecapFailure(String chapterId, boolean retryable) {
+        ChapterRecapEntity recap = chapterRecapRepository.findByChapterId(chapterId).orElse(null);
+        if (recap == null) {
+            log.warn("Cannot record recap failure: recap not found for chapter {}", chapterId);
+            return;
+        }
+
+        int nextRetryCount = Math.max(0, recap.getRetryCount()) + 1;
+        recap.setRetryCount(nextRetryCount);
+        clearRecapLease(recap);
+
+        int configuredMaxAttempts = Math.max(1, maxRetryAttempts);
+        if (retryable && nextRetryCount < configuredMaxAttempts) {
+            long delayMs = computeRetryDelayMillis(nextRetryCount);
+            LocalDateTime nextRetryAt = LocalDateTime.now().plus(Duration.ofMillis(delayMs));
+            recap.setStatus(ChapterRecapStatus.PENDING);
+            recap.setNextRetryAt(nextRetryAt);
+            chapterRecapRepository.save(recap);
+            scheduleRetryRequest(chapterId, delayMs);
+            log.warn(
+                    "Retrying chapter recap for {} in {}s (attempt {}/{})",
+                    chapterId,
+                    Math.max(1L, delayMs / 1000L),
+                    nextRetryCount + 1,
+                    configuredMaxAttempts
+            );
+            return;
+        }
+
+        recap.setStatus(ChapterRecapStatus.FAILED);
+        recap.setNextRetryAt(null);
+        chapterRecapRepository.save(recap);
+    }
+
+    private void rescheduleDeferredRetryIfNeeded(String chapterId) {
+        chapterRecapRepository.findByChapterId(chapterId).ifPresent(recap -> {
+            if (recap.getStatus() != ChapterRecapStatus.PENDING || recap.getNextRetryAt() == null) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            if (!recap.getNextRetryAt().isAfter(now)) {
+                offerIfNotQueued(chapterId);
+                return;
+            }
+            long delayMs = Duration.between(now, recap.getNextRetryAt()).toMillis();
+            scheduleRetryRequest(chapterId, delayMs);
+        });
+    }
+
+    private long computeRetryDelayMillis(int retryCount) {
+        long baseSeconds = Math.max(1, initialRetryDelaySeconds);
+        long maxSeconds = Math.max(baseSeconds, maxRetryDelaySeconds);
+        long delaySeconds = baseSeconds;
+        for (int i = 1; i < retryCount; i++) {
+            if (delaySeconds >= maxSeconds) {
+                break;
+            }
+            delaySeconds = Math.min(maxSeconds, delaySeconds * 2);
+        }
+        return Math.max(1L, delaySeconds) * 1000L;
+    }
+
+    private void scheduleRetryRequest(String chapterId, long delayMs) {
+        long normalizedDelayMs = Math.max(0L, delayMs);
+        retryScheduler.schedule(() -> {
+            if (running) {
+                offerIfNotQueued(chapterId);
+            }
+        }, normalizedDelayMs, TimeUnit.MILLISECONDS);
     }
 
     private List<String> loadChapterParagraphs(String chapterId) {

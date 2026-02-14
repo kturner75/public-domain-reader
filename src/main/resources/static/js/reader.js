@@ -96,7 +96,12 @@
         chatCharacter: null,              // Current character being chatted with
         chatHistory: [],                  // Loaded from localStorage
         chatLoading: false,
-        cacheOnly: false
+        cacheOnly: false,
+        authPublicMode: false,
+        authRequired: false,
+        authCanAccessSensitive: true,
+        authAuthenticated: false,
+        authPromptShown: false
     };
 
     // DOM Elements
@@ -218,7 +223,15 @@
         chatCharacterName: document.getElementById('chat-character-name'),
         chatMessages: document.getElementById('chat-messages'),
         chatInput: document.getElementById('chat-input'),
-        chatSendBtn: document.getElementById('chat-send-btn')
+        chatSendBtn: document.getElementById('chat-send-btn'),
+        authToggle: document.getElementById('auth-toggle'),
+        authModal: document.getElementById('auth-modal'),
+        authModalBackdrop: document.getElementById('auth-modal-backdrop'),
+        authModalClose: document.getElementById('auth-modal-close'),
+        authModalStatus: document.getElementById('auth-modal-status'),
+        authPassword: document.getElementById('auth-password'),
+        authSignIn: document.getElementById('auth-signin'),
+        authSignOut: document.getElementById('auth-signout')
     };
 
     // Chapter list state
@@ -251,9 +264,171 @@
         elements.cacheOnlyIndicator.classList.toggle('hidden', !state.cacheOnly);
     }
 
+    const nativeFetch = window.fetch.bind(window);
+
+    function extractPathFromFetchInput(resource) {
+        if (!resource) return '';
+        try {
+            if (typeof resource === 'string') {
+                return new URL(resource, window.location.origin).pathname;
+            }
+            if (resource instanceof Request) {
+                return new URL(resource.url, window.location.origin).pathname;
+            }
+        } catch (_error) {
+            return '';
+        }
+        return '';
+    }
+
+    function installAuthAwareFetch() {
+        window.fetch = async (resource, options = undefined) => {
+            const response = await nativeFetch(resource, options);
+            const path = extractPathFromFetchInput(resource);
+            if (response.status === 401
+                && state.authPublicMode
+                && path.startsWith('/api/')
+                && !path.startsWith('/api/auth')) {
+                handleSensitiveUnauthorized();
+            }
+            return response;
+        };
+    }
+
+    function isAuthModalVisible() {
+        return !!elements.authModal && !elements.authModal.classList.contains('hidden');
+    }
+
+    function setAuthStatusMessage(message, tone = 'neutral') {
+        if (!elements.authModalStatus) return;
+        elements.authModalStatus.textContent = message || '';
+        elements.authModalStatus.classList.remove('error', 'success');
+        if (tone === 'error') {
+            elements.authModalStatus.classList.add('error');
+        } else if (tone === 'success') {
+            elements.authModalStatus.classList.add('success');
+        }
+    }
+
+    function updateAuthUi() {
+        if (!elements.authToggle) return;
+
+        if (!state.authPublicMode) {
+            elements.authToggle.classList.add('hidden');
+            return;
+        }
+
+        elements.authToggle.classList.remove('hidden');
+        elements.authToggle.classList.toggle('authenticated', state.authAuthenticated);
+        elements.authToggle.textContent = state.authAuthenticated ? 'Signed In' : 'Sign In';
+    }
+
+    async function authCheckStatus() {
+        try {
+            const response = await nativeFetch('/api/auth/status', { cache: 'no-store' });
+            if (!response.ok) {
+                return;
+            }
+            const status = await response.json();
+            state.authPublicMode = status.publicMode === true;
+            state.authRequired = status.authRequired === true;
+            state.authAuthenticated = status.authenticated === true;
+            state.authCanAccessSensitive = status.canAccessSensitive !== false;
+            updateAuthUi();
+        } catch (error) {
+            console.debug('Auth status check failed:', error);
+        }
+    }
+
+    function openAuthModal(message = '') {
+        if (!elements.authModal) return;
+        state.authPromptShown = true;
+        elements.authModal.classList.remove('hidden');
+        if (elements.authSignOut) {
+            elements.authSignOut.classList.toggle('hidden', !state.authAuthenticated);
+        }
+        if (elements.authSignIn) {
+            elements.authSignIn.textContent = state.authAuthenticated ? 'Refresh Sign In' : 'Sign In';
+        }
+        setAuthStatusMessage(message || (state.authAuthenticated
+            ? 'You are signed in.'
+            : 'Sign in to use protected generation and chat features.'));
+        if (elements.authPassword) {
+            elements.authPassword.value = '';
+            elements.authPassword.focus();
+        }
+    }
+
+    function closeAuthModal() {
+        if (!elements.authModal) return;
+        elements.authModal.classList.add('hidden');
+        setAuthStatusMessage('');
+    }
+
+    async function submitAuthLogin() {
+        if (!elements.authPassword) return;
+        const password = elements.authPassword.value || '';
+        if (!password.trim()) {
+            setAuthStatusMessage('Password is required.', 'error');
+            return;
+        }
+
+        if (elements.authSignIn) {
+            elements.authSignIn.disabled = true;
+            elements.authSignIn.textContent = 'Signing In...';
+        }
+
+        try {
+            const response = await nativeFetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                setAuthStatusMessage(payload.message || 'Sign-in failed.', 'error');
+                return;
+            }
+
+            setAuthStatusMessage(payload.message || 'Signed in.', 'success');
+            await authCheckStatus();
+            closeAuthModal();
+        } catch (error) {
+            console.debug('Auth login failed:', error);
+            setAuthStatusMessage('Sign-in failed.', 'error');
+        } finally {
+            if (elements.authSignIn) {
+                elements.authSignIn.disabled = false;
+                elements.authSignIn.textContent = state.authAuthenticated ? 'Refresh Sign In' : 'Sign In';
+            }
+        }
+    }
+
+    async function submitAuthLogout() {
+        try {
+            await nativeFetch('/api/auth/logout', { method: 'POST' });
+            await authCheckStatus();
+            setAuthStatusMessage('Signed out.', 'success');
+        } catch (error) {
+            console.debug('Auth logout failed:', error);
+            setAuthStatusMessage('Unable to sign out.', 'error');
+        }
+    }
+
+    function handleSensitiveUnauthorized() {
+        if (!state.authPublicMode) return;
+        state.authCanAccessSensitive = false;
+        state.authAuthenticated = false;
+        updateAuthUi();
+        if (isAuthModalVisible()) return;
+        openAuthModal('Sign in is required for this action.');
+    }
+
     // Initialize
     async function init() {
+        installAuthAwareFetch();
         await loadLibrary();
+        await authCheckStatus();
         await speedReadingCheckAvailability();
         setupEventListeners();
         await ttsCheckAvailability();
@@ -3848,6 +4023,36 @@
         // Back to library
         elements.backToLibrary.addEventListener('click', backToLibrary);
 
+        if (elements.authToggle) {
+            elements.authToggle.addEventListener('click', () => {
+                if (state.authAuthenticated) {
+                    openAuthModal('You are signed in. You can sign out here.');
+                } else {
+                    openAuthModal();
+                }
+            });
+        }
+        if (elements.authModalClose) {
+            elements.authModalClose.addEventListener('click', closeAuthModal);
+        }
+        if (elements.authModalBackdrop) {
+            elements.authModalBackdrop.addEventListener('click', closeAuthModal);
+        }
+        if (elements.authSignIn) {
+            elements.authSignIn.addEventListener('click', submitAuthLogin);
+        }
+        if (elements.authSignOut) {
+            elements.authSignOut.addEventListener('click', submitAuthLogout);
+        }
+        if (elements.authPassword) {
+            elements.authPassword.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitAuthLogin();
+                }
+            });
+        }
+
         // Paragraph click navigation
         if (elements.readerContent) {
             elements.readerContent.addEventListener('click', (e) => {
@@ -4110,6 +4315,14 @@
 
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
+            if (isAuthModalVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeAuthModal();
+                }
+                return;
+            }
+
             // Handle prompt modal keyboard
             if (isPromptModalVisible()) {
                 if (e.key === 'Escape') {

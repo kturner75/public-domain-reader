@@ -4,9 +4,11 @@ import org.example.reader.entity.CharacterEntity;
 import org.example.reader.entity.CharacterStatus;
 import org.example.reader.entity.CharacterType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,6 +29,18 @@ public interface CharacterRepository extends JpaRepository<CharacterEntity, Stri
     List<CharacterEntity> findByBookIdAndFirstChapterIdOrderByFirstParagraphIndex(String bookId, String firstChapterId);
 
     List<CharacterEntity> findByStatus(CharacterStatus status);
+
+    long countByStatus(CharacterStatus status);
+
+    @Query("""
+            SELECT COUNT(c)
+            FROM CharacterEntity c
+            WHERE c.book.id = :bookId
+              AND c.status = :status
+            """)
+    long countByBookAndStatus(
+            @Param("bookId") String bookId,
+            @Param("status") CharacterStatus status);
 
     long countByBookIdAndCharacterType(String bookId, CharacterType characterType);
 
@@ -53,6 +67,52 @@ public interface CharacterRepository extends JpaRepository<CharacterEntity, Stri
     List<CharacterEntity> findNewlyCompletedSince(
             @Param("bookId") String bookId,
             @Param("sinceTime") LocalDateTime sinceTime);
+
+    @Query("""
+            SELECT COUNT(c)
+            FROM CharacterEntity c
+            WHERE c.status = :pendingStatus
+              AND c.nextRetryAt IS NOT NULL
+              AND c.nextRetryAt > :now
+            """)
+    long countScheduledRetries(
+            @Param("pendingStatus") CharacterStatus pendingStatus,
+            @Param("now") LocalDateTime now);
+
+    @Query("""
+            SELECT COUNT(c)
+            FROM CharacterEntity c
+            WHERE c.book.id = :bookId
+              AND c.status = :pendingStatus
+              AND c.nextRetryAt IS NOT NULL
+              AND c.nextRetryAt > :now
+            """)
+    long countScheduledRetriesForBook(
+            @Param("bookId") String bookId,
+            @Param("pendingStatus") CharacterStatus pendingStatus,
+            @Param("now") LocalDateTime now);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE CharacterEntity c
+            SET c.status = :generatingStatus,
+                c.leaseOwner = :leaseOwner,
+                c.leaseExpiresAt = :leaseExpiresAt,
+                c.nextRetryAt = NULL
+            WHERE c.id = :characterId
+              AND (
+                (c.status = :pendingStatus AND (c.nextRetryAt IS NULL OR c.nextRetryAt <= :now))
+                OR (c.status = :generatingStatus AND (c.leaseExpiresAt IS NULL OR c.leaseExpiresAt < :now))
+              )
+            """)
+    int claimPortraitLease(
+            @Param("characterId") String characterId,
+            @Param("now") LocalDateTime now,
+            @Param("leaseExpiresAt") LocalDateTime leaseExpiresAt,
+            @Param("leaseOwner") String leaseOwner,
+            @Param("pendingStatus") CharacterStatus pendingStatus,
+            @Param("generatingStatus") CharacterStatus generatingStatus);
 
     void deleteByBookId(String bookId);
 }

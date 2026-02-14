@@ -1,6 +1,6 @@
 # Current Feature Inventory
 
-Last audited: 2026-02-08
+Last audited: 2026-02-14
 
 This inventory reflects implemented behavior in backend controllers/services and `static/js/reader.js`.
 
@@ -82,6 +82,16 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Chat history persisted in `localStorage` per book/character.
 - `generation.cache-only` does not disable character chat; chat remains available when `ai.chat.enabled=true` and the chat provider is available.
 
+## Chapter Recaps and Quizzes
+
+- Post-chapter recap overlay with tabbed `Recap` + `Chat` experience.
+- Recap payload persistence (`chapter_recaps`) with async generation and status polling in reader UI.
+- Chapter-bounded recap chat that blocks future-chapter context.
+- Optional post-chapter pop quiz tab with persisted quiz payloads (`chapter_quizzes`) and async generation.
+- Quiz grading with score + per-question correctness and citation snippets for missed answers.
+- Difficulty progression tied to chapter index, with quiz attempt/trophy progression tracking.
+- `generation.cache-only` blocks new recap/quiz generation on misses, while recap chat can still be available when `ai.chat.enabled=true`.
+
 ## Pre-Generation and Operations
 
 - Pre-generation APIs:
@@ -89,9 +99,17 @@ This inventory reflects implemented behavior in backend controllers/services and
   - by `gutenbergId` (import + generation)
 - Batch pre-generation runner for curated top books.
 - Stall detection and requeue/reset behavior for generation jobs.
+- Startup queue recovery requeues persisted pending/stuck generation work for illustration, character analysis/portraits, and chapter recaps.
+- Recap, illustration, and character generation pipelines use DB-backed lease claims (`leaseOwner`/`leaseExpiresAt`) to reduce duplicate processing across parallel app instances.
+- Retry/backoff metadata is persisted per generation job (`retryCount`, `nextRetryAt`) with exponential retry scheduling for recap/illustration/portrait/analysis pipelines.
+- Aggregate generation job status APIs:
+  - `GET /api/generation/status` (global)
+  - `GET /api/generation/book/{bookId}/status` (book-scoped)
 - Asset key normalization for stable paths.
 - CLI utilities for asset migration and orphan cleanup.
 - Spaces/CDN sync script for audio/portraits/illustrations.
+- Cache transfer CLI (`CacheTransferRunner`) for recap/quiz export/import with dry-run and conflict controls.
+- Operator scripts for pre-generation, remote transfer, and remote deploy orchestration.
 
 ## Persistence and Configuration
 
@@ -100,6 +118,33 @@ This inventory reflects implemented behavior in backend controllers/services and
 - LLM provider abstraction with configurable reasoning/chat providers.
 - Runtime feature and generation behavior configured via `application.properties`.
 - `generation.cache-only` is artifact-generation-only (recaps/quizzes/illustrations/character generation pipelines); cached reads still work, and chat is controlled separately by `ai.chat.enabled`.
+
+## API Guardrails (Public Mode)
+
+- Deployment mode switch:
+  - `deployment.mode=local`: no auth gate on sensitive generation/chat endpoints.
+  - `deployment.mode=public`: sensitive generation/chat endpoints require authentication.
+- Public-mode auth options:
+  - API key auth via `X-API-Key` + `security.public.api-key` (`PUBLIC_API_KEY` env supported).
+  - Collaborator session auth via `/api/auth/login` + HttpOnly cookie (`security.public.collaborator.password`).
+- Browser UI support for collaborator sign-in/out via header auth toggle and modal.
+- Fixed-window rate limits for sensitive endpoints with explicit `429` payloads and `Retry-After`:
+  - generation routes (`tts`, `illustrations`, `characters`, `recaps`, `quizzes`, `pregen`)
+  - chat routes (`character chat`, `recap chat`)
+- Rate-limit key scope:
+  - authenticated requests use principal-scoped keys (`api:<key-hash>` or collaborator session principal)
+  - unauthenticated/local-mode traffic falls back to IP-scoped keys
+- Rate-limit tuning via:
+  - `security.public.rate-limit.window-seconds`
+  - `security.public.rate-limit.generation-requests`
+  - `security.public.rate-limit.chat-requests`
+  - `security.public.rate-limit.authenticated-generation-requests`
+  - `security.public.rate-limit.authenticated-chat-requests`
+  - `security.public.rate-limit.max-keys`
+- Session settings:
+  - `security.public.session.cookie-name`
+  - `security.public.session.ttl-minutes`
+  - `security.public.session.secure-cookie`
 
 ## Test Coverage (Current)
 

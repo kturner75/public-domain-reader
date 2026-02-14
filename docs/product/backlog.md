@@ -1,8 +1,14 @@
 # Product Backlog
 
-Last updated: 2026-02-12
+Last updated: 2026-02-14
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
+
+## Current Delivery State
+
+- Most recent completed slice: `BL-002.3 - Retry/backoff + status API` (`Done`, validated with full `mvn test`).
+- Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
+- Active priority work: `BL-003 - Expand automated test coverage for AI/media pipelines` (`P0`, `Proposed`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -137,8 +143,25 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P0
 - Effort: L
-- Status: Proposed
+- Status: Done
 - Problem: Expensive endpoints (`tts`, `illustrations`, `characters`, `pregen`) are callable without auth/rate controls.
+- Current Direction (2026-02-14):
+- Implement a deployment-mode-aware guardrail layer for non-local profiles first:
+- Add request auth gate for sensitive generation/chat endpoints when `deployment.mode=public`.
+- Add per-IP rate limiting for generation + chat endpoints with conservative defaults and explicit 429 payloads.
+- Keep local/dev behavior unchanged by default to preserve current iteration speed.
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-001.1 Public-mode API guardrails | Done | Add centralized endpoint matcher + interceptor enforcing `X-API-Key` in `deployment.mode=public`; add per-IP rate limits for sensitive generation/chat routes with 429 responses | Sensitive generation/chat routes reject missing/invalid key in public mode and enforce configured request limits |
+,| BL-001.2 Collaborator session auth | Done | Add browser-usable collaborator auth via `/api/auth/login` + HttpOnly session cookie, and allow sensitive public endpoints to authenticate with either API key or collaborator session | Collaborators can authenticate in-app and access protected generation/chat endpoints without exposing server API key in frontend code |
+| BL-001.3 Rate-limit model expansion | In Progress | Add auth-identity-aware limiter keys and per-authenticated-principal limits; evaluate external/durable limiter backing for multi-instance deployments | Limits are aligned to authenticated identity and resilient across replicas |
+- Session Log:
+- 2026-02-14: Implemented BL-001.1 with `PublicApiGuardInterceptor`, sensitive route matcher, and in-memory per-IP fixed-window limiter; added `deployment.mode`/`security.public.*` properties with local-safe defaults.
+- 2026-02-14: Added coverage for route classification and interceptor behavior in `SensitiveApiRequestMatcherTest`, `PublicApiGuardInterceptorPublicModeTest`, and `PublicApiGuardInterceptorLocalModeTest`; validated with full `mvn test`.
+- 2026-02-14: Implemented BL-001.2 with `PublicSessionAuthService`, `/api/auth` login/status/logout endpoints, and interceptor support for either `X-API-Key` or collaborator session auth in public mode.
+- 2026-02-14: Added collaborator sign-in modal in `reader.js`/`index.html` and validated auth + guardrails with `AuthControllerTest` and `PublicApiGuardInterceptorSessionAuthTest` plus full `mvn test`.
+- 2026-02-14: Implemented BL-001.3 identity-aware limiter scope in `PublicApiGuardInterceptor` (API key/session principal scoped keys + authenticated limit properties); added `rateLimit_isScopedPerCollaboratorSession` coverage and validated with full `mvn test`.
 - Acceptance Criteria:
 - Add authentication/authorization strategy for non-local deployments.
 - Add per-IP or per-user rate limits for generation and chat endpoints.
@@ -148,8 +171,25 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P0
 - Effort: XL
-- Status: Proposed
+- Status: In Progress
 - Problem: Illustration/character work queues run in-process with single-thread executors and are vulnerable to restart loss.
+- Current Direction (2026-02-14):
+- Deliver BL-002 incrementally while preserving existing generation behavior:
+- Add startup recovery that rehydrates queued work from persisted DB state (`PENDING` + stuck `GENERATING`) for illustration/character/recap pipelines.
+- Then replace in-memory queue ownership with durable job leasing + retry/backoff policies.
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-002.1 Startup queue recovery | Done | Add app-start recovery service that requeues persisted pending/stuck generation work across books | Restarting the app rehydrates generation queues without manual operator requeue |
+| BL-002.2 Durable worker leasing | Done | Introduce durable lease claims so multi-instance workers coordinate safely and avoid duplicate processing | Queue ownership survives restarts and prevents duplicate work across replicas |
+| BL-002.2a Recap lease claims | Done | Add DB-backed lease claim on chapter recap jobs before processing, with lease release on terminal states | Concurrent workers cannot both process the same recap unless lease expires |
+| BL-002.2b Illustration/character lease claims | Done | Extend durable lease claims to illustration and character queues | Illustration/character pipelines have the same cross-instance coordination guarantees as recaps |
+| BL-002.3 Retry/backoff + status API | Done | Add explicit retry/backoff policy and aggregate job status endpoint/query model | Retry behavior is explicit/test-covered and job state is queryable without log inspection |
+- Session Log:
+- 2026-02-14: Added `GenerationQueueRecoveryService` (startup orchestrator) to requeue persisted illustration/portrait/analysis/recap work from DB state and added `GenerationQueueRecoveryServiceTest`; validated with full `mvn test`.
+- 2026-02-14: Added recap durable lease claims in `ChapterRecapService`/`ChapterRecapRepository` (`claimGenerationLease`, `leaseOwner`, `leaseExpiresAt`) with worker identity + lease duration config; added coverage in `ChapterRecapServiceTest`.
+- 2026-02-14: Added durable lease claims for `IllustrationService` and `CharacterService` pipelines (portrait + chapter analysis) with atomic repository claim queries and lease cleanup on terminal transitions; added `GenerationLeaseClaimRepositoryTest` for illustration/portrait/analysis claim behavior.
+- 2026-02-14: Implemented DB-backed retry/backoff metadata (`retryCount`, `nextRetryAt`) for recap/illustration/portrait/analysis jobs, added exponential retry scheduling in generation services, and exposed aggregate status APIs at `/api/generation/status` and `/api/generation/book/{bookId}/status`; added coverage in `GenerationJobStatusServiceTest`, `GenerationStatusControllerTest`, and extended lease-claim/retry tests.
 - Acceptance Criteria:
 - Jobs persist across application restarts.
 - Retry/backoff policies are explicit and test-covered.

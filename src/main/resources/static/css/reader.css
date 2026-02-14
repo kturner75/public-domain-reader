@@ -178,6 +178,21 @@ html, body {
     letter-spacing: 0.02em;
 }
 
+.auth-toggle {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+    min-width: 5rem;
+}
+
+.auth-toggle.authenticated {
+    color: #2f6f44;
+    border-color: #9cc3a8;
+    background: #eef7ef;
+}
+
 #reader-view.speed-reading-active .reader-content,
 #reader-view.speed-reading-active .chapter-title,
 #reader-view.speed-reading-active .reader-footer {
@@ -779,6 +794,103 @@ kbd {
 .chapter-recap-btn-secondary {
     background: transparent;
     color: var(--text-color);
+}
+
+/* Collaborator auth modal */
+.auth-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 9, 7, 0.5);
+}
+
+.auth-modal-card {
+    position: relative;
+    width: min(420px, 92vw);
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
+    padding: 1rem 1.1rem 1.1rem;
+}
+
+.auth-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.35rem;
+}
+
+.auth-modal-header h3 {
+    font-size: 1.16rem;
+    font-weight: 500;
+}
+
+.auth-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 1.45rem;
+    line-height: 1;
+    color: var(--muted-color);
+    cursor: pointer;
+    padding: 0.2rem 0.35rem;
+}
+
+.auth-modal-help {
+    color: var(--muted-color);
+    font-size: 0.84rem;
+    margin-bottom: 0.6rem;
+}
+
+.auth-modal-status {
+    min-height: 1.35rem;
+    font-size: 0.84rem;
+    color: var(--muted-color);
+    margin-bottom: 0.45rem;
+}
+
+.auth-modal-status.error {
+    color: #8f2f2f;
+}
+
+.auth-modal-status.success {
+    color: #2f6f44;
+}
+
+.auth-modal-label {
+    display: block;
+    font-size: 0.84rem;
+    margin-bottom: 0.3rem;
+}
+
+.auth-modal-input {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.56rem 0.68rem;
+    font-family: var(--font-serif);
+    font-size: 0.96rem;
+    background: #fff;
+    margin-bottom: 0.8rem;
+}
+
+.auth-modal-input:focus {
+    outline: none;
+    border-color: var(--muted-color);
+}
+
+.auth-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
 }
 
 /* Chapter list overlay */

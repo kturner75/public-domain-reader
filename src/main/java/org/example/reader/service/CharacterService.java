@@ -18,16 +18,20 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class CharacterService {
@@ -72,8 +76,29 @@ public class CharacterService {
     @Value("${generation.cache-only:false}")
     private boolean cacheOnly;
 
+    @Value("${character.analysis.lease-minutes:15}")
+    private int analysisLeaseMinutes;
+
+    @Value("${character.portrait.lease-minutes:20}")
+    private int portraitLeaseMinutes;
+
+    @Value("${character.generation.worker-id:}")
+    private String configuredWorkerId;
+
+    @Value("${generation.retry.max-attempts:3}")
+    private int maxRetryAttempts;
+
+    @Value("${generation.retry.initial-delay-seconds:30}")
+    private int initialRetryDelaySeconds;
+
+    @Value("${generation.retry.max-delay-seconds:600}")
+    private int maxRetryDelaySeconds;
+
+    private String workerId;
+
     private final BlockingQueue<CharacterRequest> requestQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running = true;
 
     private CharacterService self;
@@ -109,14 +134,18 @@ public class CharacterService {
 
     @PostConstruct
     public void init() {
+        workerId = (configuredWorkerId != null && !configuredWorkerId.isBlank())
+                ? configuredWorkerId
+                : "character-" + UUID.randomUUID();
         executor.submit(this::processQueue);
-        log.info("Character service started with background queue processor");
+        log.info("Character service started with background queue processor (workerId={})", workerId);
     }
 
     @PreDestroy
     public void shutdown() {
         running = false;
         executor.shutdownNow();
+        retryScheduler.shutdownNow();
         log.info("Character service shutting down");
     }
 
@@ -139,6 +168,9 @@ public class CharacterService {
                         ? ChapterAnalysisStatus.COMPLETED
                         : ChapterAnalysisStatus.PENDING;
                 analysis.setStatus(status);
+                if (status != ChapterAnalysisStatus.GENERATING) {
+                    clearAnalysisLease(analysis);
+                }
                 chapterAnalysisRepository.save(analysis);
             }
             if (status == ChapterAnalysisStatus.COMPLETED) {
@@ -151,6 +183,9 @@ public class CharacterService {
             }
             // Pending or failed: re-queue to avoid gaps after restarts.
             analysis.setStatus(ChapterAnalysisStatus.PENDING);
+            analysis.setRetryCount(0);
+            analysis.setNextRetryAt(null);
+            clearAnalysisLease(analysis);
             chapterAnalysisRepository.save(analysis);
             boolean queued = requestQueue.offer(new AnalysisRequest(chapterId));
             if (queued) {
@@ -285,13 +320,18 @@ public class CharacterService {
             log.info("Skipping chapter analysis in cache-only mode for chapter {}", chapterId);
             return;
         }
+        if (!tryClaimAnalysisLease(chapterId)) {
+            log.debug("Skipping character analysis for chapter {} because lease claim failed", chapterId);
+            rescheduleDeferredAnalysisRetryIfNeeded(chapterId);
+            return;
+        }
         ChapterEntity chapter = chapterRepository.findByIdWithBook(chapterId).orElse(null);
         if (chapter == null) {
             log.warn("Chapter not found for analysis: {}", chapterId);
+            self.handleAnalysisFailure(chapterId, false);
             return;
         }
 
-        self.updateChapterAnalysisStatus(chapterId, ChapterAnalysisStatus.GENERATING);
         BookEntity book = chapter.getBook();
 
         List<String> existingNames = characterRepository.findByBookIdOrderByCreatedAt(book.getId())
@@ -355,7 +395,7 @@ public class CharacterService {
             self.updateChapterAnalysisCount(chapterId, createdCount);
         } catch (Exception e) {
             log.error("Failed to analyze chapter {}", chapterId, e);
-            self.updateChapterAnalysisStatus(chapterId, ChapterAnalysisStatus.FAILED);
+            self.handleAnalysisFailure(chapterId, true);
         }
     }
 
@@ -409,6 +449,8 @@ public class CharacterService {
             analysis.setCharacterCount(count);
             analysis.setAnalyzedAt(LocalDateTime.now());
             analysis.setStatus(ChapterAnalysisStatus.COMPLETED);
+            analysis.setNextRetryAt(null);
+            clearAnalysisLease(analysis);
             chapterAnalysisRepository.save(analysis);
         });
     }
@@ -577,6 +619,12 @@ public class CharacterService {
     public void updateChapterAnalysisStatus(String chapterId, ChapterAnalysisStatus status) {
         chapterAnalysisRepository.findByChapterId(chapterId).ifPresent(analysis -> {
             analysis.setStatus(status);
+            if (status != ChapterAnalysisStatus.PENDING) {
+                analysis.setNextRetryAt(null);
+            }
+            if (status != ChapterAnalysisStatus.GENERATING) {
+                clearAnalysisLease(analysis);
+            }
             chapterAnalysisRepository.save(analysis);
         });
     }
@@ -586,19 +634,17 @@ public class CharacterService {
             log.info("Skipping portrait generation in cache-only mode for character {}", characterId);
             return;
         }
+        if (!tryClaimPortraitLease(characterId)) {
+            log.debug("Skipping portrait generation for character {} because lease claim failed", characterId);
+            rescheduleDeferredPortraitRetryIfNeeded(characterId);
+            return;
+        }
         CharacterEntity character = characterRepository.findByIdWithBookAndChapter(characterId).orElse(null);
         if (character == null) {
             log.warn("Character not found for portrait generation: {}", characterId);
+            self.handlePortraitFailure(characterId, "Character not found", false);
             return;
         }
-
-        if (character.getStatus() == CharacterStatus.COMPLETED ||
-                character.getStatus() == CharacterStatus.GENERATING) {
-            log.debug("Skipping portrait for character {} - already {}", characterId, character.getStatus());
-            return;
-        }
-
-        self.updateCharacterStatus(characterId, CharacterStatus.GENERATING, null, null);
 
         try {
             BookEntity book = character.getBook();
@@ -624,13 +670,13 @@ public class CharacterService {
                 self.updateCharacterStatus(characterId, CharacterStatus.COMPLETED, cacheKey, null);
                 log.info("Portrait completed for character: {}", character.getName());
             } else {
-                self.updateCharacterStatus(characterId, CharacterStatus.FAILED, null, result.errorMessage());
-                log.error("Portrait generation failed for '{}': {}", character.getName(), result.errorMessage());
+                self.handlePortraitFailure(characterId, result.errorMessage(), true);
+                log.warn("Portrait generation failed for '{}': {}", character.getName(), result.errorMessage());
             }
 
         } catch (Exception e) {
             log.error("Failed to generate portrait for character: {}", character.getName(), e);
-            self.updateCharacterStatus(characterId, CharacterStatus.FAILED, null, e.getMessage());
+            self.handlePortraitFailure(characterId, e.getMessage(), true);
         }
     }
 
@@ -651,6 +697,12 @@ public class CharacterService {
         }
         if (status == CharacterStatus.COMPLETED) {
             character.setCompletedAt(LocalDateTime.now());
+        }
+        if (status != CharacterStatus.PENDING) {
+            character.setNextRetryAt(null);
+        }
+        if (status != CharacterStatus.GENERATING) {
+            clearCharacterLease(character);
         }
         characterRepository.save(character);
         log.debug("Updated character status for {}: {}", characterId, status);
@@ -802,6 +854,9 @@ public class CharacterService {
         int reset = 0;
         for (CharacterEntity character : stuckGenerating) {
             character.setStatus(CharacterStatus.PENDING);
+            character.setRetryCount(0);
+            character.setNextRetryAt(null);
+            clearCharacterLease(character);
             characterRepository.save(character);
             reset++;
         }
@@ -847,6 +902,9 @@ public class CharacterService {
         int reset = 0;
         for (ChapterAnalysisEntity analysis : stuckGenerating) {
             analysis.setStatus(ChapterAnalysisStatus.PENDING);
+            analysis.setRetryCount(0);
+            analysis.setNextRetryAt(null);
+            clearAnalysisLease(analysis);
             chapterAnalysisRepository.save(analysis);
             reset++;
         }
@@ -879,5 +937,166 @@ public class CharacterService {
     }
 
     private record PortraitRequest(String characterId) implements CharacterRequest {
+    }
+
+    private boolean tryClaimPortraitLease(String characterId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime leaseExpiresAt = now.plusMinutes(Math.max(1, portraitLeaseMinutes));
+        int claimed = characterRepository.claimPortraitLease(
+                characterId,
+                now,
+                leaseExpiresAt,
+                workerId,
+                CharacterStatus.PENDING,
+                CharacterStatus.GENERATING
+        );
+        return claimed > 0;
+    }
+
+    private boolean tryClaimAnalysisLease(String chapterId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime leaseExpiresAt = now.plusMinutes(Math.max(1, analysisLeaseMinutes));
+        int claimed = chapterAnalysisRepository.claimAnalysisLease(
+                chapterId,
+                now,
+                leaseExpiresAt,
+                workerId,
+                ChapterAnalysisStatus.PENDING,
+                ChapterAnalysisStatus.GENERATING
+        );
+        return claimed > 0;
+    }
+
+    private void clearCharacterLease(CharacterEntity character) {
+        character.setLeaseOwner(null);
+        character.setLeaseExpiresAt(null);
+    }
+
+    private void clearAnalysisLease(ChapterAnalysisEntity analysis) {
+        analysis.setLeaseOwner(null);
+        analysis.setLeaseExpiresAt(null);
+    }
+
+    @Transactional
+    public void handleAnalysisFailure(String chapterId, boolean retryable) {
+        ChapterAnalysisEntity analysis = chapterAnalysisRepository.findByChapterId(chapterId).orElse(null);
+        if (analysis == null) {
+            log.warn("Cannot record chapter analysis failure: analysis not found for chapter {}", chapterId);
+            return;
+        }
+
+        int nextRetryCount = Math.max(0, analysis.getRetryCount()) + 1;
+        analysis.setRetryCount(nextRetryCount);
+        clearAnalysisLease(analysis);
+
+        int configuredMaxAttempts = Math.max(1, maxRetryAttempts);
+        if (retryable && nextRetryCount < configuredMaxAttempts) {
+            long delayMs = computeRetryDelayMillis(nextRetryCount);
+            LocalDateTime nextRetryAt = LocalDateTime.now().plus(Duration.ofMillis(delayMs));
+            analysis.setStatus(ChapterAnalysisStatus.PENDING);
+            analysis.setNextRetryAt(nextRetryAt);
+            chapterAnalysisRepository.save(analysis);
+            scheduleRetryRequest(new AnalysisRequest(chapterId), delayMs);
+            log.warn(
+                    "Retrying character analysis for chapter {} in {}s (attempt {}/{})",
+                    chapterId,
+                    Math.max(1L, delayMs / 1000L),
+                    nextRetryCount + 1,
+                    configuredMaxAttempts
+            );
+            return;
+        }
+
+        analysis.setStatus(ChapterAnalysisStatus.FAILED);
+        analysis.setNextRetryAt(null);
+        chapterAnalysisRepository.save(analysis);
+    }
+
+    @Transactional
+    public void handlePortraitFailure(String characterId, String errorMessage, boolean retryable) {
+        CharacterEntity character = characterRepository.findById(characterId).orElse(null);
+        if (character == null) {
+            log.warn("Cannot record portrait failure: character not found {}", characterId);
+            return;
+        }
+
+        int nextRetryCount = Math.max(0, character.getRetryCount()) + 1;
+        character.setRetryCount(nextRetryCount);
+        character.setErrorMessage(errorMessage);
+        clearCharacterLease(character);
+
+        int configuredMaxAttempts = Math.max(1, maxRetryAttempts);
+        if (retryable && nextRetryCount < configuredMaxAttempts) {
+            long delayMs = computeRetryDelayMillis(nextRetryCount);
+            LocalDateTime nextRetryAt = LocalDateTime.now().plus(Duration.ofMillis(delayMs));
+            character.setStatus(CharacterStatus.PENDING);
+            character.setNextRetryAt(nextRetryAt);
+            characterRepository.save(character);
+            scheduleRetryRequest(new PortraitRequest(characterId), delayMs);
+            log.warn(
+                    "Retrying portrait generation for character {} in {}s (attempt {}/{})",
+                    characterId,
+                    Math.max(1L, delayMs / 1000L),
+                    nextRetryCount + 1,
+                    configuredMaxAttempts
+            );
+            return;
+        }
+
+        character.setStatus(CharacterStatus.FAILED);
+        character.setNextRetryAt(null);
+        characterRepository.save(character);
+    }
+
+    private void rescheduleDeferredAnalysisRetryIfNeeded(String chapterId) {
+        chapterAnalysisRepository.findByChapterId(chapterId).ifPresent(analysis -> {
+            if (analysis.getStatus() != ChapterAnalysisStatus.PENDING || analysis.getNextRetryAt() == null) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            if (!analysis.getNextRetryAt().isAfter(now)) {
+                requestQueue.offer(new AnalysisRequest(chapterId));
+                return;
+            }
+            long delayMs = Duration.between(now, analysis.getNextRetryAt()).toMillis();
+            scheduleRetryRequest(new AnalysisRequest(chapterId), delayMs);
+        });
+    }
+
+    private void rescheduleDeferredPortraitRetryIfNeeded(String characterId) {
+        characterRepository.findById(characterId).ifPresent(character -> {
+            if (character.getStatus() != CharacterStatus.PENDING || character.getNextRetryAt() == null) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            if (!character.getNextRetryAt().isAfter(now)) {
+                requestQueue.offer(new PortraitRequest(characterId));
+                return;
+            }
+            long delayMs = Duration.between(now, character.getNextRetryAt()).toMillis();
+            scheduleRetryRequest(new PortraitRequest(characterId), delayMs);
+        });
+    }
+
+    private long computeRetryDelayMillis(int retryCount) {
+        long baseSeconds = Math.max(1, initialRetryDelaySeconds);
+        long maxSeconds = Math.max(baseSeconds, maxRetryDelaySeconds);
+        long delaySeconds = baseSeconds;
+        for (int i = 1; i < retryCount; i++) {
+            if (delaySeconds >= maxSeconds) {
+                break;
+            }
+            delaySeconds = Math.min(maxSeconds, delaySeconds * 2);
+        }
+        return Math.max(1L, delaySeconds) * 1000L;
+    }
+
+    private void scheduleRetryRequest(CharacterRequest request, long delayMs) {
+        long normalizedDelayMs = Math.max(0L, delayMs);
+        retryScheduler.schedule(() -> {
+            if (running) {
+                requestQueue.offer(request);
+            }
+        }, normalizedDelayMs, TimeUnit.MILLISECONDS);
     }
 }
