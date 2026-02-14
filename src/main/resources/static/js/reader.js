@@ -13,6 +13,7 @@
         totalPages: 0,
         currentParagraphIndex: 0,
         pagesData: [],         // Array of { startParagraph, endParagraph } for each page
+        readerPreferences: null,
         annotationsByKey: new Map(),
         bookmarks: [],
         noteModalParagraphIndex: null,
@@ -129,6 +130,16 @@
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
+        readerSettingsToggle: document.getElementById('reader-settings-toggle'),
+        readerSettingsPanel: document.getElementById('reader-settings-panel'),
+        readerFontSize: document.getElementById('reader-font-size'),
+        readerFontSizeValue: document.getElementById('reader-font-size-value'),
+        readerLineHeight: document.getElementById('reader-line-height'),
+        readerLineHeightValue: document.getElementById('reader-line-height-value'),
+        readerColumnGap: document.getElementById('reader-column-gap'),
+        readerColumnGapValue: document.getElementById('reader-column-gap-value'),
+        readerTheme: document.getElementById('reader-theme'),
+        readerSettingsReset: document.getElementById('reader-settings-reset'),
         cacheOnlyIndicator: document.getElementById('cache-only-indicator'),
         shortcutsToggle: document.getElementById('shortcuts-toggle'),
         shortcutsOverlay: document.getElementById('shortcuts-overlay'),
@@ -269,6 +280,7 @@
         TTS_SPEED: 'reader_ttsSpeed',
         SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
+        READER_PREFERENCES: 'reader_readerPreferences',
         RECAP_OPTOUT_PREFIX: 'reader_recapOptOut_',
         RECAP_CHAT_PREFIX: 'reader_recapChat_',
         CHARACTER_CHAT_PREFIX: 'reader_characterChat_',
@@ -277,6 +289,28 @@
     };
 
     const MAX_RECENTLY_READ = 5;
+    const DEFAULT_READER_PREFERENCES = Object.freeze({
+        fontSize: 1.2,
+        lineHeight: 1.7,
+        columnGap: 4,
+        theme: 'warm'
+    });
+    const READER_THEMES = Object.freeze({
+        warm: {
+            textColor: '#2c2c2c',
+            bgColor: '#fdfbf7',
+            mutedColor: '#888',
+            borderColor: '#e0ddd5',
+            highlightColor: '#f5f0e6'
+        },
+        paper: {
+            textColor: '#22201c',
+            bgColor: '#fffefb',
+            mutedColor: '#6f6a62',
+            borderColor: '#d7d1c8',
+            highlightColor: '#f1ece2'
+        }
+    });
 
     function annotationKey(chapterId, paragraphIndex) {
         return `${chapterId}:${paragraphIndex}`;
@@ -495,9 +529,158 @@
         openAuthModal('Sign in is required for this action.');
     }
 
+    function isReaderSettingsPanelVisible() {
+        return !!elements.readerSettingsPanel && !elements.readerSettingsPanel.classList.contains('hidden');
+    }
+
+    function normalizePreferenceNumber(value, fallback, min, max) {
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+            return fallback;
+        }
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function normalizeReaderPreferences(raw) {
+        const source = raw || {};
+        const theme = Object.prototype.hasOwnProperty.call(READER_THEMES, source.theme)
+            ? source.theme
+            : DEFAULT_READER_PREFERENCES.theme;
+        return {
+            fontSize: normalizePreferenceNumber(
+                parseFloat(source.fontSize),
+                DEFAULT_READER_PREFERENCES.fontSize,
+                1.0,
+                1.5
+            ),
+            lineHeight: normalizePreferenceNumber(
+                parseFloat(source.lineHeight),
+                DEFAULT_READER_PREFERENCES.lineHeight,
+                1.4,
+                2.1
+            ),
+            columnGap: normalizePreferenceNumber(
+                parseFloat(source.columnGap),
+                DEFAULT_READER_PREFERENCES.columnGap,
+                2.0,
+                6.0
+            ),
+            theme
+        };
+    }
+
+    function loadStoredReaderPreferences() {
+        const raw = localStorage.getItem(STORAGE_KEYS.READER_PREFERENCES);
+        if (!raw) {
+            return { ...DEFAULT_READER_PREFERENCES };
+        }
+        try {
+            return normalizeReaderPreferences(JSON.parse(raw));
+        } catch (_error) {
+            return { ...DEFAULT_READER_PREFERENCES };
+        }
+    }
+
+    function saveReaderPreferences() {
+        localStorage.setItem(STORAGE_KEYS.READER_PREFERENCES, JSON.stringify(state.readerPreferences));
+    }
+
+    function applyReaderPreferences() {
+        if (!state.readerPreferences) return;
+        const theme = READER_THEMES[state.readerPreferences.theme] || READER_THEMES.warm;
+        const rootStyle = document.documentElement.style;
+        rootStyle.setProperty('--font-size-body', `${state.readerPreferences.fontSize.toFixed(2)}rem`);
+        rootStyle.setProperty('--line-height', state.readerPreferences.lineHeight.toFixed(2));
+        rootStyle.setProperty('--column-gap', `${state.readerPreferences.columnGap.toFixed(2)}rem`);
+        rootStyle.setProperty('--text-color', theme.textColor);
+        rootStyle.setProperty('--bg-color', theme.bgColor);
+        rootStyle.setProperty('--muted-color', theme.mutedColor);
+        rootStyle.setProperty('--border-color', theme.borderColor);
+        rootStyle.setProperty('--highlight-color', theme.highlightColor);
+    }
+
+    function syncReaderPreferencesControls() {
+        if (!state.readerPreferences) return;
+        if (elements.readerFontSize) {
+            elements.readerFontSize.value = state.readerPreferences.fontSize.toFixed(2);
+        }
+        if (elements.readerFontSizeValue) {
+            elements.readerFontSizeValue.textContent = `${state.readerPreferences.fontSize.toFixed(2)}rem`;
+        }
+        if (elements.readerLineHeight) {
+            elements.readerLineHeight.value = state.readerPreferences.lineHeight.toFixed(2);
+        }
+        if (elements.readerLineHeightValue) {
+            elements.readerLineHeightValue.textContent = state.readerPreferences.lineHeight.toFixed(2);
+        }
+        if (elements.readerColumnGap) {
+            elements.readerColumnGap.value = state.readerPreferences.columnGap.toFixed(2);
+        }
+        if (elements.readerColumnGapValue) {
+            elements.readerColumnGapValue.textContent = `${state.readerPreferences.columnGap.toFixed(2)}rem`;
+        }
+        if (elements.readerTheme) {
+            elements.readerTheme.value = state.readerPreferences.theme;
+        }
+    }
+
+    function repaginateFromCurrentParagraph() {
+        if (elements.readerView.classList.contains('hidden')) return;
+        if (!Array.isArray(state.paragraphs) || state.paragraphs.length === 0) return;
+
+        const targetParagraph = Math.max(0, Math.min(state.currentParagraphIndex, state.paragraphs.length - 1));
+        calculatePages();
+        let targetPage = state.pagesData.findIndex((page) =>
+            targetParagraph >= page.startParagraph && targetParagraph <= page.endParagraph
+        );
+        if (targetPage < 0) {
+            targetPage = Math.max(0, Math.min(state.currentPage, state.totalPages - 1));
+        }
+        state.currentPage = targetPage;
+        state.currentParagraphIndex = targetParagraph;
+        renderPage();
+    }
+
+    function setReaderPreferences(nextPartial, options = {}) {
+        const repaginate = options.repaginate !== false;
+        state.readerPreferences = normalizeReaderPreferences({
+            ...state.readerPreferences,
+            ...nextPartial
+        });
+        applyReaderPreferences();
+        syncReaderPreferencesControls();
+        saveReaderPreferences();
+        if (repaginate) {
+            repaginateFromCurrentParagraph();
+        }
+    }
+
+    function openReaderSettingsPanel() {
+        if (!elements.readerSettingsPanel || !elements.readerSettingsToggle) return;
+        elements.readerSettingsPanel.classList.remove('hidden');
+        elements.readerSettingsToggle.classList.add('active');
+    }
+
+    function closeReaderSettingsPanel() {
+        if (!elements.readerSettingsPanel || !elements.readerSettingsToggle) return;
+        elements.readerSettingsPanel.classList.add('hidden');
+        elements.readerSettingsToggle.classList.remove('active');
+    }
+
+    function toggleReaderSettingsPanel() {
+        if (isReaderSettingsPanelVisible()) {
+            closeReaderSettingsPanel();
+            return;
+        }
+        syncReaderPreferencesControls();
+        openReaderSettingsPanel();
+    }
+
     // Initialize
     async function init() {
         installAuthAwareFetch();
+        state.readerPreferences = loadStoredReaderPreferences();
+        applyReaderPreferences();
+        syncReaderPreferencesControls();
         await loadLibrary();
         await authCheckStatus();
         await speedReadingCheckAvailability();
@@ -2236,6 +2419,7 @@
         state.quizSubmitting = false;
         state.quizResult = null;
         closeAnnotationMenu();
+        closeReaderSettingsPanel();
         hideShortcutsOverlay(false);
         hideBookmarksOverlay();
         closeNoteModal(false);
@@ -4493,11 +4677,63 @@
                 showBookmarksOverlay();
             });
         }
+        if (elements.readerSettingsToggle) {
+            elements.readerSettingsToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleReaderSettingsPanel();
+            });
+        }
+        if (elements.readerSettingsPanel) {
+            elements.readerSettingsPanel.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        if (elements.readerFontSize) {
+            elements.readerFontSize.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                if (!Number.isNaN(value)) {
+                    setReaderPreferences({ fontSize: value });
+                }
+            });
+        }
+        if (elements.readerLineHeight) {
+            elements.readerLineHeight.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                if (!Number.isNaN(value)) {
+                    setReaderPreferences({ lineHeight: value });
+                }
+            });
+        }
+        if (elements.readerColumnGap) {
+            elements.readerColumnGap.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                if (!Number.isNaN(value)) {
+                    setReaderPreferences({ columnGap: value });
+                }
+            });
+        }
+        if (elements.readerTheme) {
+            elements.readerTheme.addEventListener('change', (e) => {
+                setReaderPreferences({ theme: e.target.value });
+            });
+        }
+        if (elements.readerSettingsReset) {
+            elements.readerSettingsReset.addEventListener('click', () => {
+                setReaderPreferences({ ...DEFAULT_READER_PREFERENCES });
+            });
+        }
         document.addEventListener('click', (e) => {
             if (!isAnnotationMenuVisible()) return;
             const menuHost = e.target.closest('.annotation-menu');
             if (!menuHost) {
                 closeAnnotationMenu();
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!isReaderSettingsPanelVisible()) return;
+            const settingsHost = e.target.closest('.reader-settings-menu');
+            if (!settingsHost) {
+                closeReaderSettingsPanel();
             }
         });
         if (elements.annotationMenuPanel) {
@@ -4869,6 +5105,14 @@
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     closeAnnotationMenu();
+                }
+                return;
+            }
+
+            if (isReaderSettingsPanelVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeReaderSettingsPanel();
                 }
                 return;
             }
