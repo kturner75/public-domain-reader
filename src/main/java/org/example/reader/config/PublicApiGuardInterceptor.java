@@ -21,7 +21,7 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(PublicApiGuardInterceptor.class);
 
-    private final InMemoryIpRateLimiter ipRateLimiter;
+    private final PublicApiRateLimiter rateLimiter;
     private final PublicSessionAuthService sessionAuthService;
     private final String deploymentMode;
     private final String publicApiKey;
@@ -32,7 +32,7 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
     private final int windowSeconds;
 
     public PublicApiGuardInterceptor(
-            @Nullable InMemoryIpRateLimiter ipRateLimiter,
+            @Nullable PublicApiRateLimiter rateLimiter,
             @Nullable PublicSessionAuthService sessionAuthService,
             @Value("${deployment.mode:local}") String deploymentMode,
             @Value("${security.public.api-key:}") String publicApiKey,
@@ -43,7 +43,7 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
             int authenticatedGenerationLimit,
             @Value("${security.public.rate-limit.authenticated-chat-requests:0}")
             int authenticatedChatLimit) {
-        this.ipRateLimiter = ipRateLimiter != null ? ipRateLimiter : new InMemoryIpRateLimiter(20000);
+        this.rateLimiter = rateLimiter != null ? rateLimiter : new InMemoryIpRateLimiter(20000);
         this.sessionAuthService = sessionAuthService;
         this.deploymentMode = deploymentMode;
         this.publicApiKey = publicApiKey;
@@ -107,7 +107,7 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
         int limit = resolveLimit(endpointType, authenticatedScope);
         String limiterKey = endpointType.name() + ":" + (authenticatedScope ? principalScope : "ip:" + ip);
 
-        boolean allowed = ipRateLimiter.tryConsume(limiterKey, limit, Duration.ofSeconds(windowSeconds));
+        boolean allowed = rateLimiter.tryConsume(limiterKey, limit, Duration.ofSeconds(windowSeconds));
         if (!allowed) {
             response.setHeader("Retry-After", String.valueOf(windowSeconds));
             writeJson(response, 429,

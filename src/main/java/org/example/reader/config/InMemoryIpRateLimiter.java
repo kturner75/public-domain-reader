@@ -1,6 +1,7 @@
 package org.example.reader.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -12,7 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Simple fixed-window in-memory rate limiter keyed by endpoint category + client IP.
  */
 @Component
-public class InMemoryIpRateLimiter {
+@ConditionalOnProperty(name = "security.public.rate-limit.store", havingValue = "in-memory", matchIfMissing = true)
+public class InMemoryIpRateLimiter implements PublicApiRateLimiter {
 
     private final int maxKeys;
     private final AtomicInteger cleanupTicker = new AtomicInteger();
@@ -22,6 +24,7 @@ public class InMemoryIpRateLimiter {
         this.maxKeys = Math.max(1000, maxKeys);
     }
 
+    @Override
     public boolean tryConsume(String key, int maxRequests, Duration window) {
         if (key == null || key.isBlank() || maxRequests <= 0 || window == null || window.isZero() || window.isNegative()) {
             return false;
