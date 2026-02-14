@@ -157,11 +157,23 @@ public class CacheTransferRunner {
     private static DbConfig resolveDbConfig(ParsedArgs parsed) {
         Properties properties = loadProperties();
         String dbUrl = parsed.optionValue(DB_URL_FLAG)
-                .orElseGet(() -> properties.getProperty("spring.datasource.url", "jdbc:h2:file:./data/library"));
+                .orElseGet(() -> firstNonBlank(
+                        System.getenv("SPRING_DATASOURCE_URL"),
+                        System.getenv("DATABASE_URL"),
+                        properties.getProperty("spring.datasource.url"),
+                        "jdbc:h2:file:./data/library"));
         String dbUser = parsed.optionValue(DB_USER_FLAG)
-                .orElseGet(() -> properties.getProperty("spring.datasource.username", "sa"));
+                .orElseGet(() -> firstNonBlank(
+                        System.getenv("SPRING_DATASOURCE_USERNAME"),
+                        System.getenv("DATABASE_USERNAME"),
+                        properties.getProperty("spring.datasource.username"),
+                        "sa"));
         String dbPassword = parsed.optionValue(DB_PASSWORD_FLAG)
-                .orElseGet(() -> properties.getProperty("spring.datasource.password", ""));
+                .orElseGet(() -> firstNonBlank(
+                        System.getenv("SPRING_DATASOURCE_PASSWORD"),
+                        System.getenv("DATABASE_PASSWORD"),
+                        properties.getProperty("spring.datasource.password"),
+                        ""));
         return new DbConfig(normalizeDbUrl(dbUrl), dbUser, dbPassword);
     }
 
@@ -971,6 +983,15 @@ public class CacheTransferRunner {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (!isBlank(value)) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 
     private static void printSummary(String command, TransferFeature feature, Summary summary, boolean apply, PrintStream out) {

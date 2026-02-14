@@ -5,10 +5,12 @@ import org.example.reader.entity.ChapterEntity;
 import org.example.reader.entity.ParagraphEntity;
 import org.example.reader.repository.BookRepository;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile({"dev", "test", "smoke"})
 @Order(1) // Run before SearchIndexInitializer
 public class DataInitializer implements CommandLineRunner {
 

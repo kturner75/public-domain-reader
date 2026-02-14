@@ -40,7 +40,7 @@ public class CharacterEntity {
     private CharacterStatus status;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, columnDefinition = "VARCHAR(255) DEFAULT 'SECONDARY'")
+    @Column(nullable = false)
     private CharacterType characterType = CharacterType.SECONDARY;
 
     @Column(length = 1000)
@@ -54,7 +54,7 @@ public class CharacterEntity {
 
     private LocalDateTime leaseExpiresAt;
 
-    @Column(nullable = false, columnDefinition = "integer default 0")
+    @Column(nullable = false)
     private int retryCount;
 
     private LocalDateTime nextRetryAt;

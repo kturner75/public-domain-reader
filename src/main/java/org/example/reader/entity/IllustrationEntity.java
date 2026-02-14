@@ -35,7 +35,7 @@ public class IllustrationEntity {
 
     private LocalDateTime leaseExpiresAt;
 
-    @Column(nullable = false, columnDefinition = "integer default 0")
+    @Column(nullable = false)
     private int retryCount;
 
     private LocalDateTime nextRetryAt;
