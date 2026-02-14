@@ -59,6 +59,7 @@
         recapAvailable: false,
         recapGenerationAvailable: false,
         recapCacheOnly: false,
+        recapChatEnabled: false,
         recapChatAvailable: false,
         recapOptOut: false,
         recapPendingChapterIndex: null,
@@ -1105,7 +1106,7 @@
         const canUseChat = state.recapChatAvailable && !!state.currentBook;
         const inputDisabled = !canUseChat || state.recapChatLoading;
         const sendDisabled = !canUseChat || state.recapChatLoading;
-        const chatUnavailable = !state.recapChatAvailable || state.recapCacheOnly;
+        const chatUnavailable = !state.recapChatAvailable;
         const recapUnavailable = !state.recapAvailable;
 
         if (elements.chapterRecapChatInput) {
@@ -1122,8 +1123,12 @@
         }
 
         if (!elements.chapterRecapChatStatus) return;
-        if (state.recapCacheOnly) {
-            elements.chapterRecapChatStatus.textContent = 'Recap chat is unavailable in cache-only mode.';
+        if (!state.recapAvailable) {
+            elements.chapterRecapChatStatus.textContent = 'Recap chat is unavailable for this book.';
+            return;
+        }
+        if (!state.recapChatEnabled) {
+            elements.chapterRecapChatStatus.textContent = 'Recap chat is disabled in this environment.';
             return;
         }
         if (!state.recapChatAvailable) {
@@ -3160,10 +3165,10 @@
             const status = await response.json();
             state.characterAvailable = status.enabled && isBookFeatureEnabled('characterEnabled');
             state.characterCacheOnly = status.cacheOnly === true;
-            // Chat is available if the feature is enabled AND the chat provider is configured
+            // Chat is available if enabled in config and the provider is reachable
             state.characterChatAvailable = state.characterAvailable
-                && !state.characterCacheOnly
-                && status.chatEnabled === true;
+                && status.chatEnabled === true
+                && status.chatProviderAvailable === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
 
             console.log('Character status response:', status);
@@ -3189,7 +3194,6 @@
             state.newCharacterQueue = [];
             state.currentToastCharacter = null;
         }
-        // Chat unavailable if character feature is off, cache-only mode, or chat explicitly disabled
         if (!state.characterAvailable) {
             state.characterChatAvailable = false;
         }
@@ -3208,15 +3212,17 @@
                 && status.cacheOnly !== true;
             state.recapAvailable = status.available === true;
             state.recapCacheOnly = status.cacheOnly === true;
+            state.recapChatEnabled = status.chatEnabled === true;
             state.recapChatAvailable = state.recapAvailable &&
-                status.chatProviderAvailable === true &&
-                !state.recapCacheOnly;
+                state.recapChatEnabled &&
+                status.chatProviderAvailable === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.debug('Failed to check recap availability:', error);
             state.recapGenerationAvailable = false;
             state.recapAvailable = false;
             state.recapCacheOnly = false;
+            state.recapChatEnabled = false;
             state.recapChatAvailable = false;
         }
         updateRecapOptOutControl();

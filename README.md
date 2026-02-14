@@ -79,3 +79,18 @@ Deploy helper example:
 ```bash
 scripts/deploy_remote.sh --ssh-target pdr --ssh-key ~/.ssh/kevin
 ```
+
+## Configuration Matrix
+
+Use these settings as baseline profiles in `src/main/resources/application.properties` (or env overrides).
+
+| Profile | `generation.cache-only` | `tts.cache-only` | `ai.chat.enabled` | Intended behavior |
+|---|---:|---:|---:|---|
+| `local-dev` | `false` | `false` | `true` | Full generation + chat for development and feature testing. |
+| `public-cache-only-with-chat` | `true` | `true` | `true` | No new artifact generation on cache misses; cached assets still serve; character/recap chat still works when provider is available. |
+| `full-generation` | `false` | `false` | `true` | Generate artifacts on demand and keep chat enabled. |
+
+Notes:
+- `generation.cache-only=true` blocks artifact generation workflows (recaps/quizzes/illustrations/character generation pipelines) but does not disable chat.
+- Chat availability is controlled by `ai.chat.enabled` plus chat provider availability/configuration.
+- Keep `tts.cache-only=true` on public environments when TTS generation costs should be avoided.

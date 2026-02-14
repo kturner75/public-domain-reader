@@ -20,7 +20,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(ChapterRecapController.class)
 @TestPropertySource(properties = {
-        "generation.cache-only=true"
+        "generation.cache-only=true",
+        "ai.chat.enabled=true"
 })
 class ChapterRecapControllerCacheOnlyTest {
 
@@ -59,8 +60,10 @@ class ChapterRecapControllerCacheOnlyTest {
     }
 
     @Test
-    void chat_cacheOnlyMode_returnsConflict() throws Exception {
+    void chat_cacheOnlyMode_allowsChatWhenEnabled() throws Exception {
         when(recapRolloutService.isBookAllowed("book-1")).thenReturn(true);
+        when(chapterRecapChatService.chat("book-1", "Summarize this chapter", java.util.List.of(), 0))
+                .thenReturn("Summary so far.");
 
         mockMvc.perform(post("/api/recaps/book/book-1/chat")
                         .contentType("application/json")
@@ -71,6 +74,7 @@ class ChapterRecapControllerCacheOnlyTest {
                                   "readerChapterIndex": 0
                                 }
                                 """))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.response", is("Summary so far.")));
     }
 }

@@ -29,7 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(ChapterRecapController.class)
 @TestPropertySource(properties = {
-        "generation.cache-only=false"
+        "generation.cache-only=false",
+        "ai.chat.enabled=true"
 })
 class ChapterRecapControllerTest {
 
@@ -54,6 +55,7 @@ class ChapterRecapControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled", is(true)))
                 .andExpect(jsonPath("$.reasoningEnabled", is(true)))
+                .andExpect(jsonPath("$.chatEnabled", is(true)))
                 .andExpect(jsonPath("$.cacheOnly", is(false)))
                 .andExpect(jsonPath("$.chatProviderAvailable", is(false)))
                 .andExpect(jsonPath("$.available", is(true)));
