@@ -33,15 +33,20 @@ Non-Negotiables
 ## Operational Scripts
 
 - `scripts/pregen_transfer_book.sh`: one workflow for a single Gutenberg book:
-  - pre-generate illustrations + portraits + recaps (`/api/pregen/gutenberg/{id}`)
+  - start async pre-generation + poll progress/cancel safely (`/api/pregen/jobs/*`)
   - export recap transfer JSON (`CacheTransferRunner export`)
   - optionally import into a target DB (`CacheTransferRunner import`)
   - optionally sync assets to Spaces (`scripts/sync_spaces.sh`)
 - `scripts/transfer_recaps_remote.sh`: local export + remote import orchestration over SSH:
-  - export cache transfer JSON locally (`--feature recaps|quizzes`)
+  - export cache transfer JSON locally (`--feature recaps|quizzes|illustrations|portraits|all`)
   - upload JSON to server via `scp`
   - run remote import dry-run
   - optionally stop service, run apply import, then restart service
+- `scripts/publish_book_remote.sh`: one-command promotion workflow for a Gutenberg book:
+  - optional local pre-generation job start/poll
+  - optional local quiz pre-generation (book-wide)
+  - optional Spaces sync for binary assets
+  - remote DB promotion over SSH for cache metadata (`--transfer-feature all` by default)
 - `scripts/deploy_remote.sh`: deploy helper that mirrors the current jar deployment flow:
   - `mvn clean package`
   - `scp` jar to server

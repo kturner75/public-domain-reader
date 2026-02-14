@@ -55,6 +55,8 @@ public class CacheTransferRunner {
 
     private static final String FEATURE_RECAPS = "recaps";
     private static final String FEATURE_QUIZZES = "quizzes";
+    private static final String FEATURE_ILLUSTRATIONS = "illustrations";
+    private static final String FEATURE_PORTRAITS = "portraits";
     private static final String FORMAT_VERSION = "1.0";
 
     private static final Set<String> GLOBAL_OPTIONS = Set.of(
@@ -113,7 +115,7 @@ public class CacheTransferRunner {
         String featureRaw = parsed.optionValue(FEATURE_FLAG).orElse(FEATURE_RECAPS).trim().toLowerCase();
         Optional<TransferFeature> feature = TransferFeature.fromValue(featureRaw);
         if (feature.isEmpty()) {
-            err.println("Unsupported feature: " + featureRaw + " (supported: recaps, quizzes).");
+            err.println("Unsupported feature: " + featureRaw + " (supported: recaps, quizzes, illustrations, portraits).");
             return 1;
         }
 
@@ -122,9 +124,12 @@ public class CacheTransferRunner {
         try (Connection connection = DriverManager.getConnection(dbConfig.url(), dbConfig.user(), dbConfig.password())) {
             if (COMMAND_EXPORT.equals(parsed.command())) {
                 ExportOptions options = buildExportOptions(parsed);
-                Summary summary = feature.get() == TransferFeature.RECAPS
-                        ? exportRecaps(connection, options, out, err)
-                        : exportQuizzes(connection, options, out, err);
+                Summary summary = switch (feature.get()) {
+                    case RECAPS -> exportRecaps(connection, options, out, err);
+                    case QUIZZES -> exportQuizzes(connection, options, out, err);
+                    case ILLUSTRATIONS -> exportIllustrations(connection, options, out, err);
+                    case PORTRAITS -> exportPortraits(connection, options, out, err);
+                };
                 printSummary("export", feature.get(), summary, options.apply(), out);
                 return summary.validationErrors() > 0 ? 1 : 0;
             }
@@ -134,9 +139,12 @@ public class CacheTransferRunner {
                 connection.setAutoCommit(false);
             }
 
-            Summary summary = feature.get() == TransferFeature.RECAPS
-                    ? importRecaps(connection, options, out, err)
-                    : importQuizzes(connection, options, out, err);
+            Summary summary = switch (feature.get()) {
+                case RECAPS -> importRecaps(connection, options, out, err);
+                case QUIZZES -> importQuizzes(connection, options, out, err);
+                case ILLUSTRATIONS -> importIllustrations(connection, options, out, err);
+                case PORTRAITS -> importPortraits(connection, options, out, err);
+            };
 
             if (options.apply()) {
                 if (summary.validationErrors() > 0) {
@@ -440,6 +448,228 @@ public class CacheTransferRunner {
         return summary;
     }
 
+    static Summary exportIllustrations(Connection connection, ExportOptions options, PrintStream out, PrintStream err)
+            throws SQLException, IOException {
+        Summary summary = new Summary();
+
+        Map<String, List<BookRow>> booksByRequestedSourceId = options.sourceIds().isEmpty()
+                ? Map.of()
+                : findBooksBySourceId(connection, options.sourceIds());
+        if (!options.sourceIds().isEmpty()) {
+            summary.booksScanned = options.sourceIds().size();
+            for (String requestedSourceId : options.sourceIds()) {
+                if (booksByRequestedSourceId.getOrDefault(requestedSourceId, List.of()).isEmpty()) {
+                    summary.booksMissing++;
+                    out.println("Book missing for sourceId=" + requestedSourceId);
+                }
+            }
+            int matched = booksByRequestedSourceId.values().stream().mapToInt(List::size).sum();
+            summary.booksMatched = matched;
+        }
+
+        List<IllustrationExportRow> illustrationRows = queryCompletedIllustrationRows(connection);
+        Set<String> scannedBooksAllCached = new HashSet<>();
+        Set<String> missingBookIds = new HashSet<>();
+        Set<String> allowedBookIds = new HashSet<>();
+        if (!options.sourceIds().isEmpty()) {
+            for (List<BookRow> rows : booksByRequestedSourceId.values()) {
+                for (BookRow row : rows) {
+                    allowedBookIds.add(row.id());
+                }
+            }
+        }
+
+        Map<String, TransferBookBuilder> builders = new LinkedHashMap<>();
+
+        for (IllustrationExportRow row : illustrationRows) {
+            if (!options.sourceIds().isEmpty() && !allowedBookIds.contains(row.bookId())) {
+                continue;
+            }
+
+            if (options.allCached()) {
+                scannedBooksAllCached.add(row.bookId());
+            }
+
+            if (isBlank(row.source()) || isBlank(row.sourceId())) {
+                if (missingBookIds.add(row.bookId())) {
+                    summary.booksMissing++;
+                    out.println("Skipping book with missing source/sourceId: bookId=" + row.bookId());
+                }
+                continue;
+            }
+
+            String key = row.source() + "\u0000" + row.sourceId();
+            TransferBookBuilder builder = builders.computeIfAbsent(
+                    key,
+                    ignored -> new TransferBookBuilder(row.source(), row.sourceId(), row.title(), row.author())
+            );
+            builder.illustrations().add(new TransferIllustration(
+                    row.chapterIndex(),
+                    ChapterStatus.COMPLETED.value(),
+                    row.imageFilename(),
+                    row.generatedPrompt(),
+                    formatDateTime(row.completedAt())
+            ));
+            summary.illustrationsExported++;
+        }
+
+        if (options.allCached()) {
+            summary.booksScanned = scannedBooksAllCached.size();
+            summary.booksMatched = scannedBooksAllCached.size() - missingBookIds.size();
+        }
+
+        List<TransferBook> books = builders.values().stream()
+                .map(TransferBookBuilder::build)
+                .sorted(Comparator.comparing(TransferBook::source).thenComparing(TransferBook::sourceId))
+                .toList();
+
+        for (TransferBook book : books) {
+            if (book.illustrations() != null) {
+                book.illustrations().sort(Comparator.comparingInt(TransferIllustration::chapterIndex));
+            }
+        }
+
+        TransferBundle bundle = new TransferBundle(
+                FORMAT_VERSION,
+                DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+                List.of(FEATURE_ILLUSTRATIONS),
+                books
+        );
+
+        if (!options.apply()) {
+            out.println("Dry-run: export file not written (use --apply to write JSON).");
+            return summary;
+        }
+
+        Path outputPath = options.outputPath();
+        if (outputPath == null) {
+            summary.validationErrors++;
+            err.println("Missing output path.");
+            return summary;
+        }
+        if (outputPath.getParent() != null) {
+            Files.createDirectories(outputPath.getParent());
+        }
+        OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValue(outputPath.toFile(), bundle);
+        out.println("Wrote illustration transfer JSON: " + outputPath.toAbsolutePath());
+        return summary;
+    }
+
+    static Summary exportPortraits(Connection connection, ExportOptions options, PrintStream out, PrintStream err)
+            throws SQLException, IOException {
+        Summary summary = new Summary();
+
+        Map<String, List<BookRow>> booksByRequestedSourceId = options.sourceIds().isEmpty()
+                ? Map.of()
+                : findBooksBySourceId(connection, options.sourceIds());
+        if (!options.sourceIds().isEmpty()) {
+            summary.booksScanned = options.sourceIds().size();
+            for (String requestedSourceId : options.sourceIds()) {
+                if (booksByRequestedSourceId.getOrDefault(requestedSourceId, List.of()).isEmpty()) {
+                    summary.booksMissing++;
+                    out.println("Book missing for sourceId=" + requestedSourceId);
+                }
+            }
+            int matched = booksByRequestedSourceId.values().stream().mapToInt(List::size).sum();
+            summary.booksMatched = matched;
+        }
+
+        List<PortraitExportRow> portraitRows = queryCompletedPortraitRows(connection);
+        Set<String> scannedBooksAllCached = new HashSet<>();
+        Set<String> missingBookIds = new HashSet<>();
+        Set<String> allowedBookIds = new HashSet<>();
+        if (!options.sourceIds().isEmpty()) {
+            for (List<BookRow> rows : booksByRequestedSourceId.values()) {
+                for (BookRow row : rows) {
+                    allowedBookIds.add(row.id());
+                }
+            }
+        }
+
+        Map<String, TransferBookBuilder> builders = new LinkedHashMap<>();
+
+        for (PortraitExportRow row : portraitRows) {
+            if (!options.sourceIds().isEmpty() && !allowedBookIds.contains(row.bookId())) {
+                continue;
+            }
+
+            if (options.allCached()) {
+                scannedBooksAllCached.add(row.bookId());
+            }
+
+            if (isBlank(row.source()) || isBlank(row.sourceId())) {
+                if (missingBookIds.add(row.bookId())) {
+                    summary.booksMissing++;
+                    out.println("Skipping book with missing source/sourceId: bookId=" + row.bookId());
+                }
+                continue;
+            }
+
+            String key = row.source() + "\u0000" + row.sourceId();
+            TransferBookBuilder builder = builders.computeIfAbsent(
+                    key,
+                    ignored -> new TransferBookBuilder(row.source(), row.sourceId(), row.title(), row.author())
+            );
+            builder.portraits().add(new TransferPortrait(
+                    row.name(),
+                    row.description(),
+                    row.characterType(),
+                    row.firstChapterIndex(),
+                    row.firstParagraphIndex(),
+                    ChapterStatus.COMPLETED.value(),
+                    row.portraitFilename(),
+                    row.portraitPrompt(),
+                    formatDateTime(row.createdAt()),
+                    formatDateTime(row.completedAt())
+            ));
+            summary.portraitsExported++;
+        }
+
+        if (options.allCached()) {
+            summary.booksScanned = scannedBooksAllCached.size();
+            summary.booksMatched = scannedBooksAllCached.size() - missingBookIds.size();
+        }
+
+        List<TransferBook> books = builders.values().stream()
+                .map(TransferBookBuilder::build)
+                .sorted(Comparator.comparing(TransferBook::source).thenComparing(TransferBook::sourceId))
+                .toList();
+
+        for (TransferBook book : books) {
+            if (book.portraits() != null) {
+                book.portraits().sort(Comparator
+                        .comparingInt(TransferPortrait::firstChapterIndex)
+                        .thenComparingInt(TransferPortrait::firstParagraphIndex)
+                        .thenComparing(TransferPortrait::name, String.CASE_INSENSITIVE_ORDER));
+            }
+        }
+
+        TransferBundle bundle = new TransferBundle(
+                FORMAT_VERSION,
+                DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+                List.of(FEATURE_PORTRAITS),
+                books
+        );
+
+        if (!options.apply()) {
+            out.println("Dry-run: export file not written (use --apply to write JSON).");
+            return summary;
+        }
+
+        Path outputPath = options.outputPath();
+        if (outputPath == null) {
+            summary.validationErrors++;
+            err.println("Missing output path.");
+            return summary;
+        }
+        if (outputPath.getParent() != null) {
+            Files.createDirectories(outputPath.getParent());
+        }
+        OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValue(outputPath.toFile(), bundle);
+        out.println("Wrote portrait transfer JSON: " + outputPath.toAbsolutePath());
+        return summary;
+    }
+
     static Summary importRecaps(Connection connection, ImportOptions options, PrintStream out, PrintStream err)
             throws IOException, SQLException {
         Summary summary = new Summary();
@@ -598,6 +828,156 @@ public class CacheTransferRunner {
         return summary;
     }
 
+    static Summary importIllustrations(Connection connection, ImportOptions options, PrintStream out, PrintStream err)
+            throws IOException, SQLException {
+        Summary summary = new Summary();
+
+        if (!Files.exists(options.inputPath())) {
+            summary.validationErrors++;
+            err.println("Input file does not exist: " + options.inputPath().toAbsolutePath());
+            return summary;
+        }
+
+        TransferBundle bundle;
+        try {
+            bundle = OBJECT_MAPPER.readValue(options.inputPath().toFile(), TransferBundle.class);
+        } catch (Exception e) {
+            summary.validationErrors++;
+            err.println("Invalid JSON: " + e.getMessage());
+            return summary;
+        }
+
+        List<String> validationErrors = validateBundle(bundle, TransferFeature.ILLUSTRATIONS);
+        summary.validationErrors += validationErrors.size();
+        if (!validationErrors.isEmpty()) {
+            for (String validationError : validationErrors) {
+                err.println("Validation error: " + validationError);
+            }
+            return summary;
+        }
+
+        for (TransferBook book : nullSafeList(bundle.books())) {
+            summary.booksScanned++;
+            Optional<String> localBookId = findBookId(connection, book.source(), book.sourceId());
+            if (localBookId.isEmpty()) {
+                summary.booksMissing++;
+                out.println("Book not found locally: " + book.source() + "/" + book.sourceId());
+                continue;
+            }
+
+            summary.booksMatched++;
+            Map<Integer, String> chaptersByIndex = findChapterIdsByIndex(connection, localBookId.get());
+
+            for (TransferIllustration illustration : nullSafeList(book.illustrations())) {
+                String chapterId = chaptersByIndex.get(illustration.chapterIndex());
+                if (chapterId == null) {
+                    summary.chaptersMissing++;
+                    out.println("Chapter missing for book " + book.source() + "/" + book.sourceId()
+                            + " chapterIndex=" + illustration.chapterIndex());
+                    continue;
+                }
+
+                Optional<String> existingIllustrationId = findIllustrationIdByChapter(connection, chapterId);
+                if (existingIllustrationId.isPresent() && options.onConflict() == OnConflict.SKIP) {
+                    summary.illustrationsSkippedConflicts++;
+                    continue;
+                }
+
+                LocalDateTime completedAt = parseDateTime(illustration.completedAt());
+                if (options.apply()) {
+                    if (existingIllustrationId.isPresent()) {
+                        updateIllustration(connection, existingIllustrationId.get(), illustration, completedAt);
+                    } else {
+                        insertIllustration(connection, chapterId, illustration, completedAt);
+                    }
+                }
+                summary.illustrationsImported++;
+            }
+        }
+
+        if (!options.apply()) {
+            out.println("Dry-run: no database writes applied (use --apply to persist changes).");
+        }
+        return summary;
+    }
+
+    static Summary importPortraits(Connection connection, ImportOptions options, PrintStream out, PrintStream err)
+            throws IOException, SQLException {
+        Summary summary = new Summary();
+
+        if (!Files.exists(options.inputPath())) {
+            summary.validationErrors++;
+            err.println("Input file does not exist: " + options.inputPath().toAbsolutePath());
+            return summary;
+        }
+
+        TransferBundle bundle;
+        try {
+            bundle = OBJECT_MAPPER.readValue(options.inputPath().toFile(), TransferBundle.class);
+        } catch (Exception e) {
+            summary.validationErrors++;
+            err.println("Invalid JSON: " + e.getMessage());
+            return summary;
+        }
+
+        List<String> validationErrors = validateBundle(bundle, TransferFeature.PORTRAITS);
+        summary.validationErrors += validationErrors.size();
+        if (!validationErrors.isEmpty()) {
+            for (String validationError : validationErrors) {
+                err.println("Validation error: " + validationError);
+            }
+            return summary;
+        }
+
+        for (TransferBook book : nullSafeList(bundle.books())) {
+            summary.booksScanned++;
+            Optional<String> localBookId = findBookId(connection, book.source(), book.sourceId());
+            if (localBookId.isEmpty()) {
+                summary.booksMissing++;
+                out.println("Book not found locally: " + book.source() + "/" + book.sourceId());
+                continue;
+            }
+
+            summary.booksMatched++;
+            Map<Integer, String> chaptersByIndex = findChapterIdsByIndex(connection, localBookId.get());
+
+            for (TransferPortrait portrait : nullSafeList(book.portraits())) {
+                String firstChapterId = chaptersByIndex.get(portrait.firstChapterIndex());
+                if (firstChapterId == null) {
+                    summary.chaptersMissing++;
+                    out.println("First chapter missing for portrait in book " + book.source() + "/" + book.sourceId()
+                            + " chapterIndex=" + portrait.firstChapterIndex() + " name=" + portrait.name());
+                    continue;
+                }
+
+                Optional<String> existingCharacterId = findCharacterIdByBookAndName(connection, localBookId.get(), portrait.name());
+                if (existingCharacterId.isPresent() && options.onConflict() == OnConflict.SKIP) {
+                    summary.portraitsSkippedConflicts++;
+                    continue;
+                }
+
+                LocalDateTime createdAt = parseDateTime(portrait.createdAt());
+                if (createdAt == null) {
+                    createdAt = LocalDateTime.now(ZoneOffset.UTC);
+                }
+                LocalDateTime completedAt = parseDateTime(portrait.completedAt());
+                if (options.apply()) {
+                    if (existingCharacterId.isPresent()) {
+                        updatePortrait(connection, existingCharacterId.get(), firstChapterId, portrait, createdAt, completedAt);
+                    } else {
+                        insertPortrait(connection, localBookId.get(), firstChapterId, portrait, createdAt, completedAt);
+                    }
+                }
+                summary.portraitsImported++;
+            }
+        }
+
+        if (!options.apply()) {
+            out.println("Dry-run: no database writes applied (use --apply to persist changes).");
+        }
+        return summary;
+    }
+
     private static List<String> validateBundle(TransferBundle bundle, TransferFeature feature) {
         List<String> errors = new ArrayList<>();
         if (bundle == null) {
@@ -629,64 +1009,113 @@ public class CacheTransferRunner {
             if (isBlank(book.sourceId())) {
                 errors.add(bookPrefix + ".sourceId is required.");
             }
-            if (feature == TransferFeature.RECAPS) {
-                if (book.recaps() == null) {
-                    errors.add(bookPrefix + ".recaps must be present.");
-                    continue;
-                }
-                for (int j = 0; j < book.recaps().size(); j++) {
-                    TransferRecap recap = book.recaps().get(j);
-                    String recapPrefix = bookPrefix + ".recaps[" + j + "]";
-                    if (recap == null) {
-                        errors.add(recapPrefix + " must not be null.");
-                        continue;
-                    }
-                    if (recap.chapterIndex() < 0) {
-                        errors.add(recapPrefix + ".chapterIndex must be >= 0.");
-                    }
-                    if (isBlank(recap.payloadJson())) {
-                        errors.add(recapPrefix + ".payloadJson is required.");
-                    }
-                    String status = recap.status();
-                    if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
-                        errors.add(recapPrefix + ".status must be COMPLETED.");
-                    }
-                    if (!isBlank(recap.generatedAt()) && parseDateTimeSafe(recap.generatedAt()) == null) {
-                        errors.add(recapPrefix + ".generatedAt is not a valid timestamp.");
-                    }
-                    if (!isBlank(recap.updatedAt()) && parseDateTimeSafe(recap.updatedAt()) == null) {
-                        errors.add(recapPrefix + ".updatedAt is not a valid timestamp.");
+            switch (feature) {
+                case RECAPS -> {
+                    for (int j = 0; j < nullSafeList(book.recaps()).size(); j++) {
+                        TransferRecap recap = nullSafeList(book.recaps()).get(j);
+                        String recapPrefix = bookPrefix + ".recaps[" + j + "]";
+                        if (recap == null) {
+                            errors.add(recapPrefix + " must not be null.");
+                            continue;
+                        }
+                        if (recap.chapterIndex() < 0) {
+                            errors.add(recapPrefix + ".chapterIndex must be >= 0.");
+                        }
+                        if (isBlank(recap.payloadJson())) {
+                            errors.add(recapPrefix + ".payloadJson is required.");
+                        }
+                        String status = recap.status();
+                        if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
+                            errors.add(recapPrefix + ".status must be COMPLETED.");
+                        }
+                        if (!isBlank(recap.generatedAt()) && parseDateTimeSafe(recap.generatedAt()) == null) {
+                            errors.add(recapPrefix + ".generatedAt is not a valid timestamp.");
+                        }
+                        if (!isBlank(recap.updatedAt()) && parseDateTimeSafe(recap.updatedAt()) == null) {
+                            errors.add(recapPrefix + ".updatedAt is not a valid timestamp.");
+                        }
                     }
                 }
-                continue;
-            }
-
-            if (book.quizzes() == null) {
-                errors.add(bookPrefix + ".quizzes must be present.");
-                continue;
-            }
-            for (int j = 0; j < book.quizzes().size(); j++) {
-                TransferQuiz quiz = book.quizzes().get(j);
-                String quizPrefix = bookPrefix + ".quizzes[" + j + "]";
-                if (quiz == null) {
-                    errors.add(quizPrefix + " must not be null.");
-                    continue;
+                case QUIZZES -> {
+                    for (int j = 0; j < nullSafeList(book.quizzes()).size(); j++) {
+                        TransferQuiz quiz = nullSafeList(book.quizzes()).get(j);
+                        String quizPrefix = bookPrefix + ".quizzes[" + j + "]";
+                        if (quiz == null) {
+                            errors.add(quizPrefix + " must not be null.");
+                            continue;
+                        }
+                        if (quiz.chapterIndex() < 0) {
+                            errors.add(quizPrefix + ".chapterIndex must be >= 0.");
+                        }
+                        if (isBlank(quiz.payloadJson())) {
+                            errors.add(quizPrefix + ".payloadJson is required.");
+                        }
+                        String status = quiz.status();
+                        if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
+                            errors.add(quizPrefix + ".status must be COMPLETED.");
+                        }
+                        if (!isBlank(quiz.generatedAt()) && parseDateTimeSafe(quiz.generatedAt()) == null) {
+                            errors.add(quizPrefix + ".generatedAt is not a valid timestamp.");
+                        }
+                        if (!isBlank(quiz.updatedAt()) && parseDateTimeSafe(quiz.updatedAt()) == null) {
+                            errors.add(quizPrefix + ".updatedAt is not a valid timestamp.");
+                        }
+                    }
                 }
-                if (quiz.chapterIndex() < 0) {
-                    errors.add(quizPrefix + ".chapterIndex must be >= 0.");
+                case ILLUSTRATIONS -> {
+                    for (int j = 0; j < nullSafeList(book.illustrations()).size(); j++) {
+                        TransferIllustration illustration = nullSafeList(book.illustrations()).get(j);
+                        String illustrationPrefix = bookPrefix + ".illustrations[" + j + "]";
+                        if (illustration == null) {
+                            errors.add(illustrationPrefix + " must not be null.");
+                            continue;
+                        }
+                        if (illustration.chapterIndex() < 0) {
+                            errors.add(illustrationPrefix + ".chapterIndex must be >= 0.");
+                        }
+                        if (isBlank(illustration.imageFilename())) {
+                            errors.add(illustrationPrefix + ".imageFilename is required.");
+                        }
+                        String status = illustration.status();
+                        if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
+                            errors.add(illustrationPrefix + ".status must be COMPLETED.");
+                        }
+                        if (!isBlank(illustration.completedAt()) && parseDateTimeSafe(illustration.completedAt()) == null) {
+                            errors.add(illustrationPrefix + ".completedAt is not a valid timestamp.");
+                        }
+                    }
                 }
-                if (isBlank(quiz.payloadJson())) {
-                    errors.add(quizPrefix + ".payloadJson is required.");
-                }
-                String status = quiz.status();
-                if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
-                    errors.add(quizPrefix + ".status must be COMPLETED.");
-                }
-                if (!isBlank(quiz.generatedAt()) && parseDateTimeSafe(quiz.generatedAt()) == null) {
-                    errors.add(quizPrefix + ".generatedAt is not a valid timestamp.");
-                }
-                if (!isBlank(quiz.updatedAt()) && parseDateTimeSafe(quiz.updatedAt()) == null) {
-                    errors.add(quizPrefix + ".updatedAt is not a valid timestamp.");
+                case PORTRAITS -> {
+                    for (int j = 0; j < nullSafeList(book.portraits()).size(); j++) {
+                        TransferPortrait portrait = nullSafeList(book.portraits()).get(j);
+                        String portraitPrefix = bookPrefix + ".portraits[" + j + "]";
+                        if (portrait == null) {
+                            errors.add(portraitPrefix + " must not be null.");
+                            continue;
+                        }
+                        if (isBlank(portrait.name())) {
+                            errors.add(portraitPrefix + ".name is required.");
+                        }
+                        if (portrait.firstChapterIndex() < 0) {
+                            errors.add(portraitPrefix + ".firstChapterIndex must be >= 0.");
+                        }
+                        if (portrait.firstParagraphIndex() < 0) {
+                            errors.add(portraitPrefix + ".firstParagraphIndex must be >= 0.");
+                        }
+                        if (isBlank(portrait.portraitFilename())) {
+                            errors.add(portraitPrefix + ".portraitFilename is required.");
+                        }
+                        String status = portrait.status();
+                        if (!isBlank(status) && !ChapterStatus.COMPLETED.value().equalsIgnoreCase(status.trim())) {
+                            errors.add(portraitPrefix + ".status must be COMPLETED.");
+                        }
+                        if (!isBlank(portrait.createdAt()) && parseDateTimeSafe(portrait.createdAt()) == null) {
+                            errors.add(portraitPrefix + ".createdAt is not a valid timestamp.");
+                        }
+                        if (!isBlank(portrait.completedAt()) && parseDateTimeSafe(portrait.completedAt()) == null) {
+                            errors.add(portraitPrefix + ".completedAt is not a valid timestamp.");
+                        }
+                    }
                 }
             }
         }
@@ -757,6 +1186,77 @@ public class CacheTransferRunner {
                         rs.getObject("generated_at", LocalDateTime.class),
                         rs.getObject("updated_at", LocalDateTime.class),
                         rs.getString("payload_json")
+                ));
+            }
+        }
+        return rows;
+    }
+
+    private static List<IllustrationExportRow> queryCompletedIllustrationRows(Connection connection) throws SQLException {
+        String sql = """
+                select b.id as book_id, b.source, b.source_id, b.title, b.author,
+                       c.chapter_index, i.image_filename, i.generated_prompt, i.completed_at
+                from illustrations i
+                join chapters c on i.chapter_id = c.id
+                join books b on c.book_id = b.id
+                where i.status = 'COMPLETED'
+                  and i.image_filename is not null
+                  and trim(i.image_filename) <> ''
+                order by b.source, b.source_id, c.chapter_index
+                """;
+        List<IllustrationExportRow> rows = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new IllustrationExportRow(
+                        rs.getString("book_id"),
+                        rs.getString("source"),
+                        rs.getString("source_id"),
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getInt("chapter_index"),
+                        rs.getString("image_filename"),
+                        rs.getString("generated_prompt"),
+                        rs.getObject("completed_at", LocalDateTime.class)
+                ));
+            }
+        }
+        return rows;
+    }
+
+    private static List<PortraitExportRow> queryCompletedPortraitRows(Connection connection) throws SQLException {
+        String sql = """
+                select b.id as book_id, b.source, b.source_id, b.title, b.author,
+                       ch.name, ch.description, ch.character_type,
+                       fc.chapter_index as first_chapter_index, ch.first_paragraph_index,
+                       ch.portrait_filename, ch.portrait_prompt, ch.created_at, ch.completed_at
+                from characters ch
+                join books b on ch.book_id = b.id
+                join chapters fc on ch.first_chapter_id = fc.id
+                where ch.status = 'COMPLETED'
+                  and ch.portrait_filename is not null
+                  and trim(ch.portrait_filename) <> ''
+                order by b.source, b.source_id, fc.chapter_index, ch.first_paragraph_index, lower(ch.name)
+                """;
+        List<PortraitExportRow> rows = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new PortraitExportRow(
+                        rs.getString("book_id"),
+                        rs.getString("source"),
+                        rs.getString("source_id"),
+                        rs.getString("title"),
+                        rs.getString("author"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("character_type"),
+                        rs.getInt("first_chapter_index"),
+                        rs.getInt("first_paragraph_index"),
+                        rs.getString("portrait_filename"),
+                        rs.getString("portrait_prompt"),
+                        rs.getObject("created_at", LocalDateTime.class),
+                        rs.getObject("completed_at", LocalDateTime.class)
                 ));
             }
         }
@@ -837,6 +1337,33 @@ public class CacheTransferRunner {
         String sql = "select id from chapter_quizzes where chapter_id = ?";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, chapterId);
+            try (ResultSet rs = statement.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.ofNullable(rs.getString(1));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> findIllustrationIdByChapter(Connection connection, String chapterId) throws SQLException {
+        String sql = "select id from illustrations where chapter_id = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, chapterId);
+            try (ResultSet rs = statement.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.ofNullable(rs.getString(1));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> findCharacterIdByBookAndName(Connection connection, String bookId, String name) throws SQLException {
+        String sql = "select id from characters where book_id = ? and name = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, bookId);
+            statement.setString(2, name);
             try (ResultSet rs = statement.executeQuery()) {
                 if (rs.next()) {
                     return Optional.ofNullable(rs.getString(1));
@@ -944,6 +1471,125 @@ public class CacheTransferRunner {
         }
     }
 
+    private static void insertIllustration(Connection connection, String chapterId, TransferIllustration illustration,
+                                           LocalDateTime completedAt) throws SQLException {
+        String sql = """
+                insert into illustrations (
+                    id, chapter_id, status, image_filename, generated_prompt,
+                    created_at, completed_at, retry_count
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, UUID.randomUUID().toString());
+            statement.setString(2, chapterId);
+            statement.setString(3, ChapterStatus.COMPLETED.value());
+            statement.setString(4, illustration.imageFilename().trim());
+            statement.setString(5, blankToNull(illustration.generatedPrompt()));
+            LocalDateTime createdAt = completedAt != null ? completedAt : LocalDateTime.now(ZoneOffset.UTC);
+            statement.setTimestamp(6, Timestamp.valueOf(createdAt));
+            if (completedAt == null) {
+                statement.setTimestamp(7, null);
+            } else {
+                statement.setTimestamp(7, Timestamp.valueOf(completedAt));
+            }
+            statement.setInt(8, 0);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void updateIllustration(Connection connection, String illustrationId, TransferIllustration illustration,
+                                           LocalDateTime completedAt) throws SQLException {
+        String sql = """
+                update illustrations
+                set status = ?, image_filename = ?, generated_prompt = ?, completed_at = ?,
+                    error_message = null, next_retry_at = null, retry_count = 0
+                where id = ?
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, ChapterStatus.COMPLETED.value());
+            statement.setString(2, illustration.imageFilename().trim());
+            statement.setString(3, blankToNull(illustration.generatedPrompt()));
+            if (completedAt == null) {
+                statement.setTimestamp(4, null);
+            } else {
+                statement.setTimestamp(4, Timestamp.valueOf(completedAt));
+            }
+            statement.setString(5, illustrationId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void insertPortrait(Connection connection, String bookId, String firstChapterId, TransferPortrait portrait,
+                                       LocalDateTime createdAt, LocalDateTime completedAt) throws SQLException {
+        String sql = """
+                insert into characters (
+                    id, book_id, name, description, first_chapter_id, first_paragraph_index,
+                    portrait_filename, portrait_prompt, status, character_type,
+                    created_at, completed_at, retry_count
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, UUID.randomUUID().toString());
+            statement.setString(2, bookId);
+            statement.setString(3, portrait.name().trim());
+            statement.setString(4, blankToNull(portrait.description()));
+            statement.setString(5, firstChapterId);
+            statement.setInt(6, Math.max(0, portrait.firstParagraphIndex()));
+            statement.setString(7, portrait.portraitFilename().trim());
+            statement.setString(8, blankToNull(portrait.portraitPrompt()));
+            statement.setString(9, ChapterStatus.COMPLETED.value());
+            statement.setString(10, resolveCharacterType(portrait.characterType()));
+            statement.setTimestamp(11, Timestamp.valueOf(createdAt));
+            if (completedAt == null) {
+                statement.setTimestamp(12, null);
+            } else {
+                statement.setTimestamp(12, Timestamp.valueOf(completedAt));
+            }
+            statement.setInt(13, 0);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void updatePortrait(Connection connection, String characterId, String firstChapterId, TransferPortrait portrait,
+                                       LocalDateTime createdAt, LocalDateTime completedAt) throws SQLException {
+        String sql = """
+                update characters
+                set description = ?, first_chapter_id = ?, first_paragraph_index = ?,
+                    portrait_filename = ?, portrait_prompt = ?, status = ?, character_type = ?,
+                    created_at = ?, completed_at = ?, error_message = null,
+                    next_retry_at = null, retry_count = 0
+                where id = ?
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, blankToNull(portrait.description()));
+            statement.setString(2, firstChapterId);
+            statement.setInt(3, Math.max(0, portrait.firstParagraphIndex()));
+            statement.setString(4, portrait.portraitFilename().trim());
+            statement.setString(5, blankToNull(portrait.portraitPrompt()));
+            statement.setString(6, ChapterStatus.COMPLETED.value());
+            statement.setString(7, resolveCharacterType(portrait.characterType()));
+            statement.setTimestamp(8, Timestamp.valueOf(createdAt));
+            if (completedAt == null) {
+                statement.setTimestamp(9, null);
+            } else {
+                statement.setTimestamp(9, Timestamp.valueOf(completedAt));
+            }
+            statement.setString(10, characterId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static String resolveCharacterType(String rawType) {
+        if (isBlank(rawType)) {
+            return "SECONDARY";
+        }
+        String normalized = rawType.trim().toUpperCase();
+        if ("PRIMARY".equals(normalized) || "SECONDARY".equals(normalized)) {
+            return normalized;
+        }
+        return "SECONDARY";
+    }
+
     private static String formatDateTime(LocalDateTime value) {
         if (value == null) {
             return null;
@@ -1008,13 +1654,27 @@ public class CacheTransferRunner {
                 out.println("Recaps imported: " + summary.recapsImported());
             }
             out.println("Recaps skipped (conflict): " + summary.recapsSkippedConflicts());
-        } else {
+        } else if (feature == TransferFeature.QUIZZES) {
             if (COMMAND_EXPORT.equals(command)) {
                 out.println("Quizzes exported: " + summary.quizzesExported());
             } else {
                 out.println("Quizzes imported: " + summary.quizzesImported());
             }
             out.println("Quizzes skipped (conflict): " + summary.quizzesSkippedConflicts());
+        } else if (feature == TransferFeature.ILLUSTRATIONS) {
+            if (COMMAND_EXPORT.equals(command)) {
+                out.println("Illustrations exported: " + summary.illustrationsExported());
+            } else {
+                out.println("Illustrations imported: " + summary.illustrationsImported());
+            }
+            out.println("Illustrations skipped (conflict): " + summary.illustrationsSkippedConflicts());
+        } else {
+            if (COMMAND_EXPORT.equals(command)) {
+                out.println("Portraits exported: " + summary.portraitsExported());
+            } else {
+                out.println("Portraits imported: " + summary.portraitsImported());
+            }
+            out.println("Portraits skipped (conflict): " + summary.portraitsSkippedConflicts());
         }
         out.println("Chapters missing: " + summary.chaptersMissing());
         out.println("Validation errors: " + summary.validationErrors());
@@ -1022,12 +1682,12 @@ public class CacheTransferRunner {
 
     private static void printUsage(PrintStream out) {
         out.println("Usage:");
-        out.println("  CacheTransferRunner export --feature recaps|quizzes (--all-cached | --book-source-id <id>[,<id>...]) [--output <path>] [--apply]");
-        out.println("  CacheTransferRunner import --feature recaps|quizzes --input <path> [--on-conflict skip|overwrite] [--apply]");
+        out.println("  CacheTransferRunner export --feature recaps|quizzes|illustrations|portraits (--all-cached | --book-source-id <id>[,<id>...]) [--output <path>] [--apply]");
+        out.println("  CacheTransferRunner import --feature recaps|quizzes|illustrations|portraits --input <path> [--on-conflict skip|overwrite] [--apply]");
         out.println("");
         out.println("Notes:");
         out.println("  --apply is required to write changes. Without --apply, commands run in dry-run mode.");
-        out.println("  Supported features: recaps, quizzes.");
+        out.println("  Supported features: recaps, quizzes, illustrations, portraits.");
     }
 
     private static Set<String> parseCsvSet(String raw) {
@@ -1169,7 +1829,9 @@ public class CacheTransferRunner {
 
     enum TransferFeature {
         RECAPS(FEATURE_RECAPS),
-        QUIZZES(FEATURE_QUIZZES);
+        QUIZZES(FEATURE_QUIZZES),
+        ILLUSTRATIONS(FEATURE_ILLUSTRATIONS),
+        PORTRAITS(FEATURE_PORTRAITS);
 
         private final String value;
 
@@ -1204,6 +1866,12 @@ public class CacheTransferRunner {
         private int quizzesExported;
         private int quizzesImported;
         private int quizzesSkippedConflicts;
+        private int illustrationsExported;
+        private int illustrationsImported;
+        private int illustrationsSkippedConflicts;
+        private int portraitsExported;
+        private int portraitsImported;
+        private int portraitsSkippedConflicts;
         private int chaptersMissing;
         private int validationErrors;
 
@@ -1241,6 +1909,30 @@ public class CacheTransferRunner {
 
         int quizzesSkippedConflicts() {
             return quizzesSkippedConflicts;
+        }
+
+        int illustrationsExported() {
+            return illustrationsExported;
+        }
+
+        int illustrationsImported() {
+            return illustrationsImported;
+        }
+
+        int illustrationsSkippedConflicts() {
+            return illustrationsSkippedConflicts;
+        }
+
+        int portraitsExported() {
+            return portraitsExported;
+        }
+
+        int portraitsImported() {
+            return portraitsImported;
+        }
+
+        int portraitsSkippedConflicts() {
+            return portraitsSkippedConflicts;
         }
 
         int chaptersMissing() {
@@ -1285,6 +1977,37 @@ public class CacheTransferRunner {
     ) {
     }
 
+    record IllustrationExportRow(
+            String bookId,
+            String source,
+            String sourceId,
+            String title,
+            String author,
+            int chapterIndex,
+            String imageFilename,
+            String generatedPrompt,
+            LocalDateTime completedAt
+    ) {
+    }
+
+    record PortraitExportRow(
+            String bookId,
+            String source,
+            String sourceId,
+            String title,
+            String author,
+            String name,
+            String description,
+            String characterType,
+            int firstChapterIndex,
+            int firstParagraphIndex,
+            String portraitFilename,
+            String portraitPrompt,
+            LocalDateTime createdAt,
+            LocalDateTime completedAt
+    ) {
+    }
+
     static class TransferBookBuilder {
         private final String source;
         private final String sourceId;
@@ -1292,6 +2015,8 @@ public class CacheTransferRunner {
         private final String author;
         private final List<TransferRecap> recaps = new ArrayList<>();
         private final List<TransferQuiz> quizzes = new ArrayList<>();
+        private final List<TransferIllustration> illustrations = new ArrayList<>();
+        private final List<TransferPortrait> portraits = new ArrayList<>();
 
         TransferBookBuilder(String source, String sourceId, String title, String author) {
             this.source = source;
@@ -1308,8 +2033,16 @@ public class CacheTransferRunner {
             return quizzes;
         }
 
+        List<TransferIllustration> illustrations() {
+            return illustrations;
+        }
+
+        List<TransferPortrait> portraits() {
+            return portraits;
+        }
+
         TransferBook build() {
-            return new TransferBook(source, sourceId, title, author, recaps, quizzes);
+            return new TransferBook(source, sourceId, title, author, recaps, quizzes, illustrations, portraits);
         }
     }
 
@@ -1329,7 +2062,9 @@ public class CacheTransferRunner {
             String title,
             String author,
             List<TransferRecap> recaps,
-            List<TransferQuiz> quizzes
+            List<TransferQuiz> quizzes,
+            List<TransferIllustration> illustrations,
+            List<TransferPortrait> portraits
     ) {
     }
 
@@ -1354,6 +2089,31 @@ public class CacheTransferRunner {
             String generatedAt,
             String updatedAt,
             String payloadJson
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record TransferIllustration(
+            int chapterIndex,
+            String status,
+            String imageFilename,
+            String generatedPrompt,
+            String completedAt
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record TransferPortrait(
+            String name,
+            String description,
+            String characterType,
+            int firstChapterIndex,
+            int firstParagraphIndex,
+            String status,
+            String portraitFilename,
+            String portraitPrompt,
+            String createdAt,
+            String completedAt
     ) {
     }
 }

@@ -84,6 +84,59 @@ class CacheTransferRunnerTest {
     }
 
     @Test
+    void exportApplyAllCached_writesIllustrationBundleJson() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_export_illustrations;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedExportData(dbUrl);
+
+        Path output = tempDir.resolve("illustrations-export.json");
+        RunResult result = runCli(new String[]{
+                "export",
+                "--feature", "illustrations",
+                "--all-cached",
+                "--apply",
+                "--output", output.toString(),
+                "--db-url", dbUrl
+        });
+
+        assertEquals(0, result.exitCode());
+        assertTrue(Files.exists(output));
+
+        JsonNode root = OBJECT_MAPPER.readTree(output.toFile());
+        assertEquals("illustrations", root.get("features").get(0).asText());
+        assertEquals(1, root.get("books").size());
+        assertEquals(1, root.get("books").get(0).get("illustrations").size());
+        assertEquals("books/gutenberg/1342/illustrations/chapters/0.png",
+                root.get("books").get(0).get("illustrations").get(0).get("imageFilename").asText());
+    }
+
+    @Test
+    void exportApplyAllCached_writesPortraitBundleJson() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_export_portraits;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedExportData(dbUrl);
+
+        Path output = tempDir.resolve("portraits-export.json");
+        RunResult result = runCli(new String[]{
+                "export",
+                "--feature", "portraits",
+                "--all-cached",
+                "--apply",
+                "--output", output.toString(),
+                "--db-url", dbUrl
+        });
+
+        assertEquals(0, result.exitCode());
+        assertTrue(Files.exists(output));
+
+        JsonNode root = OBJECT_MAPPER.readTree(output.toFile());
+        assertEquals("portraits", root.get("features").get(0).asText());
+        assertEquals(1, root.get("books").size());
+        assertEquals(1, root.get("books").get(0).get("portraits").size());
+        assertEquals("Elizabeth Bennet", root.get("books").get(0).get("portraits").get(0).get("name").asText());
+    }
+
+    @Test
     void exportApplyBookSourceIds_supportsMultiBookExport() throws Exception {
         String dbUrl = "jdbc:h2:mem:cache_transfer_export_multi;DB_CLOSE_DELAY=-1";
         createSchema(dbUrl);
@@ -222,6 +275,121 @@ class CacheTransferRunnerTest {
     }
 
     @Test
+    void importApplyIllustrations_skipAndOverwriteConflictPoliciesBehaveAsExpected() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_import_illustrations;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedImportData(dbUrl);
+
+        Path input = tempDir.resolve("import-illustrations.json");
+        Files.writeString(input, """
+                {
+                  "formatVersion": "1.0",
+                  "exportedAt": "2026-02-11T21:30:00Z",
+                  "features": ["illustrations"],
+                  "books": [
+                    {
+                      "source": "gutenberg",
+                      "sourceId": "1342",
+                      "title": "Pride and Prejudice",
+                      "author": "Jane Austen",
+                      "illustrations": [
+                        {
+                          "chapterIndex": 0,
+                          "status": "COMPLETED",
+                          "imageFilename": "books/gutenberg/1342/illustrations/chapters/0-new.png",
+                          "generatedPrompt": "new prompt",
+                          "completedAt": "2026-02-11T18:09:25Z"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        RunResult skipResult = runCli(new String[]{
+                "import",
+                "--feature", "illustrations",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "skip",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, skipResult.exitCode());
+        assertEquals("books/gutenberg/1342/illustrations/chapters/0-old.png", readIllustrationFilename(dbUrl, "ill-1"));
+
+        RunResult overwriteResult = runCli(new String[]{
+                "import",
+                "--feature", "illustrations",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "overwrite",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, overwriteResult.exitCode());
+        assertEquals("books/gutenberg/1342/illustrations/chapters/0-new.png", readIllustrationFilename(dbUrl, "ill-1"));
+    }
+
+    @Test
+    void importApplyPortraits_skipAndOverwriteConflictPoliciesBehaveAsExpected() throws Exception {
+        String dbUrl = "jdbc:h2:mem:cache_transfer_import_portraits;DB_CLOSE_DELAY=-1";
+        createSchema(dbUrl);
+        seedImportData(dbUrl);
+
+        Path input = tempDir.resolve("import-portraits.json");
+        Files.writeString(input, """
+                {
+                  "formatVersion": "1.0",
+                  "exportedAt": "2026-02-11T21:30:00Z",
+                  "features": ["portraits"],
+                  "books": [
+                    {
+                      "source": "gutenberg",
+                      "sourceId": "1342",
+                      "title": "Pride and Prejudice",
+                      "author": "Jane Austen",
+                      "portraits": [
+                        {
+                          "name": "Elizabeth Bennet",
+                          "description": "Updated description",
+                          "characterType": "PRIMARY",
+                          "firstChapterIndex": 0,
+                          "firstParagraphIndex": 3,
+                          "status": "COMPLETED",
+                          "portraitFilename": "books/gutenberg/1342/portraits/characters/elizabeth-bennet-new.png",
+                          "portraitPrompt": "new portrait prompt",
+                          "createdAt": "2026-02-11T18:00:00Z",
+                          "completedAt": "2026-02-11T18:09:25Z"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        RunResult skipResult = runCli(new String[]{
+                "import",
+                "--feature", "portraits",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "skip",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, skipResult.exitCode());
+        assertEquals("books/gutenberg/1342/portraits/characters/elizabeth-bennet-old.png", readPortraitFilename(dbUrl, "char-1"));
+
+        RunResult overwriteResult = runCli(new String[]{
+                "import",
+                "--feature", "portraits",
+                "--input", input.toString(),
+                "--apply",
+                "--on-conflict", "overwrite",
+                "--db-url", dbUrl
+        });
+        assertEquals(0, overwriteResult.exitCode());
+        assertEquals("books/gutenberg/1342/portraits/characters/elizabeth-bennet-new.png", readPortraitFilename(dbUrl, "char-1"));
+    }
+
+    @Test
     void importDryRun_doesNotMutateDatabase() throws Exception {
         String dbUrl = "jdbc:h2:mem:cache_transfer_import_dry_run;DB_CLOSE_DELAY=-1";
         createSchema(dbUrl);
@@ -340,6 +508,40 @@ class CacheTransferRunnerTest {
                         payload_json clob
                     )
                     """);
+            statement.execute("""
+                    create table illustrations (
+                        id varchar(64) primary key,
+                        chapter_id varchar(64) not null unique,
+                        status varchar(32) not null,
+                        image_filename varchar(255),
+                        generated_prompt varchar(2000),
+                        created_at timestamp not null,
+                        completed_at timestamp,
+                        error_message varchar(1000),
+                        retry_count int not null default 0,
+                        next_retry_at timestamp
+                    )
+                    """);
+            statement.execute("""
+                    create table characters (
+                        id varchar(64) primary key,
+                        book_id varchar(64) not null,
+                        name varchar(255) not null,
+                        description varchar(2000),
+                        first_chapter_id varchar(64) not null,
+                        first_paragraph_index int not null,
+                        portrait_filename varchar(255),
+                        portrait_prompt varchar(2000),
+                        status varchar(32) not null,
+                        character_type varchar(32) not null,
+                        created_at timestamp not null,
+                        completed_at timestamp,
+                        error_message varchar(1000),
+                        retry_count int not null default 0,
+                        next_retry_at timestamp,
+                        constraint uk_characters_book_name unique (book_id, name)
+                    )
+                    """);
         }
     }
 
@@ -378,6 +580,21 @@ class CacheTransferRunnerTest {
                     insert into chapter_quizzes (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
                     values ('quiz-2', 'chapter-2', 'FAILED', TIMESTAMP '2026-02-11 18:09:25', null, 'v1', 'qwen2.5:32b', '{"questions":[{"question":"Failed?"}]}')
                     """);
+            statement.execute("""
+                    insert into illustrations (id, chapter_id, status, image_filename, generated_prompt, created_at, completed_at, retry_count)
+                    values ('ill-1', 'chapter-1', 'COMPLETED', 'books/gutenberg/1342/illustrations/chapters/0.png', 'style prompt', TIMESTAMP '2026-02-11 18:00:00', TIMESTAMP '2026-02-11 18:09:25', 0)
+                    """);
+            statement.execute("""
+                    insert into characters (
+                        id, book_id, name, description, first_chapter_id, first_paragraph_index,
+                        portrait_filename, portrait_prompt, status, character_type, created_at, completed_at, retry_count
+                    )
+                    values (
+                        'char-1', 'book-1', 'Elizabeth Bennet', 'Protagonist', 'chapter-1', 3,
+                        'books/gutenberg/1342/portraits/characters/elizabeth-bennet.png', 'portrait prompt',
+                        'COMPLETED', 'PRIMARY', TIMESTAMP '2026-02-11 18:00:00', TIMESTAMP '2026-02-11 18:09:25', 0
+                    )
+                    """);
         }
     }
 
@@ -413,6 +630,21 @@ class CacheTransferRunnerTest {
                     insert into chapter_quizzes (id, chapter_id, status, updated_at, generated_at, prompt_version, model_name, payload_json)
                     values ('quiz-1', 'chapter-1', 'COMPLETED', TIMESTAMP '2026-02-11 18:09:25', TIMESTAMP '2026-02-11 18:09:25', 'v1', 'qwen2.5:32b', '{"questions":[{"question":"Existing?"}]}')
                     """);
+            statement.execute("""
+                    insert into illustrations (id, chapter_id, status, image_filename, generated_prompt, created_at, completed_at, retry_count)
+                    values ('ill-1', 'chapter-1', 'COMPLETED', 'books/gutenberg/1342/illustrations/chapters/0-old.png', 'old prompt', TIMESTAMP '2026-02-11 18:00:00', TIMESTAMP '2026-02-11 18:09:25', 0)
+                    """);
+            statement.execute("""
+                    insert into characters (
+                        id, book_id, name, description, first_chapter_id, first_paragraph_index,
+                        portrait_filename, portrait_prompt, status, character_type, created_at, completed_at, retry_count
+                    )
+                    values (
+                        'char-1', 'book-1', 'Elizabeth Bennet', 'Old description', 'chapter-1', 1,
+                        'books/gutenberg/1342/portraits/characters/elizabeth-bennet-old.png', 'old portrait prompt',
+                        'COMPLETED', 'SECONDARY', TIMESTAMP '2026-02-11 18:00:00', TIMESTAMP '2026-02-11 18:09:25', 0
+                    )
+                    """);
         }
     }
 
@@ -435,6 +667,28 @@ class CacheTransferRunnerTest {
                 return rs.getString(1);
             }
             throw new IllegalStateException("Quiz not found: " + quizId);
+        }
+    }
+
+    private static String readIllustrationFilename(String dbUrl, String illustrationId) throws Exception {
+        try (Connection connection = DriverManager.getConnection(dbUrl, "sa", "");
+             Statement statement = connection.createStatement();
+             var rs = statement.executeQuery("select image_filename from illustrations where id = '" + illustrationId + "'")) {
+            if (rs.next()) {
+                return rs.getString(1);
+            }
+            throw new IllegalStateException("Illustration not found: " + illustrationId);
+        }
+    }
+
+    private static String readPortraitFilename(String dbUrl, String characterId) throws Exception {
+        try (Connection connection = DriverManager.getConnection(dbUrl, "sa", "");
+             Statement statement = connection.createStatement();
+             var rs = statement.executeQuery("select portrait_filename from characters where id = '" + characterId + "'")) {
+            if (rs.next()) {
+                return rs.getString(1);
+            }
+            throw new IllegalStateException("Character not found: " + characterId);
         }
     }
 

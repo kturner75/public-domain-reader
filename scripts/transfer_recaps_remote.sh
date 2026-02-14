@@ -42,7 +42,7 @@ Usage:
 
 Selection (choose one):
   --book-source-id <id>[,<id>...]  Export specific source IDs.
-  --all-cached                     Export all books with cached recaps.
+  --all-cached                     Export all books with cached rows for selected feature(s).
 
 Required:
   --remote <host-or-alias>         SSH target for import (supports ~/.ssh/config aliases).
@@ -50,8 +50,9 @@ Required:
   --remote-db-url <jdbc-url>       Remote DB URL for import.
 
 Options:
-  --feature <recaps|quizzes>      Transfer feature (default: ${FEATURE}).
-  --export-path <path>             Local transfer JSON path.
+  --feature <recaps|quizzes|illustrations|portraits|all>
+                                  Transfer feature set (default: ${FEATURE}).
+  --export-path <path>             Local transfer JSON path (single-feature only).
   --export-dir <path>              Used when --export-path is omitted (default: ${EXPORT_DIR}).
 
   --local-db-url <jdbc-url>        Local DB URL for export.
@@ -60,7 +61,7 @@ Options:
 
   --remote-db-user <user>          Remote DB user (default: ${REMOTE_DB_USER}).
   --remote-db-password <pass>      Remote DB password (default: empty).
-  --remote-import-path <path>      Remote JSON path (default: /tmp/public-domain-reader-<feature>-transfer.json).
+  --remote-import-path <path>      Remote JSON path (single feature), or base path for --feature all.
   --remote-runner <auto|maven|jar> Remote runner strategy (default: ${REMOTE_RUNNER}).
   --remote-jar-path <path>         Remote jar for runner=jar (default: <remote-project-dir>/target/public-domain-reader-1.0-SNAPSHOT.jar).
   --remote-java-bin <bin>          Java binary for runner=jar (default: ${REMOTE_JAVA_BIN}).
@@ -82,6 +83,10 @@ Examples:
     --remote-project-dir /opt/public-domain-reader --remote-db-url "jdbc:h2:file:/opt/public-domain-reader/data/library;DB_CLOSE_DELAY=-1" \\
     --apply-import --remote-stop-cmd "sudo systemctl stop public-domain-reader" \\
     --remote-start-cmd "sudo systemctl start public-domain-reader"
+
+  scripts/transfer_recaps_remote.sh --book-source-id 1342 --feature all --remote reader-prod \\
+    --remote-project-dir /opt/public-domain-reader --remote-db-url "jdbc:h2:file:/opt/public-domain-reader/data/library;DB_CLOSE_DELAY=-1" \\
+    --apply-import
 EOF
 }
 
@@ -368,7 +373,7 @@ done
 [[ -n "$REMOTE_DB_URL" ]] || fail "--remote-db-url is required"
 [[ "$ON_CONFLICT" == "skip" || "$ON_CONFLICT" == "overwrite" ]] || fail "--on-conflict must be skip or overwrite"
 [[ "$REMOTE_RUNNER" == "auto" || "$REMOTE_RUNNER" == "maven" || "$REMOTE_RUNNER" == "jar" ]] || fail "--remote-runner must be one of: auto, maven, jar"
-[[ "$FEATURE" == "recaps" || "$FEATURE" == "quizzes" ]] || fail "--feature must be recaps or quizzes"
+[[ "$FEATURE" == "recaps" || "$FEATURE" == "quizzes" || "$FEATURE" == "illustrations" || "$FEATURE" == "portraits" || "$FEATURE" == "all" ]] || fail "--feature must be recaps, quizzes, illustrations, portraits, or all"
 
 if [[ "$ALL_CACHED" == "true" && -n "$SOURCE_IDS" ]]; then
   fail "--all-cached and --book-source-id are mutually exclusive"
@@ -394,45 +399,83 @@ done
 if [[ -z "$REMOTE_JAR_PATH" ]]; then
   REMOTE_JAR_PATH="${REMOTE_PROJECT_DIR}/target/public-domain-reader-1.0-SNAPSHOT.jar"
 fi
-if [[ -z "$REMOTE_IMPORT_PATH" ]]; then
-  REMOTE_IMPORT_PATH="/tmp/public-domain-reader-${FEATURE}-transfer.json"
-fi
 
 REMOTE_HOME_DIR="$(get_remote_home_dir)"
 ensure_remote_runner
 
-if [[ -z "$EXPORT_PATH" ]]; then
-  ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  mkdir -p "$EXPORT_DIR"
-  export_selector="${SOURCE_IDS//,/__}"
-  export_selector="${export_selector:-all-cached}"
-  EXPORT_PATH="${EXPORT_DIR}/${FEATURE}-transfer-${export_selector}-${ts}.json"
-fi
-
-echo "Step 1/4: Export ${FEATURE} locally -> ${EXPORT_PATH}"
-export_args="export --feature ${FEATURE}"
-if [[ "$ALL_CACHED" == "true" ]]; then
-  export_args="${export_args} --all-cached"
+declare -a FEATURES_TO_TRANSFER=()
+if [[ "$FEATURE" == "all" ]]; then
+  FEATURES_TO_TRANSFER=(recaps quizzes illustrations portraits)
 else
-  export_args="${export_args} --book-source-id ${SOURCE_IDS}"
+  FEATURES_TO_TRANSFER=("$FEATURE")
 fi
-export_args="${export_args} --apply --output ${EXPORT_PATH}"
-if [[ -n "$LOCAL_DB_URL" ]]; then
-  export_args="${export_args} --db-url ${LOCAL_DB_URL} --db-user ${LOCAL_DB_USER} --db-password ${LOCAL_DB_PASSWORD}"
-fi
-run_local_cache_transfer "$export_args"
-[[ -f "$EXPORT_PATH" ]] || fail "Export file not found: ${EXPORT_PATH}"
 
-echo "Step 2/4: Upload transfer file to remote -> ${REMOTE_TARGET}:${REMOTE_IMPORT_PATH}"
-"${SCP_CMD[@]}" "$EXPORT_PATH" "${REMOTE_TARGET}:${REMOTE_IMPORT_PATH}"
-
-echo "Step 3/4: Remote import dry-run"
-echo "  Remote runner: ${REMOTE_RUNNER}"
-import_args="import --feature ${FEATURE} --input ${REMOTE_IMPORT_PATH} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER} --db-password ${REMOTE_DB_PASSWORD}"
-if [[ -z "$REMOTE_DB_PASSWORD" ]]; then
-  import_args="import --feature ${FEATURE} --input ${REMOTE_IMPORT_PATH} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER}"
+if [[ -n "$EXPORT_PATH" && "${#FEATURES_TO_TRANSFER[@]}" -gt 1 ]]; then
+  fail "--export-path only supports single-feature transfers; use --export-dir for --feature all"
 fi
-run_remote_cache_transfer "$import_args"
+
+build_remote_import_path() {
+  local current_feature="$1"
+  if [[ -z "$REMOTE_IMPORT_PATH" ]]; then
+    echo "/tmp/public-domain-reader-${current_feature}-transfer.json"
+    return
+  fi
+  if [[ "${#FEATURES_TO_TRANSFER[@]}" -eq 1 ]]; then
+    echo "$REMOTE_IMPORT_PATH"
+    return
+  fi
+  if [[ "$REMOTE_IMPORT_PATH" == *.* ]]; then
+    local ext="${REMOTE_IMPORT_PATH##*.}"
+    local stem="${REMOTE_IMPORT_PATH%.*}"
+    echo "${stem}-${current_feature}.${ext}"
+    return
+  fi
+  echo "${REMOTE_IMPORT_PATH}-${current_feature}"
+}
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+export_selector="${SOURCE_IDS//,/__}"
+export_selector="${export_selector:-all-cached}"
+mkdir -p "$EXPORT_DIR"
+
+declare -a EXPORT_PATHS=()
+declare -a REMOTE_PATHS=()
+
+for current_feature in "${FEATURES_TO_TRANSFER[@]}"; do
+  current_export_path="$EXPORT_PATH"
+  if [[ -z "$current_export_path" ]]; then
+    current_export_path="${EXPORT_DIR}/${current_feature}-transfer-${export_selector}-${ts}.json"
+  fi
+  current_remote_path="$(build_remote_import_path "$current_feature")"
+
+  echo "Step 1/4: Export ${current_feature} locally -> ${current_export_path}"
+  export_args="export --feature ${current_feature}"
+  if [[ "$ALL_CACHED" == "true" ]]; then
+    export_args="${export_args} --all-cached"
+  else
+    export_args="${export_args} --book-source-id ${SOURCE_IDS}"
+  fi
+  export_args="${export_args} --apply --output ${current_export_path}"
+  if [[ -n "$LOCAL_DB_URL" ]]; then
+    export_args="${export_args} --db-url ${LOCAL_DB_URL} --db-user ${LOCAL_DB_USER} --db-password ${LOCAL_DB_PASSWORD}"
+  fi
+  run_local_cache_transfer "$export_args"
+  [[ -f "$current_export_path" ]] || fail "Export file not found: ${current_export_path}"
+
+  echo "Step 2/4: Upload ${current_feature} transfer -> ${REMOTE_TARGET}:${current_remote_path}"
+  "${SCP_CMD[@]}" "$current_export_path" "${REMOTE_TARGET}:${current_remote_path}"
+
+  echo "Step 3/4: Remote import dry-run (${current_feature})"
+  echo "  Remote runner: ${REMOTE_RUNNER}"
+  import_args="import --feature ${current_feature} --input ${current_remote_path} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER} --db-password ${REMOTE_DB_PASSWORD}"
+  if [[ -z "$REMOTE_DB_PASSWORD" ]]; then
+    import_args="import --feature ${current_feature} --input ${current_remote_path} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER}"
+  fi
+  run_remote_cache_transfer "$import_args"
+
+  EXPORT_PATHS+=("$current_export_path")
+  REMOTE_PATHS+=("$current_remote_path")
+done
 
 service_stopped=false
 cleanup() {
@@ -450,7 +493,15 @@ if [[ "$APPLY_IMPORT" == "true" ]]; then
     run_remote_cmd "$REMOTE_STOP_CMD"
     service_stopped=true
   fi
-  run_remote_cache_transfer "${import_args} --apply"
+  for i in "${!FEATURES_TO_TRANSFER[@]}"; do
+    current_feature="${FEATURES_TO_TRANSFER[$i]}"
+    current_remote_path="${REMOTE_PATHS[$i]}"
+    import_args="import --feature ${current_feature} --input ${current_remote_path} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER} --db-password ${REMOTE_DB_PASSWORD}"
+    if [[ -z "$REMOTE_DB_PASSWORD" ]]; then
+      import_args="import --feature ${current_feature} --input ${current_remote_path} --on-conflict ${ON_CONFLICT} --db-url ${REMOTE_DB_URL} --db-user ${REMOTE_DB_USER}"
+    fi
+    run_remote_cache_transfer "${import_args} --apply"
+  done
   if [[ "$service_stopped" == "true" && -n "$REMOTE_START_CMD" ]]; then
     echo "Starting remote service..."
     run_remote_cmd "$REMOTE_START_CMD"

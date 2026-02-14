@@ -35,8 +35,8 @@ If a source system has a book without `sourceId`, that book is skipped and repor
 
 Runner class: `org.example.reader.cli.CacheTransferRunner`
 
-Implementation status (2026-02-12):
-- v1 recap + quiz transfer is implemented and validated in local + remote flows.
+Implementation status (2026-02-14):
+- v1 recap + quiz + illustration + portrait metadata transfer is implemented and validated in local + remote flows.
 - Operator automation scripts are available for pregen/export/import and remote transfer/deploy orchestration.
 
 Commands:
@@ -46,7 +46,7 @@ Commands:
 
 Core options:
 
-- `--feature recaps|quizzes` (required; future: `illustrations`, `portraits`, `all`)
+- `--feature recaps|quizzes|illustrations|portraits` (required)
 - `--book-source-id <id>[,<id>...]` (optional)
 - `--all-cached` (optional; mutually exclusive with `--book-source-id`)
 - `--input <path>` (import)
@@ -59,9 +59,9 @@ Future options (v2+):
 - `--include-assets` for binary media export/import.
 - `--assets-root <path>` for unpacked bundle workflows.
 
-## Export Behavior (v1: Recaps + Quizzes)
+## Export Behavior (v1)
 
-- Query selected feature table where `status = COMPLETED` and `payload_json` is present.
+- Query selected feature table where `status = COMPLETED`.
 - If `--book-source-id` is provided, export only those books.
 - If `--all-cached` is provided, export all books that have at least one completed record for the selected feature.
 - Write one JSON file containing:
@@ -71,22 +71,24 @@ Future options (v2+):
   - per-book feature records.
 - Dry-run prints counts only; no file written.
 
-## Import Behavior (v1: Recaps + Quizzes)
+## Import Behavior (v1)
 
 - Read JSON payload and validate format/version.
 - For each book entry:
   - Find local book by `source + sourceId`.
   - If missing, skip and report.
 - For each selected feature entry:
-  - Find chapter by `bookId + chapterIndex`.
-  - If missing, skip and report.
-  - Upsert `chapter_recaps` or `chapter_quizzes` by chapter ID.
+  - Recaps/quizzes/illustrations: find chapter by `bookId + chapterIndex`, skip if missing.
+  - Portraits: find first chapter by `bookId + firstChapterIndex`, skip if missing.
+  - Upsert selected feature rows by logical key:
+    - recap/quiz/illustration: chapter key
+    - portrait: `(bookId, characterName)`
 - Conflict policy:
   - `skip`: keep existing row if present.
   - `overwrite`: replace existing payload/status/metadata.
 - Dry-run computes planned inserts/updates/skips without mutating DB.
 
-## Transfer JSON Format (v1)
+## Transfer JSON Format (v1 excerpt)
 
 ```json
 {
@@ -120,6 +122,8 @@ Notes:
 - `payloadJson` is preserved as-is from the selected source table payload (`chapter_recaps.payload_json` or `chapter_quizzes.payload_json`).
 - `status` is expected to be `COMPLETED` in v1 exports.
 - For quiz transfer, each book uses a `quizzes` array with the same per-chapter metadata shape as `recaps`.
+- For illustration transfer, each book uses an `illustrations` array keyed by `chapterIndex` with `imageFilename`.
+- For portrait transfer, each book uses a `portraits` array keyed by character identity (`name`) + first appearance location.
 
 ## Reporting
 

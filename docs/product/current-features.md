@@ -114,7 +114,7 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Asset key normalization for stable paths.
 - CLI utilities for asset migration and orphan cleanup.
 - Spaces/CDN sync script for audio/portraits/illustrations.
-- Cache transfer CLI (`CacheTransferRunner`) for recap/quiz export/import with dry-run and conflict controls.
+- Cache transfer CLI (`CacheTransferRunner`) for recap/quiz/illustration/portrait metadata export/import with dry-run and conflict controls.
 - Operator scripts for pre-generation, remote transfer, and remote deploy orchestration.
 
 ## Persistence and Configuration

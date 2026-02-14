@@ -2,6 +2,10 @@ package org.example.reader.controller;
 
 import org.example.reader.service.PreGenerationService;
 import org.example.reader.service.PreGenerationService.PreGenResult;
+import org.example.reader.service.PreGenerationJobService;
+import org.example.reader.service.PreGenerationJobService.JobState;
+import org.example.reader.service.PreGenerationJobService.JobType;
+import org.example.reader.service.PreGenerationJobService.PreGenJobStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -11,9 +15,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.LocalDateTime;
+import java.util.Optional;
 
 @WebMvcTest(PreGenerationController.class)
 @TestPropertySource(properties = {
@@ -26,6 +34,9 @@ class PreGenerationControllerTest {
 
     @MockitoBean
     private PreGenerationService preGenerationService;
+
+    @MockitoBean
+    private PreGenerationJobService preGenerationJobService;
 
     @Test
     void preGenerateForBook_success_returnsOk() throws Exception {
@@ -64,5 +75,39 @@ class PreGenerationControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success", is(false)))
                 .andExpect(jsonPath("$.message", is("Import failed: timed out")));
+    }
+
+    @Test
+    void startJobForBook_returnsAccepted() throws Exception {
+        PreGenJobStatus job = new PreGenJobStatus(
+                "job-1",
+                JobType.BOOK,
+                JobState.QUEUED,
+                "book-1",
+                null,
+                false,
+                LocalDateTime.now(),
+                null,
+                null,
+                "Job queued",
+                null,
+                null,
+                null
+        );
+        when(preGenerationJobService.startBookJob("book-1")).thenReturn(job);
+
+        mockMvc.perform(post("/api/pregen/jobs/book/book-1"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.jobId", is("job-1")))
+                .andExpect(jsonPath("$.state", is("QUEUED")))
+                .andExpect(jsonPath("$.bookId", is("book-1")));
+    }
+
+    @Test
+    void getJobStatus_unknownJob_returnsNotFound() throws Exception {
+        when(preGenerationJobService.getJobStatus("missing")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/pregen/jobs/missing"))
+                .andExpect(status().isNotFound());
     }
 }

@@ -21,6 +21,10 @@ public final class SensitiveApiRequestMatcher {
 
     private static final Pattern PREGEN_BOOK_PATH = Pattern.compile("^/api/pregen/book/[^/]+$");
     private static final Pattern PREGEN_GUTENBERG_PATH = Pattern.compile("^/api/pregen/gutenberg/\\d+$");
+    private static final Pattern PREGEN_JOB_BOOK_PATH = Pattern.compile("^/api/pregen/jobs/book/[^/]+$");
+    private static final Pattern PREGEN_JOB_GUTENBERG_PATH = Pattern.compile("^/api/pregen/jobs/gutenberg/\\d+$");
+    private static final Pattern PREGEN_JOB_STATUS_PATH = Pattern.compile("^/api/pregen/jobs/[^/]+$");
+    private static final Pattern PREGEN_JOB_CANCEL_PATH = Pattern.compile("^/api/pregen/jobs/[^/]+/cancel$");
 
     private static final Pattern RECAP_GENERATE_PATH = Pattern.compile("^/api/recaps/chapter/[^/]+/generate$");
     private static final Pattern RECAP_REQUEUE_PATH = Pattern.compile("^/api/recaps/book/[^/]+/requeue-stuck$");
@@ -55,6 +59,9 @@ public final class SensitiveApiRequestMatcher {
                     || CHARACTER_BOOK_PREFETCH_PATH.matcher(path).matches()
                     || PREGEN_BOOK_PATH.matcher(path).matches()
                     || PREGEN_GUTENBERG_PATH.matcher(path).matches()
+                    || PREGEN_JOB_BOOK_PATH.matcher(path).matches()
+                    || PREGEN_JOB_GUTENBERG_PATH.matcher(path).matches()
+                    || PREGEN_JOB_CANCEL_PATH.matcher(path).matches()
                     || RECAP_GENERATE_PATH.matcher(path).matches()
                     || RECAP_REQUEUE_PATH.matcher(path).matches()
                     || QUIZ_GENERATE_PATH.matcher(path).matches()) {
@@ -67,12 +74,19 @@ public final class SensitiveApiRequestMatcher {
             }
         }
 
-        if ("GET".equals(method) && TTS_SPEAK_PATH.matcher(path).matches()) {
-            return EndpointType.GENERATION;
+        if ("GET".equals(method)) {
+            if (TTS_SPEAK_PATH.matcher(path).matches()
+                    || PREGEN_JOB_STATUS_PATH.matcher(path).matches()) {
+                return EndpointType.GENERATION;
+            }
         }
 
         if ("PATCH".equals(method) && LIBRARY_FEATURES_PATH.matcher(path).matches()) {
             return EndpointType.ADMIN;
+        }
+
+        if ("DELETE".equals(method) && PREGEN_JOB_STATUS_PATH.matcher(path).matches()) {
+            return EndpointType.GENERATION;
         }
 
         if ("DELETE".equals(method)

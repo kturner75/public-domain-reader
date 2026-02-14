@@ -1,6 +1,6 @@
 # Pre-Generation And Transfer Runbook
 
-Last updated: 2026-02-12
+Last updated: 2026-02-14
 
 ## Scope
 
@@ -8,13 +8,13 @@ This runbook covers:
 - Pre-generating illustrations, portraits, and recaps.
 - Pre-generating chapter quizzes.
 - Syncing binary assets to Spaces/CDN.
-- Transferring recap/quiz cache data from local to remote DB.
+- Transferring recap/quiz/illustration/portrait cache metadata from local to remote DB.
 
 ## Prerequisites
 
 - App deployed/running for API-driven scripts (`http://localhost:8080` by default).
 - `curl` installed.
-- `jq` installed (needed for quiz pre-generation script).
+- `jq` installed (needed for pre-generation/quiz polling scripts).
 - For remote transfer:
   - SSH access to target host.
   - Remote host has either:
@@ -47,7 +47,8 @@ scripts/pregen_transfer_book.sh --gutenberg-id 1342 --skip-export
 ```
 
 Notes:
-- This calls `POST /api/pregen/gutenberg/{id}` and blocks until generation completes.
+- This starts `POST /api/pregen/jobs/gutenberg/{id}` and polls `GET /api/pregen/jobs/{jobId}` until completion.
+- Cancel safely with `POST /api/pregen/jobs/{jobId}/cancel` (the script does this automatically on Ctrl+C/timeout).
 - `--skip-export` keeps this step focused on generation only.
 
 ## 3) Pre-Generate Quizzes (Book-Level)
@@ -91,6 +92,22 @@ This syncs:
 
 ## 5) Transfer Cache Local -> Remote
 
+Full metadata set (recommended):
+
+```bash
+scripts/transfer_recaps_remote.sh \
+  --feature all \
+  --all-cached \
+  --remote pdr \
+  --remote-project-dir /opt/public-domain-reader \
+  --remote-db-url "jdbc:h2:file:/var/lib/public-domain-reader/library;DB_CLOSE_DELAY=-1" \
+  --apply-import \
+  --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
+  --remote-start-cmd "sudo systemctl start public-domain-reader"
+```
+
+Single-feature examples:
+
 Recaps:
 
 ```bash
@@ -118,6 +135,52 @@ scripts/transfer_recaps_remote.sh \
   --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
   --remote-start-cmd "sudo systemctl start public-domain-reader"
 ```
+
+Illustrations:
+
+```bash
+scripts/transfer_recaps_remote.sh \
+  --feature illustrations \
+  --all-cached \
+  --remote pdr \
+  --remote-project-dir /opt/public-domain-reader \
+  --remote-db-url "jdbc:h2:file:/var/lib/public-domain-reader/library;DB_CLOSE_DELAY=-1" \
+  --apply-import \
+  --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
+  --remote-start-cmd "sudo systemctl start public-domain-reader"
+```
+
+Portraits:
+
+```bash
+scripts/transfer_recaps_remote.sh \
+  --feature portraits \
+  --all-cached \
+  --remote pdr \
+  --remote-project-dir /opt/public-domain-reader \
+  --remote-db-url "jdbc:h2:file:/var/lib/public-domain-reader/library;DB_CLOSE_DELAY=-1" \
+  --apply-import \
+  --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
+  --remote-start-cmd "sudo systemctl start public-domain-reader"
+```
+
+## 5b) Simplified Book Promotion (Single Command)
+
+```bash
+scripts/publish_book_remote.sh \
+  --gutenberg-id 1342 \
+  --remote pdr \
+  --remote-project-dir /opt/public-domain-reader \
+  --remote-db-url "jdbc:h2:file:/var/lib/public-domain-reader/library;DB_CLOSE_DELAY=-1" \
+  --remote-stop-cmd "sudo systemctl stop public-domain-reader" \
+  --remote-start-cmd "sudo systemctl start public-domain-reader"
+```
+
+What this runs by default:
+- pre-generation job (illustrations + portraits + recaps),
+- quiz pre-generation for all chapters in that book,
+- Spaces sync for binary assets,
+- remote DB transfer for metadata (`--transfer-feature all`).
 
 ## 6) Validate
 

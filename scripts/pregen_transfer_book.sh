@@ -8,6 +8,9 @@ MAVEN_BIN="${MAVEN_BIN:-mvn}"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
 SOURCE="${SOURCE:-gutenberg}"
 GUTENBERG_ID=""
+PREGEN_POLL_SECONDS="${PREGEN_POLL_SECONDS:-10}"
+PREGEN_TIMEOUT_SECONDS="${PREGEN_TIMEOUT_SECONDS:-7200}"
+PREGEN_JOB_ID=""
 
 SKIP_PREGEN=false
 SKIP_EXPORT=false
@@ -33,6 +36,8 @@ Required:
 
 Options:
   --api-base-url <url>             Pre-generation API base URL (default: ${API_BASE_URL}).
+  --pregen-poll-seconds <seconds>  Poll interval for async pre-generation status (default: ${PREGEN_POLL_SECONDS}).
+  --pregen-timeout-seconds <sec>   Timeout before cancelling pre-generation (default: ${PREGEN_TIMEOUT_SECONDS}).
   --skip-pregen                    Skip API pre-generation step.
   --skip-export                    Skip recap export step.
   --export-path <path>             Output recap JSON path.
@@ -49,7 +54,8 @@ Options:
   --help                           Show this message.
 
 Notes:
-  - Pre-generation uses POST /api/pregen/gutenberg/{id} and blocks until complete.
+  - Pre-generation starts a job via POST /api/pregen/jobs/gutenberg/{id}, then polls GET /api/pregen/jobs/{jobId}.
+  - Ctrl+C (SIGINT) requests cancellation via POST /api/pregen/jobs/{jobId}/cancel.
   - Export writes recaps for --book-source-id <id> using CacheTransferRunner.
   - If --import-db-url is set, script runs import dry-run, and runs apply when --import-apply is present.
 EOF
@@ -74,6 +80,16 @@ while [[ $# -gt 0 ]]; do
     --api-base-url)
       [[ $# -ge 2 ]] || fail "--api-base-url requires a value"
       API_BASE_URL="$2"
+      shift 2
+      ;;
+    --pregen-poll-seconds)
+      [[ $# -ge 2 ]] || fail "--pregen-poll-seconds requires a value"
+      PREGEN_POLL_SECONDS="$2"
+      shift 2
+      ;;
+    --pregen-timeout-seconds)
+      [[ $# -ge 2 ]] || fail "--pregen-timeout-seconds requires a value"
+      PREGEN_TIMEOUT_SECONDS="$2"
       shift 2
       ;;
     --skip-pregen)
@@ -141,9 +157,13 @@ done
 [[ "${SOURCE}" == "gutenberg" ]] || fail "Only SOURCE=gutenberg is supported right now"
 [[ "${IMPORT_CONFLICT}" == "skip" || "${IMPORT_CONFLICT}" == "overwrite" ]] || fail "--import-on-conflict must be skip or overwrite"
 [[ "${SYNC_DIRECTION}" == "up" || "${SYNC_DIRECTION}" == "down" ]] || fail "--sync-direction must be up or down"
+[[ "${PREGEN_POLL_SECONDS}" =~ ^[0-9]+$ ]] || fail "--pregen-poll-seconds must be a non-negative integer"
+[[ "${PREGEN_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || fail "--pregen-timeout-seconds must be a non-negative integer"
+(( PREGEN_TIMEOUT_SECONDS > 0 )) || fail "--pregen-timeout-seconds must be greater than zero"
 
 require_command curl
 require_command "${MAVEN_BIN}"
+require_command jq
 
 if [[ -z "${EXPORT_PATH}" ]]; then
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -158,6 +178,104 @@ run_cache_transfer() {
     -Dexec.args="${command} $*"
 }
 
+cancel_pregen_job() {
+  if [[ -z "${PREGEN_JOB_ID}" ]]; then
+    return 0
+  fi
+  curl --silent --show-error --fail \
+    -X POST "${API_BASE_URL}/api/pregen/jobs/${PREGEN_JOB_ID}/cancel" >/dev/null || true
+}
+
+on_interrupt() {
+  if [[ -n "${PREGEN_JOB_ID}" ]]; then
+    echo ""
+    echo "Interrupt received. Cancelling pre-generation job ${PREGEN_JOB_ID}..."
+    cancel_pregen_job
+  fi
+  exit 130
+}
+
+trap on_interrupt INT TERM
+
+start_pregen_job() {
+  local response_file status_code body
+  response_file="$(mktemp)"
+  status_code="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' \
+    -X POST "${API_BASE_URL}/api/pregen/jobs/gutenberg/${GUTENBERG_ID}")"
+  body="$(cat "${response_file}" 2>/dev/null || true)"
+  rm -f "${response_file}"
+
+  if [[ "${status_code}" != "202" ]]; then
+    echo "${body}" >&2
+    fail "Failed to start pre-generation job (HTTP ${status_code})"
+  fi
+
+  PREGEN_JOB_ID="$(echo "${body}" | jq -r '.jobId // empty' 2>/dev/null || true)"
+  [[ -n "${PREGEN_JOB_ID}" ]] || fail "Pre-generation start response did not include jobId"
+  echo "Pre-generation job started: ${PREGEN_JOB_ID}"
+}
+
+wait_for_pregen_job() {
+  local started_at now elapsed response_file status_code body
+  local state message error pending generating failed success
+  started_at="$(date +%s)"
+
+  while true; do
+    response_file="$(mktemp)"
+    status_code="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' \
+      "${API_BASE_URL}/api/pregen/jobs/${PREGEN_JOB_ID}")"
+    body="$(cat "${response_file}" 2>/dev/null || true)"
+    rm -f "${response_file}"
+
+    if [[ "${status_code}" != "200" ]]; then
+      echo "${body}" >&2
+      fail "Failed to fetch pre-generation job status (HTTP ${status_code})"
+    fi
+
+    state="$(echo "${body}" | jq -r '.state // "UNKNOWN"' 2>/dev/null || true)"
+    message="$(echo "${body}" | jq -r '.message // ""' 2>/dev/null || true)"
+    error="$(echo "${body}" | jq -r '.error // ""' 2>/dev/null || true)"
+    pending="$(echo "${body}" | jq -r '.progress.totals.pending // 0' 2>/dev/null || true)"
+    generating="$(echo "${body}" | jq -r '.progress.totals.generating // 0' 2>/dev/null || true)"
+    failed="$(echo "${body}" | jq -r '.progress.totals.failed // 0' 2>/dev/null || true)"
+    elapsed="$(( $(date +%s) - started_at ))"
+
+    echo "  [${elapsed}s] state=${state} pending=${pending} generating=${generating} failed=${failed}"
+
+    case "${state}" in
+      COMPLETED)
+        success="$(echo "${body}" | jq -r '.result.success // false' 2>/dev/null || true)"
+        if [[ "${success}" == "true" ]]; then
+          PREGEN_JOB_ID=""
+          echo "Pre-generation completed."
+          return 0
+        fi
+        fail "Pre-generation completed with failures: ${message}"
+        ;;
+      FAILED)
+        fail "Pre-generation failed: ${error:-$message}"
+        ;;
+      CANCELLED)
+        fail "Pre-generation cancelled"
+        ;;
+      QUEUED|RUNNING|CANCELLING)
+        ;;
+      *)
+        echo "Unexpected pre-generation state: ${state}" >&2
+        ;;
+    esac
+
+    now="$(date +%s)"
+    if (( now - started_at >= PREGEN_TIMEOUT_SECONDS )); then
+      echo "Pre-generation timed out after ${PREGEN_TIMEOUT_SECONDS}s; requesting cancel..." >&2
+      cancel_pregen_job
+      fail "Pre-generation timed out"
+    fi
+
+    sleep "${PREGEN_POLL_SECONDS}"
+  done
+}
+
 echo "Workflow start"
 echo "  Gutenberg ID: ${GUTENBERG_ID}"
 echo "  API base URL: ${API_BASE_URL}"
@@ -166,9 +284,8 @@ echo "  Export path : ${EXPORT_PATH}"
 if [[ "${SKIP_PREGEN}" == "false" ]]; then
   echo ""
   echo "[1/4] Pre-generating illustrations, portraits, and recaps..."
-  curl --fail --silent --show-error \
-    -X POST "${API_BASE_URL}/api/pregen/gutenberg/${GUTENBERG_ID}" >/dev/null
-  echo "Pre-generation completed."
+  start_pregen_job
+  wait_for_pregen_job
 else
   echo ""
   echo "[1/4] Skipped pre-generation (--skip-pregen)"
