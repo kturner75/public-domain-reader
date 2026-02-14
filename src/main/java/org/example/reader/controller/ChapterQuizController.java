@@ -58,7 +58,8 @@ public class ChapterQuizController {
         status.put("reasoningEnabled", reasoningEnabled);
         status.put("cacheOnly", cacheOnly);
         status.put("providerAvailable", chapterQuizService.isProviderAvailable());
-        status.put("available", isQuizAvailable());
+        status.put("available", isQuizFeatureEnabled());
+        status.put("generationAvailable", isQuizGenerationAvailable());
         status.put("difficultyRampEnabled", difficultyRampEnabled);
         status.put("difficultyRampChapterStep", difficultyRampChapterStep);
         status.put("difficultyRampMaxLevel", difficultyRampMaxLevel);
@@ -73,7 +74,8 @@ public class ChapterQuizController {
         status.put("reasoningEnabled", reasoningEnabled);
         status.put("cacheOnly", cacheOnly);
         status.put("providerAvailable", chapterQuizService.isProviderAvailable());
-        status.put("available", isQuizAvailable());
+        status.put("available", isQuizFeatureEnabled());
+        status.put("generationAvailable", isQuizGenerationAvailable());
         status.put("difficultyRampEnabled", difficultyRampEnabled);
         status.put("difficultyRampChapterStep", difficultyRampChapterStep);
         status.put("difficultyRampMaxLevel", difficultyRampMaxLevel);
@@ -83,7 +85,7 @@ public class ChapterQuizController {
 
     @GetMapping("/book/{bookId}/trophies")
     public ResponseEntity<List<QuizTrophy>> getBookTrophies(@PathVariable String bookId) {
-        if (!isQuizAvailable()) {
+        if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
         return ResponseEntity.ok(quizProgressService.getBookTrophies(bookId));
@@ -98,7 +100,7 @@ public class ChapterQuizController {
         if (bookId == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!isQuizAvailable()) {
+        if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
 
@@ -116,7 +118,7 @@ public class ChapterQuizController {
         if (bookId == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!isQuizAvailable()) {
+        if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
 
@@ -127,7 +129,7 @@ public class ChapterQuizController {
 
     @PostMapping("/chapter/{chapterId}/generate")
     public ResponseEntity<Void> requestChapterQuizGeneration(@PathVariable String chapterId) {
-        if (!quizEnabled) {
+        if (!isQuizGenerationConfigured()) {
             return ResponseEntity.status(403).build();
         }
         if (cacheOnly) {
@@ -136,9 +138,6 @@ public class ChapterQuizController {
         var bookId = chapterQuizService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
             return ResponseEntity.notFound().build();
-        }
-        if (!isQuizAvailable()) {
-            return ResponseEntity.status(403).build();
         }
 
         try {
@@ -160,7 +159,7 @@ public class ChapterQuizController {
         if (bookId == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!isQuizAvailable()) {
+        if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
         if (request == null) {
@@ -176,8 +175,16 @@ public class ChapterQuizController {
         }
     }
 
-    private boolean isQuizAvailable() {
-        return quizEnabled && reasoningEnabled && !cacheOnly;
+    private boolean isQuizFeatureEnabled() {
+        return quizEnabled;
+    }
+
+    private boolean isQuizGenerationAvailable() {
+        return isQuizGenerationConfigured() && !cacheOnly;
+    }
+
+    private boolean isQuizGenerationConfigured() {
+        return quizEnabled && reasoningEnabled;
     }
 
     public record QuizSubmissionRequest(List<Integer> selectedOptionIndexes) {

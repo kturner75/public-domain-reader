@@ -52,7 +52,8 @@ class ChapterQuizControllerTest {
                 .andExpect(jsonPath("$.reasoningEnabled", is(true)))
                 .andExpect(jsonPath("$.cacheOnly", is(false)))
                 .andExpect(jsonPath("$.providerAvailable", is(false)))
-                .andExpect(jsonPath("$.available", is(true)));
+                .andExpect(jsonPath("$.available", is(true)))
+                .andExpect(jsonPath("$.generationAvailable", is(true)));
     }
 
     @Test

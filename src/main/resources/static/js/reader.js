@@ -70,6 +70,7 @@
         recapPollingChapterId: null,
         recapPollingInFlight: false,
         quizAvailable: false,
+        quizGenerationAvailable: false,
         quizCacheOnly: false,
         quizChapterId: null,
         quizQuestions: [],
@@ -3231,11 +3232,14 @@
             const response = await fetch(statusUrl, { cache: 'no-store' });
             const status = await response.json();
             state.quizCacheOnly = status.cacheOnly === true;
-            state.quizAvailable = status.available === true && !state.quizCacheOnly;
+            state.quizAvailable = status.available === true;
+            state.quizGenerationAvailable = status.generationAvailable === true
+                || (status.enabled === true && status.reasoningEnabled === true && status.cacheOnly !== true);
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.debug('Failed to check quiz availability:', error);
             state.quizAvailable = false;
+            state.quizGenerationAvailable = false;
             state.quizCacheOnly = false;
         }
         updateRecapOptOutControl();
@@ -3322,7 +3326,7 @@
     }
 
     async function requestChapterQuizGeneration(chapterId) {
-        if (!chapterId || state.cacheOnly || !state.quizAvailable) return;
+        if (!chapterId || !state.quizGenerationAvailable || state.cacheOnly || state.quizCacheOnly) return;
         try {
             await fetch(`/api/quizzes/chapter/${chapterId}/generate`, { method: 'POST' });
         } catch (error) {

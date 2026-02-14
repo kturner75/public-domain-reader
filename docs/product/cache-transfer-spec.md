@@ -4,7 +4,7 @@ Last updated: 2026-02-12
 
 ## Purpose
 
-Provide a safe export/import workflow for AI-generated cache data between diverged environments (local/server), starting with chapter recaps and extending to illustrations/portraits.
+Provide a safe export/import workflow for AI-generated cache data between diverged environments (local/server), covering chapter recaps/quizzes and extending to illustrations/portraits.
 
 ## Goals
 
@@ -27,6 +27,7 @@ Records are matched by stable logical keys, not local UUIDs.
 - Book key: `source` + `sourceId` (example: `gutenberg` + `1342`).
 - Chapter key: `chapterIndex` within matched book.
 - Recap key: `(book key, chapterIndex)`.
+- Quiz key: `(book key, chapterIndex)`.
 
 If a source system has a book without `sourceId`, that book is skipped and reported.
 
@@ -35,7 +36,7 @@ If a source system has a book without `sourceId`, that book is skipped and repor
 Runner class: `org.example.reader.cli.CacheTransferRunner`
 
 Implementation status (2026-02-12):
-- v1 recap transfer is implemented and validated in local + remote flows.
+- v1 recap + quiz transfer is implemented and validated in local + remote flows.
 - Operator automation scripts are available for pregen/export/import and remote transfer/deploy orchestration.
 
 Commands:
@@ -45,7 +46,7 @@ Commands:
 
 Core options:
 
-- `--feature recaps` (v1 required; future: `illustrations`, `portraits`, `all`)
+- `--feature recaps|quizzes` (required; future: `illustrations`, `portraits`, `all`)
 - `--book-source-id <id>[,<id>...]` (optional)
 - `--all-cached` (optional; mutually exclusive with `--book-source-id`)
 - `--input <path>` (import)
@@ -58,34 +59,34 @@ Future options (v2+):
 - `--include-assets` for binary media export/import.
 - `--assets-root <path>` for unpacked bundle workflows.
 
-## Export Behavior (v1: Recaps)
+## Export Behavior (v1: Recaps + Quizzes)
 
-- Query recaps where `status = COMPLETED` and `payload_json` is present.
+- Query selected feature table where `status = COMPLETED` and `payload_json` is present.
 - If `--book-source-id` is provided, export only those books.
-- If `--all-cached` is provided, export all books that have at least one completed recap.
+- If `--all-cached` is provided, export all books that have at least one completed record for the selected feature.
 - Write one JSON file containing:
   - format metadata,
   - export timestamp,
   - feature list,
-  - per-book recap records.
+  - per-book feature records.
 - Dry-run prints counts only; no file written.
 
-## Import Behavior (v1: Recaps)
+## Import Behavior (v1: Recaps + Quizzes)
 
 - Read JSON payload and validate format/version.
 - For each book entry:
   - Find local book by `source + sourceId`.
   - If missing, skip and report.
-- For each recap entry:
+- For each selected feature entry:
   - Find chapter by `bookId + chapterIndex`.
   - If missing, skip and report.
-  - Upsert `chapter_recaps` by chapter ID.
+  - Upsert `chapter_recaps` or `chapter_quizzes` by chapter ID.
 - Conflict policy:
-  - `skip`: keep existing recap if present.
-  - `overwrite`: replace existing recap payload/status/metadata.
+  - `skip`: keep existing row if present.
+  - `overwrite`: replace existing payload/status/metadata.
 - Dry-run computes planned inserts/updates/skips without mutating DB.
 
-## Recap Transfer JSON Format (v1)
+## Transfer JSON Format (v1)
 
 ```json
 {
@@ -116,16 +117,17 @@ Future options (v2+):
 
 Notes:
 
-- `payloadJson` is preserved as-is from `chapter_recaps.payload_json`.
+- `payloadJson` is preserved as-is from the selected source table payload (`chapter_recaps.payload_json` or `chapter_quizzes.payload_json`).
 - `status` is expected to be `COMPLETED` in v1 exports.
+- For quiz transfer, each book uses a `quizzes` array with the same per-chapter metadata shape as `recaps`.
 
 ## Reporting
 
 Both export and import print a summary:
 
 - books scanned, books matched, books missing,
-- recaps exported/imported,
-- recaps skipped (conflict),
+- feature records exported/imported,
+- feature records skipped (conflict),
 - chapters missing,
 - validation errors.
 
@@ -149,7 +151,7 @@ Import exits non-zero on invalid format; data-level misses/conflicts remain non-
 
 ## Acceptance Criteria (v1)
 
-- Export produces valid JSON for recaps by selected books or `--all-cached`.
+- Export produces valid JSON for recaps/quizzes by selected books or `--all-cached`.
 - Import merges into a diverged DB using `source/sourceId + chapterIndex`.
 - Import honors `skip` and `overwrite` conflict modes.
 - Dry-run accurately reports planned actions.

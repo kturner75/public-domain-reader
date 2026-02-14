@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
+BOOK_ID=""
+POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-5}"
+MAX_WAIT_MINUTES="${MAX_WAIT_MINUTES:-0}"
+AUTO_TIMEOUT_SECONDS_PER_CHAPTER="${AUTO_TIMEOUT_SECONDS_PER_CHAPTER:-30}"
+AUTO_TIMEOUT_BUFFER_MINUTES="${AUTO_TIMEOUT_BUFFER_MINUTES:-30}"
+
+usage() {
+  cat <<EOF
+Usage:
+  scripts/pregen_quizzes_book.sh --book-id <book-id> [options]
+
+Required:
+  --book-id <book-id>              Local book ID from /api/library.
+
+Options:
+  --api-base-url <url>             API base URL (default: ${API_BASE_URL}).
+  --poll-interval-seconds <n>      Poll interval (default: ${POLL_INTERVAL_SECONDS}).
+  --max-wait-minutes <n>           Max wait before timeout. Use 0 for auto timeout by chapter count (default: ${MAX_WAIT_MINUTES}).
+  --help                           Show help.
+
+Notes:
+  - This script queues quiz generation for every chapter in the target book.
+  - It polls quiz status until all chapters are COMPLETED or FAILED.
+  - Exit code is non-zero if any chapter ends FAILED or the run times out.
+EOF
+}
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --book-id)
+      [[ $# -ge 2 ]] || fail "--book-id requires a value"
+      BOOK_ID="$2"
+      shift 2
+      ;;
+    --api-base-url)
+      [[ $# -ge 2 ]] || fail "--api-base-url requires a value"
+      API_BASE_URL="$2"
+      shift 2
+      ;;
+    --poll-interval-seconds)
+      [[ $# -ge 2 ]] || fail "--poll-interval-seconds requires a value"
+      POLL_INTERVAL_SECONDS="$2"
+      shift 2
+      ;;
+    --max-wait-minutes)
+      [[ $# -ge 2 ]] || fail "--max-wait-minutes requires a value"
+      MAX_WAIT_MINUTES="$2"
+      shift 2
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "$BOOK_ID" ]] || fail "--book-id is required"
+[[ "$POLL_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || fail "--poll-interval-seconds must be an integer"
+[[ "$MAX_WAIT_MINUTES" =~ ^[0-9]+$ ]] || fail "--max-wait-minutes must be an integer"
+[[ "$AUTO_TIMEOUT_SECONDS_PER_CHAPTER" =~ ^[0-9]+$ ]] || fail "AUTO_TIMEOUT_SECONDS_PER_CHAPTER must be an integer"
+[[ "$AUTO_TIMEOUT_BUFFER_MINUTES" =~ ^[0-9]+$ ]] || fail "AUTO_TIMEOUT_BUFFER_MINUTES must be an integer"
+[[ "$POLL_INTERVAL_SECONDS" -gt 0 ]] || fail "--poll-interval-seconds must be > 0"
+
+require_command curl
+require_command jq
+
+BOOK_JSON="$(curl --fail --silent --show-error "${API_BASE_URL}/api/library/${BOOK_ID}")" || {
+  fail "Failed to fetch book from ${API_BASE_URL}/api/library/${BOOK_ID}"
+}
+
+BOOK_TITLE="$(printf '%s' "$BOOK_JSON" | jq -r '.title // "Unknown"')"
+CHAPTER_IDS=()
+while IFS= read -r chapter_id; do
+  [[ -n "$chapter_id" ]] || continue
+  CHAPTER_IDS+=("$chapter_id")
+done < <(printf '%s' "$BOOK_JSON" | jq -r '.chapters[]?.id')
+
+if [[ ${#CHAPTER_IDS[@]} -eq 0 ]]; then
+  fail "No chapters found for book ${BOOK_ID}."
+fi
+
+effective_max_wait_minutes="$MAX_WAIT_MINUTES"
+if [[ "$effective_max_wait_minutes" -eq 0 ]]; then
+  estimated_minutes=$(( (${#CHAPTER_IDS[@]} * AUTO_TIMEOUT_SECONDS_PER_CHAPTER + 59) / 60 ))
+  effective_max_wait_minutes=$(( estimated_minutes + AUTO_TIMEOUT_BUFFER_MINUTES ))
+  if [[ "$effective_max_wait_minutes" -lt 60 ]]; then
+    effective_max_wait_minutes=60
+  fi
+fi
+
+echo "Quiz pre-generation start"
+echo "  Book: ${BOOK_TITLE} (${BOOK_ID})"
+echo "  Chapters: ${#CHAPTER_IDS[@]}"
+echo "  API: ${API_BASE_URL}"
+echo "  Max wait (minutes): ${effective_max_wait_minutes}"
+
+queued=0
+already_ready=0
+for chapter_id in "${CHAPTER_IDS[@]}"; do
+  status_code="$(curl --silent --output /tmp/pregen_quiz_resp.$$ --write-out '%{http_code}' \
+    -X POST "${API_BASE_URL}/api/quizzes/chapter/${chapter_id}/generate")"
+  case "$status_code" in
+    202)
+      queued=$((queued + 1))
+      ;;
+    403)
+      rm -f /tmp/pregen_quiz_resp.$$
+      fail "Quiz generation unavailable (HTTP 403). Check quiz/reasoning feature flags."
+      ;;
+    404)
+      rm -f /tmp/pregen_quiz_resp.$$
+      fail "Chapter not found while queueing quiz: ${chapter_id}"
+      ;;
+    409)
+      rm -f /tmp/pregen_quiz_resp.$$
+      fail "Quiz generation blocked in cache-only mode (HTTP 409)."
+      ;;
+    *)
+      response_body="$(cat /tmp/pregen_quiz_resp.$$ 2>/dev/null || true)"
+      rm -f /tmp/pregen_quiz_resp.$$
+      fail "Unexpected generate response for chapter ${chapter_id}: HTTP ${status_code} ${response_body}"
+      ;;
+  esac
+done
+rm -f /tmp/pregen_quiz_resp.$$
+
+echo "Queued generation requests: ${queued}"
+
+start_epoch="$(date +%s)"
+deadline_epoch=$((start_epoch + effective_max_wait_minutes * 60))
+last_progress=""
+
+while true; do
+  completed=0
+  failed=0
+  pending=0
+  generating=0
+  missing=0
+
+  for chapter_id in "${CHAPTER_IDS[@]}"; do
+    status_json="$(curl --fail --silent --show-error "${API_BASE_URL}/api/quizzes/chapter/${chapter_id}/status")" || {
+      fail "Failed to fetch quiz status for chapter ${chapter_id}"
+    }
+    status="$(printf '%s' "$status_json" | jq -r '.status // "MISSING"')"
+    case "$status" in
+      COMPLETED) completed=$((completed + 1)) ;;
+      FAILED) failed=$((failed + 1)) ;;
+      GENERATING) generating=$((generating + 1)) ;;
+      PENDING) pending=$((pending + 1)) ;;
+      MISSING) missing=$((missing + 1)) ;;
+      *) pending=$((pending + 1)) ;;
+    esac
+  done
+
+  progress="completed=${completed} generating=${generating} pending=${pending} missing=${missing} failed=${failed}"
+  if [[ "$progress" != "$last_progress" ]]; then
+    echo "Progress: ${progress}"
+    last_progress="$progress"
+  fi
+
+  if [[ $((completed + failed)) -eq ${#CHAPTER_IDS[@]} ]]; then
+    break
+  fi
+
+  now_epoch="$(date +%s)"
+  if [[ "$now_epoch" -ge "$deadline_epoch" ]]; then
+    fail "Timed out waiting for quiz generation after ${effective_max_wait_minutes} minutes."
+  fi
+
+  sleep "$POLL_INTERVAL_SECONDS"
+done
+
+echo "Quiz pre-generation complete"
+echo "  Completed: ${completed}"
+echo "  Failed: ${failed}"
+
+if [[ "$failed" -gt 0 ]]; then
+  exit 2
+fi
+
+exit 0
