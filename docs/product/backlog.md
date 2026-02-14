@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-004 - Migrate from H2 to production database` (`Done`, validated with Flyway startup checks, migration copy verification, and full `mvn test`).
+- Most recent completed slice: `BL-002 - Replace in-memory generation queues with durable job orchestration` (`Done`, validated with targeted BL-002 coverage and full `mvn test`).
 - Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
-- Active priority work: `BL-002 - Replace in-memory generation queues with durable job orchestration` (`P0`, `In Progress`).
+- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-007 - Library management UI for local books and feature toggles` (`Proposed`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -172,7 +172,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P0
 - Effort: XL
-- Status: In Progress
+- Status: Done
 - Problem: Illustration/character work queues run in-process with single-thread executors and are vulnerable to restart loss.
 - Current Direction (2026-02-14):
 - Deliver BL-002 incrementally while preserving existing generation behavior:
@@ -191,6 +191,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - 2026-02-14: Added recap durable lease claims in `ChapterRecapService`/`ChapterRecapRepository` (`claimGenerationLease`, `leaseOwner`, `leaseExpiresAt`) with worker identity + lease duration config; added coverage in `ChapterRecapServiceTest`.
 - 2026-02-14: Added durable lease claims for `IllustrationService` and `CharacterService` pipelines (portrait + chapter analysis) with atomic repository claim queries and lease cleanup on terminal transitions; added `GenerationLeaseClaimRepositoryTest` for illustration/portrait/analysis claim behavior.
 - 2026-02-14: Implemented DB-backed retry/backoff metadata (`retryCount`, `nextRetryAt`) for recap/illustration/portrait/analysis jobs, added exponential retry scheduling in generation services, and exposed aggregate status APIs at `/api/generation/status` and `/api/generation/book/{bookId}/status`; added coverage in `GenerationJobStatusServiceTest`, `GenerationStatusControllerTest`, and extended lease-claim/retry tests.
+- 2026-02-14: Closed BL-002 after re-validating startup recovery, durable lease claims, retry/backoff behavior, and generation status APIs with targeted BL-002 tests (`GenerationQueueRecoveryServiceTest`, `GenerationLeaseClaimRepositoryTest`, `GenerationJobStatusServiceTest`, `GenerationStatusControllerTest`) plus full `mvn test`.
 - Acceptance Criteria:
 - Jobs persist across application restarts.
 - Retry/backoff policies are explicit and test-covered.
@@ -261,12 +262,14 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P1
 - Effort: M
-- Status: Proposed
+- Status: Done
 - Problem: Font size/line-height/theme/column-gap are static in practice.
 - Acceptance Criteria:
 - Add preferences UI for typography/layout controls.
 - Persist preferences and apply on load.
 - Re-pagination remains stable after setting changes.
+- Session Log:
+- 2026-02-14: Added a compact reader preferences gear menu beside search with persisted font size, line height, column gap, and theme controls (including reset), and wired preference changes to re-pagination while preserving current paragraph context.
 
 ### BL-007 - Library management UI for local books and feature toggles
 - Type: Improvement
