@@ -107,8 +107,8 @@ class SearchServiceTest {
         List<SearchResult> results = searchService.search("paragraph", 10);
 
         assertEquals(1, results.size());
-        assertTrue(results.get(0).snippet().length() <= 103); // 100 chars + "..."
-        assertTrue(results.get(0).snippet().endsWith("..."));
+        assertTrue(results.get(0).snippet().contains("paragraph"));
+        assertTrue(results.get(0).snippet().startsWith("...") || results.get(0).snippet().endsWith("..."));
     }
 
     @Test
@@ -130,5 +130,16 @@ class SearchServiceTest {
         List<SearchResult> results = searchService.search("fox", "book2", 10);
 
         assertTrue(results.isEmpty());
+    }
+
+    @Test
+    void search_withChapterId_filtersToSpecificChapter() throws Exception {
+        searchService.indexParagraph("book1", "ch1", 0, "The quick brown fox.");
+        searchService.indexParagraph("book1", "ch2", 0, "The sly red fox.");
+
+        List<SearchResult> results = searchService.search("fox", "book1", "ch2", 10);
+
+        assertEquals(1, results.size());
+        assertEquals("ch2", results.get(0).chapterId());
     }
 }

@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-007 - Library management UI for local books and feature toggles` (`Done`, re-scoped to admin-only operations with public-mode API-key enforcement and interceptor test coverage).
+- Most recent completed slice: `BL-008 - Upgrade in-reader search quality and navigation` (`Done`, implemented contextual snippets, chapter filter + grouped search results, and in-paragraph term highlighting on navigation).
 - Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
-- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-008 - Upgrade in-reader search quality and navigation` (`Proposed`).
+- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-009 - Make pre-generation non-blocking with progress API` (`Proposed`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -293,12 +293,14 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Improvement
 - Priority: P1
 - Effort: M
-- Status: Proposed
+- Status: Done
 - Problem: Snippets are fixed-length and ranking is generic; navigation context is limited.
 - Acceptance Criteria:
 - Improve snippet extraction around match location.
 - Add optional chapter filter and result grouping.
 - Highlight matched terms in displayed paragraph after navigation.
+- Session Log:
+- 2026-02-14: Upgraded `/api/search` to support optional `chapterId` filtering and context-aware snippets centered around matched terms; updated reader search UI with chapter filter controls and grouped-by-chapter result rendering; added in-paragraph search-term highlighting for selected result navigation. Validated with `SearchServiceTest`, `SearchControllerTest`, and `node --check src/main/resources/static/js/reader.js`.
 
 ### BL-009 - Make pre-generation non-blocking with progress API
 - Type: Improvement

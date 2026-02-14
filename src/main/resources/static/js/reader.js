@@ -13,6 +13,11 @@
         totalPages: 0,
         currentParagraphIndex: 0,
         pagesData: [],         // Array of { startParagraph, endParagraph } for each page
+        searchChapterFilter: '',
+        searchLastQuery: '',
+        searchHighlightTerms: [],
+        searchHighlightChapterId: null,
+        searchHighlightParagraphIndex: null,
         readerPreferences: null,
         annotationsByKey: new Map(),
         bookmarks: [],
@@ -130,6 +135,8 @@
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
+        searchResultsList: document.getElementById('search-results-list'),
+        searchChapterFilter: document.getElementById('search-chapter-filter'),
         readerSettingsToggle: document.getElementById('reader-settings-toggle'),
         readerSettingsPanel: document.getElementById('reader-settings-panel'),
         readerFontSize: document.getElementById('reader-font-size'),
@@ -923,6 +930,9 @@
         state.annotationsByKey = new Map();
         state.bookmarks = [];
         state.noteModalParagraphIndex = null;
+        state.searchChapterFilter = '';
+        state.searchLastQuery = '';
+        clearSearchHighlightState();
         stopCharacterPolling();
 
         // Save to localStorage and recently read
@@ -940,6 +950,7 @@
             elements.bookAuthor.textContent = author;
             elements.bookAuthor.classList.toggle('hidden', author.length === 0);
         }
+        renderSearchChapterFilterOptions();
 
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
@@ -1504,8 +1515,18 @@
             if (annotation?.highlighted) classes.push('annotation-highlight');
             if (annotation?.bookmarked) classes.push('annotation-bookmarked');
             if (hasNote) classes.push('annotation-noted');
+            const isSearchHighlighted = chapterId === state.searchHighlightChapterId
+                && globalIndex === state.searchHighlightParagraphIndex
+                && Array.isArray(state.searchHighlightTerms)
+                && state.searchHighlightTerms.length > 0;
+            if (isSearchHighlighted) {
+                classes.push('search-match');
+            }
+            const paraContent = isSearchHighlighted
+                ? highlightTermsInHtml(para.content, state.searchHighlightTerms)
+                : para.content;
 
-            const paraHtml = `<p class="${classes.join(' ')}" data-index="${globalIndex}" style="text-indent: ${isFirst ? '0' : '1.5em'}">${para.content}</p>`;
+            const paraHtml = `<p class="${classes.join(' ')}" data-index="${globalIndex}" style="text-indent: ${isFirst ? '0' : '1.5em'}">${paraContent}</p>`;
 
             // Measure
             measureContainer.innerHTML = `<p class="paragraph" style="text-indent: ${isFirst ? '0' : '1.5em'}; text-align: justify;">${para.content}</p>`;
@@ -2329,37 +2350,142 @@
     // Search
     let searchTimeout = null;
 
+    function escapeRegExp(value) {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function extractSearchTerms(query) {
+        if (!query || typeof query !== 'string') {
+            return [];
+        }
+        const normalized = query.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        if (!normalized) {
+            return [];
+        }
+        const unique = new Set();
+        normalized.split(/\s+/)
+            .filter(term => term.length >= 2)
+            .forEach(term => unique.add(term));
+        return Array.from(unique);
+    }
+
+    function highlightTermsInText(text, terms) {
+        if (!text || !Array.isArray(terms) || terms.length === 0) {
+            return text || '';
+        }
+        const pattern = terms.map(escapeRegExp).join('|');
+        if (!pattern) {
+            return text;
+        }
+        const regex = new RegExp(`(${pattern})`, 'gi');
+        return text.replace(regex, '<mark class="search-hit">$1</mark>');
+    }
+
+    function highlightTermsInHtml(html, terms) {
+        if (!html || !Array.isArray(terms) || terms.length === 0) {
+            return html || '';
+        }
+        const parts = html.split(/(<[^>]+>)/g);
+        return parts.map(part => {
+            if (part.startsWith('<') && part.endsWith('>')) {
+                return part;
+            }
+            return highlightTermsInText(part, terms);
+        }).join('');
+    }
+
+    function clearSearchHighlightState() {
+        state.searchHighlightTerms = [];
+        state.searchHighlightChapterId = null;
+        state.searchHighlightParagraphIndex = null;
+    }
+
+    function chapterTitleForSearch(chapterId) {
+        const chapter = state.chapters.find(c => c.id === chapterId);
+        return chapter?.title || chapterId || 'Unknown chapter';
+    }
+
+    function renderSearchChapterFilterOptions() {
+        if (!elements.searchChapterFilter) return;
+        const previous = state.searchChapterFilter;
+        const options = ['<option value="">All chapters</option>'];
+        options.push(...state.chapters.map(chapter => (
+            `<option value="${chapter.id}">${escapeHtml(chapter.title)}</option>`
+        )));
+        elements.searchChapterFilter.innerHTML = options.join('');
+
+        const stillExists = !previous || state.chapters.some(chapter => chapter.id === previous);
+        state.searchChapterFilter = stillExists ? previous : '';
+        elements.searchChapterFilter.value = state.searchChapterFilter;
+    }
+
+    function renderSearchResults(results, query) {
+        if (!elements.searchResultsList) return;
+        if (!Array.isArray(results) || results.length === 0) {
+            elements.searchResultsList.innerHTML = '<div class="search-result-empty"><em>No results found</em></div>';
+            return;
+        }
+
+        const terms = extractSearchTerms(query);
+        const grouped = new Map();
+        for (const result of results) {
+            const chapterId = result.chapterId || 'unknown-chapter';
+            if (!grouped.has(chapterId)) {
+                grouped.set(chapterId, []);
+            }
+            grouped.get(chapterId).push(result);
+        }
+
+        const html = Array.from(grouped.entries()).map(([chapterId, groupResults]) => {
+            const chapterTitle = escapeHtml(chapterTitleForSearch(chapterId));
+            const items = groupResults.map(result => {
+                const snippetRaw = escapeHtml(result.snippet || '');
+                const snippet = highlightTermsInText(snippetRaw, terms);
+                return `
+                    <div class="search-result-item" data-chapter-id="${result.chapterId}" data-paragraph-index="${result.paragraphIndex}">
+                        <div class="search-result-snippet">${snippet || '<em>No snippet available</em>'}</div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <section class="search-group">
+                    <div class="search-group-title">${chapterTitle}</div>
+                    ${items}
+                </section>
+            `;
+        }).join('');
+
+        elements.searchResultsList.innerHTML = html;
+    }
+
     async function performSearch(query) {
-        if (!query || query.length < 2) {
+        if (!state.currentBook?.id) return;
+        const normalizedQuery = (query || '').trim();
+        state.searchLastQuery = normalizedQuery;
+        if (!normalizedQuery || normalizedQuery.length < 2) {
             elements.searchResults.classList.add('hidden');
+            if (elements.searchResultsList) {
+                elements.searchResultsList.innerHTML = '';
+            }
             return;
         }
 
         try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&bookId=${state.currentBook.id}&limit=20`);
-            const results = await response.json();
-
-            if (results.length === 0) {
-                elements.searchResults.innerHTML = '<div class="search-result-item"><em>No results found</em></div>';
-            } else {
-                elements.searchResults.innerHTML = results.map(result => {
-                    const chapter = state.chapters.find(c => c.id === result.chapterId);
-                    const chapterTitle = chapter ? chapter.title : result.chapterId;
-                    const snippet = result.snippet || '';
-                    // Highlight the search term in snippet
-                    const highlightedSnippet = snippet.replace(
-                        new RegExp(`(${query})`, 'gi'),
-                        '<mark>$1</mark>'
-                    );
-                    return `
-                        <div class="search-result-item" data-chapter-id="${result.chapterId}" data-paragraph-index="${result.paragraphIndex}">
-                            <div class="search-result-chapter">${chapterTitle}</div>
-                            <div class="search-result-snippet">${highlightedSnippet}</div>
-                        </div>
-                    `;
-                }).join('');
+            const params = new URLSearchParams({
+                q: normalizedQuery,
+                bookId: state.currentBook.id,
+                limit: '20'
+            });
+            if (state.searchChapterFilter) {
+                params.set('chapterId', state.searchChapterFilter);
             }
-
+            const response = await fetch(`/api/search?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`Search request failed with status ${response.status}`);
+            }
+            const results = await response.json();
+            renderSearchResults(results, normalizedQuery);
             elements.searchResults.classList.remove('hidden');
         } catch (error) {
             console.error('Search failed:', error);
@@ -2367,12 +2493,22 @@
     }
 
     function navigateToSearchResult(chapterId, paragraphIndex) {
-        navigateToChapterParagraph(chapterId, paragraphIndex);
+        const query = (state.searchLastQuery || elements.searchInput.value || '').trim();
+        navigateToChapterParagraph(chapterId, paragraphIndex, query);
     }
 
-    function navigateToChapterParagraph(chapterId, paragraphIndex) {
+    function navigateToChapterParagraph(chapterId, paragraphIndex, highlightQuery = '') {
         const chapterIndex = state.chapters.findIndex(c => c.id === chapterId);
         if (chapterIndex === -1) return;
+
+        const terms = extractSearchTerms(highlightQuery);
+        if (terms.length > 0) {
+            state.searchHighlightTerms = terms;
+            state.searchHighlightChapterId = chapterId;
+            state.searchHighlightParagraphIndex = paragraphIndex;
+        } else {
+            clearSearchHighlightState();
+        }
 
         elements.searchResults.classList.add('hidden');
         elements.searchInput.value = '';
@@ -2418,6 +2554,9 @@
         state.quizSelectedAnswers = [];
         state.quizSubmitting = false;
         state.quizResult = null;
+        state.searchChapterFilter = '';
+        state.searchLastQuery = '';
+        clearSearchHighlightState();
         closeAnnotationMenu();
         closeReaderSettingsPanel();
         hideShortcutsOverlay(false);
@@ -2431,6 +2570,12 @@
         elements.libraryView.classList.remove('hidden');
         elements.searchResults.classList.add('hidden');
         elements.searchInput.value = '';
+        if (elements.searchResultsList) {
+            elements.searchResultsList.innerHTML = '';
+        }
+        if (elements.searchChapterFilter) {
+            elements.searchChapterFilter.value = '';
+        }
         elements.librarySearch.value = '';
         renderLibrary();
         elements.librarySearch.focus();
@@ -4998,9 +5143,18 @@
                 performSearch(e.target.value);
             }, 300);
         });
+        if (elements.searchChapterFilter) {
+            elements.searchChapterFilter.addEventListener('change', (e) => {
+                state.searchChapterFilter = e.target.value || '';
+                performSearch(elements.searchInput.value);
+            });
+        }
 
         elements.searchInput.addEventListener('focus', () => {
             ttsPauseForModal();
+            if (elements.searchInput.value.trim().length >= 2) {
+                performSearch(elements.searchInput.value);
+            }
         });
 
         elements.searchInput.addEventListener('blur', () => {
@@ -5020,7 +5174,8 @@
             const resultItem = e.target.closest('.search-result-item');
             if (resultItem && resultItem.dataset.chapterId) {
                 const chapterId = resultItem.dataset.chapterId;
-                const paragraphIndex = parseInt(resultItem.dataset.paragraphIndex) || 0;
+                const parsed = parseInt(resultItem.dataset.paragraphIndex, 10);
+                const paragraphIndex = Number.isInteger(parsed) ? parsed : 0;
                 navigateToSearchResult(chapterId, paragraphIndex);
             }
         });

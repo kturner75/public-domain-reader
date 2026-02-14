@@ -161,7 +161,15 @@
         </header>
 
         <!-- Search Results -->
-        <div id="search-results" class="search-results hidden"></div>
+        <div id="search-results" class="search-results hidden">
+            <div class="search-results-toolbar">
+                <label for="search-chapter-filter">Chapter</label>
+                <select id="search-chapter-filter" class="search-results-filter">
+                    <option value="">All chapters</option>
+                </select>
+            </div>
+            <div id="search-results-list" class="search-results-list"></div>
+        </div>
 
         <!-- Chapter Title -->
         <h2 id="chapter-title" class="chapter-title"></h2>
