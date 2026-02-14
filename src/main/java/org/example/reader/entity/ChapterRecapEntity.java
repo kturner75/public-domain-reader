@@ -9,7 +9,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -42,7 +41,7 @@ public class ChapterRecapEntity {
     @Column
     private LocalDateTime leaseExpiresAt;
 
-    @Column(nullable = false, columnDefinition = "integer default 0")
+    @Column(nullable = false)
     private int retryCount;
 
     @Column
@@ -57,8 +56,7 @@ public class ChapterRecapEntity {
     @Column(length = 200)
     private String modelName;
 
-    @Lob
-    @Column(name = "payload_json")
+    @Column(name = "payload_json", columnDefinition = "TEXT")
     private String payloadJson;
 
     public ChapterRecapEntity() {
