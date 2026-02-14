@@ -72,33 +72,51 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
             boolean apiKeyConfigured = publicApiKey != null && !publicApiKey.isBlank();
             boolean sessionAuthConfigured = sessionAuthService != null && sessionAuthService.isPasswordConfigured();
 
-            if (!apiKeyConfigured && !sessionAuthConfigured) {
-                log.warn("Public mode is enabled but no sensitive endpoint auth is configured; blocking sensitive endpoint {}", path);
-                writeJson(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
-                        "{\"error\":\"Public mode security is not configured\"}");
-                return false;
-            }
-
-            boolean apiKeyAuthenticated = false;
-            if (apiKeyConfigured) {
-                String providedApiKey = request.getHeader("X-API-Key");
-                apiKeyAuthenticated = constantTimeEquals(publicApiKey, providedApiKey);
-                if (apiKeyAuthenticated) {
-                    principalScope = "api:" + shortHash(providedApiKey);
+            if (endpointType == SensitiveApiRequestMatcher.EndpointType.ADMIN) {
+                if (!apiKeyConfigured) {
+                    log.warn("Public mode is enabled but no admin API key is configured; blocking admin endpoint {}", path);
+                    writeJson(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                            "{\"error\":\"Public mode admin security is not configured\"}");
+                    return false;
                 }
-            }
 
-            String sessionPrincipal = sessionAuthService != null
-                    ? sessionAuthService.resolveAuthenticatedPrincipal(request)
-                    : null;
-            boolean sessionAuthenticated = sessionPrincipal != null;
-            if (!apiKeyAuthenticated && sessionAuthenticated) {
-                principalScope = sessionPrincipal;
-            }
-            if (!apiKeyAuthenticated && !sessionAuthenticated) {
-                writeJson(response, HttpServletResponse.SC_UNAUTHORIZED,
-                        "{\"error\":\"Authentication required\"}");
-                return false;
+                String providedApiKey = request.getHeader("X-API-Key");
+                boolean apiKeyAuthenticated = constantTimeEquals(publicApiKey, providedApiKey);
+                if (!apiKeyAuthenticated) {
+                    writeJson(response, HttpServletResponse.SC_UNAUTHORIZED,
+                            "{\"error\":\"Admin API key required\"}");
+                    return false;
+                }
+                principalScope = "api:" + shortHash(providedApiKey);
+            } else {
+                if (!apiKeyConfigured && !sessionAuthConfigured) {
+                    log.warn("Public mode is enabled but no sensitive endpoint auth is configured; blocking sensitive endpoint {}", path);
+                    writeJson(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                            "{\"error\":\"Public mode security is not configured\"}");
+                    return false;
+                }
+
+                boolean apiKeyAuthenticated = false;
+                if (apiKeyConfigured) {
+                    String providedApiKey = request.getHeader("X-API-Key");
+                    apiKeyAuthenticated = constantTimeEquals(publicApiKey, providedApiKey);
+                    if (apiKeyAuthenticated) {
+                        principalScope = "api:" + shortHash(providedApiKey);
+                    }
+                }
+
+                String sessionPrincipal = sessionAuthService != null
+                        ? sessionAuthService.resolveAuthenticatedPrincipal(request)
+                        : null;
+                boolean sessionAuthenticated = sessionPrincipal != null;
+                if (!apiKeyAuthenticated && sessionAuthenticated) {
+                    principalScope = sessionPrincipal;
+                }
+                if (!apiKeyAuthenticated && !sessionAuthenticated) {
+                    writeJson(response, HttpServletResponse.SC_UNAUTHORIZED,
+                            "{\"error\":\"Authentication required\"}");
+                    return false;
+                }
             }
         }
 
@@ -168,6 +186,9 @@ public class PublicApiGuardInterceptor implements HandlerInterceptor {
     private int resolveLimit(SensitiveApiRequestMatcher.EndpointType endpointType, boolean authenticatedScope) {
         if (endpointType == SensitiveApiRequestMatcher.EndpointType.CHAT) {
             return authenticatedScope ? authenticatedChatLimit : chatLimit;
+        }
+        if (endpointType == SensitiveApiRequestMatcher.EndpointType.ADMIN) {
+            return authenticatedGenerationLimit;
         }
         return authenticatedScope ? authenticatedGenerationLimit : generationLimit;
     }

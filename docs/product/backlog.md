@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-002 - Replace in-memory generation queues with durable job orchestration` (`Done`, validated with targeted BL-002 coverage and full `mvn test`).
+- Most recent completed slice: `BL-007 - Library management UI for local books and feature toggles` (`Done`, re-scoped to admin-only operations with public-mode API-key enforcement and interceptor test coverage).
 - Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
-- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-007 - Library management UI for local books and feature toggles` (`Proposed`).
+- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-008 - Upgrade in-reader search quality and navigation` (`Proposed`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -275,12 +275,19 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Improvement
 - Priority: P1
 - Effort: M
-- Status: Proposed
-- Problem: Backend supports delete and feature toggles, but UI lacks first-class controls.
+- Status: Done
+- Problem: Backend supports delete and feature toggles, but those operations must be restricted to admin-only workflows and not exposed to the public reader UI.
+- Current Direction (2026-02-14):
+- Keep reader-facing library UI read-only for shared/global cached books.
+- Restrict library management endpoints to API-key-authenticated admin access in `deployment.mode=public`.
+- Consider separate operator tooling (CLI/admin panel) for delete/toggle actions.
 - Acceptance Criteria:
-- Expose delete/unimport action with confirmation.
-- Expose per-book feature toggles in library UI.
-- Reflect toggle state immediately in reader availability checks.
+- Public reader UI does not expose delete/unimport or feature-toggle controls for shared cached books.
+- Library management endpoints (`DELETE /api/library/{bookId}`, `DELETE /api/library`, `PATCH /api/library/{bookId}/features`) require admin API key in public mode.
+- Operator/admin workflow for delete/toggle actions is documented (CLI or protected admin surface).
+- Session Log:
+- 2026-02-14: Re-scoped BL-007 to admin-only operations for shared cached books and added public-mode guardrail enforcement so library delete/feature-toggle endpoints require `X-API-Key` (collaborator session auth is not sufficient).
+- 2026-02-14: Added `ADMIN` endpoint classification for library feature/delete routes, enforced API-key-only auth for those routes in `PublicApiGuardInterceptor`, and validated with `SensitiveApiRequestMatcherTest` + `PublicApiGuardInterceptorAdminOnlyTest` (plus targeted guard suite).
 
 ### BL-008 - Upgrade in-reader search quality and navigation
 - Type: Improvement
