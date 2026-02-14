@@ -17,7 +17,8 @@ Core Features (Phase 1)
 - Book selection → chapter navigation
 - No-scroll, two-column layout with perfect page fitting
 - Smart full-text search
-- LocalStorage: resume last position, font size, notes/bookmarks
+- LocalStorage: resume last position, font size
+- Server-backed per-reader notes/highlights/bookmarks (cookie-identified profile)
 
 Tech Stack
 - Frontend: Pure vanilla HTML/CSS/JS

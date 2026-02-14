@@ -79,6 +79,32 @@
                     </svg>
                 </button>
             </div>
+            <div class="annotation-menu">
+                <button id="annotation-menu-toggle" class="header-btn" title="Annotations">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18"/>
+                        <path d="M7 16l8-8 3 3-8 8H7z"/>
+                    </svg>
+                </button>
+                <div id="annotation-menu-panel" class="annotation-menu-panel hidden">
+                    <button id="highlight-toggle" class="annotation-action-btn" type="button">
+                        <span>Toggle highlight</span>
+                        <kbd>u</kbd>
+                    </button>
+                    <button id="note-toggle" class="annotation-action-btn" type="button">
+                        <span>Add or edit note</span>
+                        <kbd>n</kbd>
+                    </button>
+                    <button id="bookmark-toggle" class="annotation-action-btn" type="button">
+                        <span>Toggle bookmark</span>
+                        <kbd>b</kbd>
+                    </button>
+                    <button id="bookmarks-toggle" class="annotation-action-btn" type="button">
+                        <span>Open bookmarks</span>
+                        <kbd>B</kbd>
+                    </button>
+                </div>
+            </div>
             <div class="book-meta">
                 <h1 id="book-title" class="book-title"></h1>
                 <p id="book-author" class="book-author hidden"></p>
@@ -146,18 +172,15 @@
 
         <!-- Footer with navigation hints -->
         <footer class="reader-footer">
-            <span class="nav-hint">
-                <kbd>h</kbd>/<kbd>l</kbd> page
-                <kbd>j</kbd>/<kbd>k</kbd> paragraph
-                <kbd>H</kbd>/<kbd>L</kbd> chapter
-                <kbd>c</kbd> chapters
-                <span id="tts-hint"><kbd>p</kbd> read</span>
-                <span id="tts-speed-hint"><kbd>s</kbd> speed</span>
-                <span id="speed-reading-hint"><kbd>r</kbd> speed read</span>
-                <span id="illustration-hint"><kbd>i</kbd> illustration</span>
-                <span id="character-hint"><kbd>m</kbd> characters</span>
+            <div class="reader-footer-left">
+                <button id="shortcuts-toggle" class="footer-icon-btn" title="Keyboard shortcuts (?)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="5" width="20" height="14" rx="2" ry="2"/>
+                        <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h8M6 17h.01M10 17h.01M14 17h.01M18 17h.01"/>
+                    </svg>
+                </button>
                 <span id="cache-only-indicator" class="cache-only-indicator hidden">cache-only</span>
-            </span>
+            </div>
             <span id="page-indicator" class="page-indicator"></span>
         </footer>
 
@@ -250,9 +273,109 @@
             </div>
         </div>
 
+        <!-- Keyboard Shortcuts Overlay -->
+        <div id="shortcuts-overlay" class="chapter-list-overlay hidden">
+            <div class="chapter-list-container shortcuts-container">
+                <div class="chapter-list-header">
+                    <h3>Keyboard Shortcuts</h3>
+                    <span class="chapter-list-hint">Press Esc to close</span>
+                </div>
+                <div class="shortcuts-list">
+                    <div class="shortcut-row">
+                        <span><kbd>h</kbd>/<kbd>l</kbd></span>
+                        <span>Page previous/next</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>j</kbd>/<kbd>k</kbd></span>
+                        <span>Paragraph next/previous</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>H</kbd>/<kbd>L</kbd></span>
+                        <span>Chapter previous/next</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>c</kbd></span>
+                        <span>Open chapter list</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>u</kbd></span>
+                        <span>Toggle highlight</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>n</kbd></span>
+                        <span>Add or edit note</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>b</kbd></span>
+                        <span>Toggle bookmark</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>B</kbd></span>
+                        <span>Open bookmarks</span>
+                    </div>
+                    <div id="tts-hint" class="shortcut-row">
+                        <span><kbd>p</kbd></span>
+                        <span>Toggle read aloud</span>
+                    </div>
+                    <div id="tts-speed-hint" class="shortcut-row">
+                        <span><kbd>s</kbd></span>
+                        <span>Cycle read speed</span>
+                    </div>
+                    <div id="speed-reading-hint" class="shortcut-row">
+                        <span><kbd>r</kbd></span>
+                        <span>Toggle speed reading</span>
+                    </div>
+                    <div id="illustration-hint" class="shortcut-row">
+                        <span><kbd>i</kbd></span>
+                        <span>Toggle illustration mode</span>
+                    </div>
+                    <div id="character-hint" class="shortcut-row">
+                        <span><kbd>m</kbd></span>
+                        <span>Open character browser</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bookmark List Overlay -->
+        <div id="bookmarks-overlay" class="chapter-list-overlay hidden">
+            <div class="chapter-list-container bookmarks-list-container">
+                <div class="chapter-list-header">
+                    <h3>Bookmarks</h3>
+                    <span class="chapter-list-hint">Arrow keys to navigate, Enter to jump, Esc to close</span>
+                </div>
+                <ul id="bookmark-list" class="chapter-list bookmark-list"></ul>
+            </div>
+        </div>
+
+        <!-- Note Modal -->
+        <div id="note-modal" class="prompt-modal hidden">
+            <div id="note-modal-backdrop" class="prompt-modal-backdrop"></div>
+            <div class="prompt-modal-container note-modal-container">
+                <div class="prompt-modal-header">
+                    <h3>Edit Note</h3>
+                    <button id="note-modal-close" class="prompt-modal-close" title="Close (Esc)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="prompt-modal-body">
+                    <p id="note-modal-location" class="note-modal-location"></p>
+                    <textarea id="note-textarea" class="prompt-textarea" rows="7" placeholder="Write a note for this paragraph..."></textarea>
+                </div>
+                <div class="prompt-modal-footer">
+                    <button id="note-delete" class="prompt-btn prompt-btn-secondary">Delete Note</button>
+                    <button id="note-cancel" class="prompt-btn prompt-btn-secondary">Cancel</button>
+                    <button id="note-save" class="prompt-btn prompt-btn-primary">Save Note</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Illustration Prompt Modal -->
         <div id="prompt-modal" class="prompt-modal hidden">
-            <div class="prompt-modal-backdrop"></div>
+            <div id="prompt-modal-backdrop" class="prompt-modal-backdrop"></div>
             <div class="prompt-modal-container">
                 <div class="prompt-modal-header">
                     <h3 id="prompt-modal-title">Edit Illustration Prompt</h3>

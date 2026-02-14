@@ -1,9 +1,13 @@
 package org.example.reader.controller;
 
 import org.example.reader.model.Book;
+import org.example.reader.model.BookmarkedParagraph;
 import org.example.reader.model.ChapterContent;
+import org.example.reader.model.ParagraphAnnotation;
 import org.example.reader.model.Paragraph;
 import org.example.reader.service.BookStorageService;
+import org.example.reader.service.ParagraphAnnotationService;
+import org.example.reader.service.ReaderProfileService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -14,9 +18,12 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(LibraryController.class)
@@ -27,6 +34,12 @@ class LibraryControllerTest {
 
     @MockitoBean
     private BookStorageService bookStorageService;
+
+    @MockitoBean
+    private ParagraphAnnotationService paragraphAnnotationService;
+
+    @MockitoBean
+    private ReaderProfileService readerProfileService;
 
     @Test
     void listBooks_returnsAllBooks() throws Exception {
@@ -173,5 +186,88 @@ class LibraryControllerTest {
             .andExpect(jsonPath("$.ttsEnabled", is(true)))
             .andExpect(jsonPath("$.illustrationEnabled", is(false)))
             .andExpect(jsonPath("$.characterEnabled", is(true)));
+    }
+
+    @Test
+    void getAnnotations_returnsReaderAnnotations() throws Exception {
+        List<ParagraphAnnotation> annotations = List.of(
+                new ParagraphAnnotation("ch-1", 2, true, "Important line", false, null)
+        );
+        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
+        when(paragraphAnnotationService.getBookAnnotations("reader-1", "book-1"))
+                .thenReturn(Optional.of(annotations));
+
+        mockMvc.perform(get("/api/library/book-1/annotations"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].chapterId", is("ch-1")))
+                .andExpect(jsonPath("$[0].paragraphIndex", is(2)))
+                .andExpect(jsonPath("$[0].highlighted", is(true)))
+                .andExpect(jsonPath("$[0].noteText", is("Important line")))
+                .andExpect(jsonPath("$[0].bookmarked", is(false)));
+    }
+
+    @Test
+    void getBookmarks_returnsReaderBookmarks() throws Exception {
+        List<BookmarkedParagraph> bookmarks = List.of(
+                new BookmarkedParagraph("ch-3", "Chapter 3", 7, "A short snippet.", null)
+        );
+        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
+        when(paragraphAnnotationService.getBookmarkedParagraphs("reader-1", "book-1"))
+                .thenReturn(Optional.of(bookmarks));
+
+        mockMvc.perform(get("/api/library/book-1/bookmarks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].chapterId", is("ch-3")))
+                .andExpect(jsonPath("$[0].chapterTitle", is("Chapter 3")))
+                .andExpect(jsonPath("$[0].paragraphIndex", is(7)))
+                .andExpect(jsonPath("$[0].snippet", is("A short snippet.")));
+    }
+
+    @Test
+    void upsertAnnotation_returnsSavedAnnotation() throws Exception {
+        ParagraphAnnotation saved = new ParagraphAnnotation("ch-1", 4, true, "Saved note", true, null);
+        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
+        when(paragraphAnnotationService.saveAnnotation("reader-1", "book-1", "ch-1", 4, true, "Saved note", true))
+                .thenReturn(new ParagraphAnnotationService.SaveOutcome(
+                        ParagraphAnnotationService.SaveStatus.SAVED,
+                        saved
+                ));
+
+        mockMvc.perform(put("/api/library/book-1/annotations/ch-1/4")
+                        .contentType("application/json")
+                        .content("{\"highlighted\":true,\"noteText\":\"Saved note\",\"bookmarked\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chapterId", is("ch-1")))
+                .andExpect(jsonPath("$.paragraphIndex", is(4)))
+                .andExpect(jsonPath("$.highlighted", is(true)))
+                .andExpect(jsonPath("$.noteText", is("Saved note")))
+                .andExpect(jsonPath("$.bookmarked", is(true)));
+    }
+
+    @Test
+    void upsertAnnotation_whenCleared_returnsNoContent() throws Exception {
+        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
+        when(paragraphAnnotationService.saveAnnotation("reader-1", "book-1", "ch-1", 4, false, "", false))
+                .thenReturn(new ParagraphAnnotationService.SaveOutcome(
+                        ParagraphAnnotationService.SaveStatus.CLEARED,
+                        null
+                ));
+
+        mockMvc.perform(put("/api/library/book-1/annotations/ch-1/4")
+                        .contentType("application/json")
+                        .content("{\"highlighted\":false,\"noteText\":\"\",\"bookmarked\":false}"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deleteAnnotation_returnsNoContent() throws Exception {
+        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
+        when(paragraphAnnotationService.deleteAnnotation("reader-1", "book-1", "ch-1", 2))
+                .thenReturn(ParagraphAnnotationService.DeleteStatus.DELETED);
+
+        mockMvc.perform(delete("/api/library/book-1/annotations/ch-1/2"))
+                .andExpect(status().isNoContent());
     }
 }
