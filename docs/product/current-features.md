@@ -17,6 +17,12 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Reader search (`/`) with in-book result navigation.
 - Resume state persisted in `localStorage` (book/chapter/page/paragraph).
 - Recently-read list in library.
+- In-reader paragraph annotations:
+  - highlight toggle (`u`)
+  - note edit modal (`n`)
+  - bookmark toggle (`b`)
+  - bookmark jump overlay (`B`)
+- Annotation data persisted server-side per reader profile cookie.
 
 ## Library and Import
 

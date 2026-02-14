@@ -1,13 +1,20 @@
 package org.example.reader.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.example.reader.model.Book;
+import org.example.reader.model.BookmarkedParagraph;
 import org.example.reader.model.ChapterContent;
+import org.example.reader.model.ParagraphAnnotation;
 import org.example.reader.service.BookStorageService;
+import org.example.reader.service.ParagraphAnnotationService;
+import org.example.reader.service.ReaderProfileService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,9 +26,16 @@ import java.util.List;
 public class LibraryController {
 
     private final BookStorageService bookStorageService;
+    private final ParagraphAnnotationService paragraphAnnotationService;
+    private final ReaderProfileService readerProfileService;
 
-    public LibraryController(BookStorageService bookStorageService) {
+    public LibraryController(
+            BookStorageService bookStorageService,
+            ParagraphAnnotationService paragraphAnnotationService,
+            ReaderProfileService readerProfileService) {
         this.bookStorageService = bookStorageService;
+        this.paragraphAnnotationService = paragraphAnnotationService;
+        this.readerProfileService = readerProfileService;
     }
 
     @GetMapping
@@ -62,6 +76,82 @@ public class LibraryController {
             .orElse(ResponseEntity.notFound().build());
     }
 
+    @GetMapping("/{bookId}/annotations")
+    public ResponseEntity<List<ParagraphAnnotation>> getAnnotations(
+            @PathVariable String bookId,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        String readerId = readerProfileService.resolveReaderId(request, response);
+        return paragraphAnnotationService.getBookAnnotations(readerId, bookId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{bookId}/bookmarks")
+    public ResponseEntity<List<BookmarkedParagraph>> getBookmarks(
+            @PathVariable String bookId,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        String readerId = readerProfileService.resolveReaderId(request, response);
+        return paragraphAnnotationService.getBookmarkedParagraphs(readerId, bookId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PutMapping("/{bookId}/annotations/{chapterId}/{paragraphIndex}")
+    public ResponseEntity<ParagraphAnnotation> upsertAnnotation(
+            @PathVariable String bookId,
+            @PathVariable String chapterId,
+            @PathVariable int paragraphIndex,
+            @RequestBody AnnotationUpsertRequest request,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse) {
+        if (request == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        boolean highlighted = Boolean.TRUE.equals(request.highlighted());
+        boolean bookmarked = Boolean.TRUE.equals(request.bookmarked());
+        String readerId = readerProfileService.resolveReaderId(httpRequest, httpResponse);
+        ParagraphAnnotationService.SaveOutcome outcome = paragraphAnnotationService.saveAnnotation(
+                readerId,
+                bookId,
+                chapterId,
+                paragraphIndex,
+                highlighted,
+                request.noteText(),
+                bookmarked
+        );
+
+        if (outcome.status() == ParagraphAnnotationService.SaveStatus.NOT_FOUND) {
+            return ResponseEntity.notFound().build();
+        }
+        if (outcome.status() == ParagraphAnnotationService.SaveStatus.CLEARED) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(outcome.annotation());
+    }
+
+    @DeleteMapping("/{bookId}/annotations/{chapterId}/{paragraphIndex}")
+    public ResponseEntity<Void> deleteAnnotation(
+            @PathVariable String bookId,
+            @PathVariable String chapterId,
+            @PathVariable int paragraphIndex,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        String readerId = readerProfileService.resolveReaderId(request, response);
+        ParagraphAnnotationService.DeleteStatus status = paragraphAnnotationService.deleteAnnotation(
+                readerId,
+                bookId,
+                chapterId,
+                paragraphIndex
+        );
+        if (status == ParagraphAnnotationService.DeleteStatus.NOT_FOUND) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @DeleteMapping("/{bookId}")
     public ResponseEntity<Void> deleteBook(@PathVariable String bookId) {
         boolean deleted = bookStorageService.deleteBook(bookId);
@@ -84,5 +174,11 @@ public class LibraryController {
             Boolean ttsEnabled,
             Boolean illustrationEnabled,
             Boolean characterEnabled
+    ) {}
+
+    public record AnnotationUpsertRequest(
+            Boolean highlighted,
+            String noteText,
+            Boolean bookmarked
     ) {}
 }

@@ -13,6 +13,9 @@
         totalPages: 0,
         currentParagraphIndex: 0,
         pagesData: [],         // Array of { startParagraph, endParagraph } for each page
+        annotationsByKey: new Map(),
+        bookmarks: [],
+        noteModalParagraphIndex: null,
         isImporting: false,
         ttsEnabled: false,
         ttsAudio: null,
@@ -127,8 +130,26 @@
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
         cacheOnlyIndicator: document.getElementById('cache-only-indicator'),
+        shortcutsToggle: document.getElementById('shortcuts-toggle'),
+        shortcutsOverlay: document.getElementById('shortcuts-overlay'),
         chapterListOverlay: document.getElementById('chapter-list-overlay'),
         chapterList: document.getElementById('chapter-list'),
+        annotationMenuToggle: document.getElementById('annotation-menu-toggle'),
+        annotationMenuPanel: document.getElementById('annotation-menu-panel'),
+        highlightToggle: document.getElementById('highlight-toggle'),
+        noteToggle: document.getElementById('note-toggle'),
+        bookmarkToggle: document.getElementById('bookmark-toggle'),
+        bookmarksToggle: document.getElementById('bookmarks-toggle'),
+        bookmarksOverlay: document.getElementById('bookmarks-overlay'),
+        bookmarkList: document.getElementById('bookmark-list'),
+        noteModal: document.getElementById('note-modal'),
+        noteModalBackdrop: document.getElementById('note-modal-backdrop'),
+        noteModalClose: document.getElementById('note-modal-close'),
+        noteModalLocation: document.getElementById('note-modal-location'),
+        noteTextarea: document.getElementById('note-textarea'),
+        noteSave: document.getElementById('note-save'),
+        noteCancel: document.getElementById('note-cancel'),
+        noteDelete: document.getElementById('note-delete'),
         ttsToggle: document.getElementById('tts-toggle'),
         ttsSpeed: document.getElementById('tts-speed'),
         ttsMode: document.getElementById('tts-mode'),
@@ -181,7 +202,7 @@
         illustrationHint: document.getElementById('illustration-hint'),
         // Prompt editing modal elements
         promptModal: document.getElementById('prompt-modal'),
-        promptModalBackdrop: document.querySelector('.prompt-modal-backdrop'),
+        promptModalBackdrop: document.getElementById('prompt-modal-backdrop'),
         promptModalClose: document.getElementById('prompt-modal-close'),
         promptModalTitle: document.getElementById('prompt-modal-title'),
         promptTextarea: document.getElementById('prompt-textarea'),
@@ -236,6 +257,7 @@
 
     // Chapter list state
     let chapterListSelectedIndex = 0;
+    let bookmarkListSelectedIndex = 0;
 
     // LocalStorage keys
     const STORAGE_KEYS = {
@@ -255,6 +277,55 @@
     };
 
     const MAX_RECENTLY_READ = 5;
+
+    function annotationKey(chapterId, paragraphIndex) {
+        return `${chapterId}:${paragraphIndex}`;
+    }
+
+    function getCurrentChapterId() {
+        return state.chapters[state.currentChapterIndex]?.id || null;
+    }
+
+    function getParagraphAnnotation(chapterId, paragraphIndex) {
+        if (!chapterId || !Number.isInteger(paragraphIndex)) {
+            return null;
+        }
+        return state.annotationsByKey.get(annotationKey(chapterId, paragraphIndex)) || null;
+    }
+
+    function setParagraphAnnotation(annotation) {
+        if (!annotation || !annotation.chapterId || !Number.isInteger(annotation.paragraphIndex)) {
+            return;
+        }
+        state.annotationsByKey.set(
+            annotationKey(annotation.chapterId, annotation.paragraphIndex),
+            annotation
+        );
+    }
+
+    function removeParagraphAnnotation(chapterId, paragraphIndex) {
+        if (!chapterId || !Number.isInteger(paragraphIndex)) {
+            return;
+        }
+        state.annotationsByKey.delete(annotationKey(chapterId, paragraphIndex));
+    }
+
+    function isNoteModalVisible() {
+        return !!elements.noteModal && !elements.noteModal.classList.contains('hidden');
+    }
+
+    function isBookmarksOverlayVisible() {
+        return !!elements.bookmarksOverlay && !elements.bookmarksOverlay.classList.contains('hidden');
+    }
+
+    function isShortcutsOverlayVisible() {
+        return !!elements.shortcutsOverlay && !elements.shortcutsOverlay.classList.contains('hidden');
+    }
+
+    function isAnnotationMenuVisible() {
+        return !!elements.annotationMenuPanel && !elements.annotationMenuPanel.classList.contains('hidden');
+    }
+
     function isBookFeatureEnabled(flag) {
         return !!(state.currentBook && state.currentBook[flag] === true);
     }
@@ -471,6 +542,8 @@
                 await selectBook(book, lastChapter, lastPage, lastParagraph);
             }
         }
+
+        updateAnnotationControls();
     }
 
     // Load library - both local books and popular from catalog
@@ -664,6 +737,9 @@
         state.discoveredCharacterDetails = loadDiscoveredCharacterDetails(book.id);
         state.ttsVoiceSettings = null;
         state.illustrationSettings = null;
+        state.annotationsByKey = new Map();
+        state.bookmarks = [];
+        state.noteModalParagraphIndex = null;
         stopCharacterPolling();
 
         // Save to localStorage and recently read
@@ -706,6 +782,8 @@
         if (state.illustrationMode) {
             updateColumnLayout();
         }
+
+        await loadAnnotationsForCurrentBook();
 
         // Load chapter
         await loadChapter(chapterIndex, pageIndex, paragraphIndex);
@@ -773,7 +851,346 @@
             state.paragraphs = [];
             elements.columnLeft.innerHTML = '<p class="no-content">Content not available</p>';
             elements.columnRight.innerHTML = '';
+            updateAnnotationControls();
         }
+    }
+
+    async function loadAnnotationsForCurrentBook() {
+        if (!state.currentBook?.id) {
+            state.annotationsByKey = new Map();
+            state.bookmarks = [];
+            updateAnnotationControls();
+            return;
+        }
+
+        try {
+            const [annotationsResponse, bookmarksResponse] = await Promise.all([
+                fetch(`/api/library/${state.currentBook.id}/annotations`, { cache: 'no-store' }),
+                fetch(`/api/library/${state.currentBook.id}/bookmarks`, { cache: 'no-store' })
+            ]);
+
+            if (annotationsResponse.ok) {
+                const annotations = await annotationsResponse.json();
+                state.annotationsByKey = new Map();
+                if (Array.isArray(annotations)) {
+                    annotations.forEach(setParagraphAnnotation);
+                }
+            } else {
+                state.annotationsByKey = new Map();
+            }
+
+            if (bookmarksResponse.ok) {
+                const bookmarks = await bookmarksResponse.json();
+                state.bookmarks = Array.isArray(bookmarks) ? bookmarks : [];
+            } else {
+                state.bookmarks = [];
+            }
+        } catch (error) {
+            console.error('Failed to load annotations:', error);
+            state.annotationsByKey = new Map();
+            state.bookmarks = [];
+        } finally {
+            renderBookmarkList();
+            updateAnnotationControls();
+        }
+    }
+
+    async function refreshBookmarksForCurrentBook() {
+        if (!state.currentBook?.id) {
+            state.bookmarks = [];
+            renderBookmarkList();
+            return;
+        }
+        try {
+            const response = await fetch(`/api/library/${state.currentBook.id}/bookmarks`, { cache: 'no-store' });
+            if (!response.ok) {
+                return;
+            }
+            const bookmarks = await response.json();
+            state.bookmarks = Array.isArray(bookmarks) ? bookmarks : [];
+            renderBookmarkList();
+            updateAnnotationControls();
+        } catch (error) {
+            console.debug('Failed to refresh bookmarks:', error);
+        }
+    }
+
+    async function upsertParagraphAnnotation(chapterId, paragraphIndex, nextAnnotation) {
+        if (!state.currentBook?.id || !chapterId || !Number.isInteger(paragraphIndex)) {
+            return false;
+        }
+        try {
+            const response = await fetch(
+                `/api/library/${state.currentBook.id}/annotations/${chapterId}/${paragraphIndex}`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nextAnnotation)
+                }
+            );
+
+            if (response.status === 204) {
+                removeParagraphAnnotation(chapterId, paragraphIndex);
+                await refreshBookmarksForCurrentBook();
+                renderPage();
+                return true;
+            }
+            if (!response.ok) {
+                return false;
+            }
+
+            const savedAnnotation = await response.json();
+            setParagraphAnnotation(savedAnnotation);
+            await refreshBookmarksForCurrentBook();
+            renderPage();
+            return true;
+        } catch (error) {
+            console.error('Failed to save annotation:', error);
+            return false;
+        }
+    }
+
+    function toggleAnnotationMenu() {
+        if (!elements.annotationMenuPanel) return;
+        if (isAnnotationMenuVisible()) {
+            closeAnnotationMenu();
+            return;
+        }
+        elements.annotationMenuPanel.classList.remove('hidden');
+        elements.annotationMenuToggle?.classList.add('active');
+    }
+
+    function closeAnnotationMenu() {
+        if (!elements.annotationMenuPanel) return;
+        elements.annotationMenuPanel.classList.add('hidden');
+        elements.annotationMenuToggle?.classList.remove('active');
+        updateAnnotationControls();
+    }
+
+    function showShortcutsOverlay() {
+        if (!elements.shortcutsOverlay) return;
+        closeAnnotationMenu();
+        elements.shortcutsOverlay.classList.remove('hidden');
+        ttsPauseForModal();
+    }
+
+    function hideShortcutsOverlay(shouldResumeTts = true) {
+        if (!elements.shortcutsOverlay) return;
+        elements.shortcutsOverlay.classList.add('hidden');
+        if (shouldResumeTts) {
+            ttsResumeAfterModal();
+        }
+    }
+
+    function updateAnnotationControls() {
+        const chapterId = getCurrentChapterId();
+        const hasCurrentParagraph = !!state.currentBook
+            && state.paragraphs.length > 0
+            && Number.isInteger(state.currentParagraphIndex)
+            && state.currentParagraphIndex >= 0
+            && state.currentParagraphIndex < state.paragraphs.length
+            && !!chapterId;
+
+        const annotation = hasCurrentParagraph
+            ? getParagraphAnnotation(chapterId, state.currentParagraphIndex)
+            : null;
+        const hasNote = !!(annotation && typeof annotation.noteText === 'string' && annotation.noteText.trim().length > 0);
+        const hasBookmarks = Array.isArray(state.bookmarks) && state.bookmarks.length > 0;
+        const hasCurrentAnnotation = !!annotation && (!!annotation.highlighted || !!annotation.bookmarked || hasNote);
+
+        if (elements.annotationMenuToggle) {
+            elements.annotationMenuToggle.disabled = !state.currentBook;
+            if (!isAnnotationMenuVisible()) {
+                elements.annotationMenuToggle.classList.toggle('active', hasCurrentAnnotation);
+            }
+        }
+
+        if (elements.highlightToggle) {
+            elements.highlightToggle.disabled = !hasCurrentParagraph;
+            elements.highlightToggle.classList.toggle('active', !!annotation?.highlighted);
+        }
+        if (elements.noteToggle) {
+            elements.noteToggle.disabled = !hasCurrentParagraph;
+            elements.noteToggle.classList.toggle('active', hasNote);
+        }
+        if (elements.bookmarkToggle) {
+            elements.bookmarkToggle.disabled = !hasCurrentParagraph;
+            elements.bookmarkToggle.classList.toggle('active', !!annotation?.bookmarked);
+        }
+        if (elements.bookmarksToggle) {
+            elements.bookmarksToggle.disabled = !state.currentBook;
+            elements.bookmarksToggle.classList.toggle('active', hasBookmarks);
+        }
+    }
+
+    function renderBookmarkList() {
+        if (!elements.bookmarkList) return;
+        if (!Array.isArray(state.bookmarks) || state.bookmarks.length === 0) {
+            bookmarkListSelectedIndex = 0;
+            elements.bookmarkList.innerHTML = '<li class="bookmark-list-empty">No bookmarks yet.</li>';
+            return;
+        }
+
+        const maxIndex = state.bookmarks.length - 1;
+        bookmarkListSelectedIndex = Math.max(0, Math.min(bookmarkListSelectedIndex, maxIndex));
+        elements.bookmarkList.innerHTML = state.bookmarks.map((bookmark, index) => {
+            const chapterLabel = escapeHtml(bookmark.chapterTitle || `Chapter ${bookmark.chapterId || ''}`);
+            const snippet = escapeHtml(bookmark.snippet || '');
+            const selectedClass = index === bookmarkListSelectedIndex ? ' selected' : '';
+            return `
+                <li class="chapter-list-item bookmark-list-item${selectedClass}"
+                    data-bookmark-index="${index}"
+                    data-chapter-id="${bookmark.chapterId}"
+                    data-paragraph-index="${bookmark.paragraphIndex}">
+                    <div class="bookmark-item-top">
+                        <span class="chapter-number">${index + 1}.</span>
+                        <span class="chapter-name">${chapterLabel}</span>
+                    </div>
+                    <div class="bookmark-item-snippet">${snippet || '<em>No snippet available.</em>'}</div>
+                </li>
+            `;
+        }).join('');
+    }
+
+    function showBookmarksOverlay() {
+        if (!elements.bookmarksOverlay || !state.currentBook) return;
+        closeAnnotationMenu();
+        bookmarkListSelectedIndex = 0;
+        renderBookmarkList();
+        elements.bookmarksOverlay.classList.remove('hidden');
+        ttsPauseForModal();
+        if (state.bookmarks.length > 0) {
+            const first = elements.bookmarkList.querySelector('.bookmark-list-item');
+            first?.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function hideBookmarksOverlay(shouldResumeTts = true) {
+        if (!elements.bookmarksOverlay) return;
+        elements.bookmarksOverlay.classList.add('hidden');
+        if (shouldResumeTts) {
+            ttsResumeAfterModal();
+        }
+    }
+
+    function bookmarkListNavigate(direction) {
+        if (!Array.isArray(state.bookmarks) || state.bookmarks.length === 0) return;
+        const maxIndex = state.bookmarks.length - 1;
+        bookmarkListSelectedIndex = Math.max(0, Math.min(maxIndex, bookmarkListSelectedIndex + direction));
+        renderBookmarkList();
+        const selected = elements.bookmarkList.querySelector(`[data-bookmark-index="${bookmarkListSelectedIndex}"]`);
+        selected?.scrollIntoView({ block: 'nearest' });
+    }
+
+    function selectBookmarkFromList(index) {
+        if (!Array.isArray(state.bookmarks)) return;
+        const bookmark = state.bookmarks[index];
+        if (!bookmark) return;
+        hideBookmarksOverlay(false);
+        navigateToChapterParagraph(bookmark.chapterId, bookmark.paragraphIndex);
+    }
+
+    function openNoteModal() {
+        const chapterId = getCurrentChapterId();
+        if (!chapterId || !state.currentBook || state.paragraphs.length === 0) {
+            return;
+        }
+        closeAnnotationMenu();
+        state.noteModalParagraphIndex = state.currentParagraphIndex;
+        const annotation = getParagraphAnnotation(chapterId, state.noteModalParagraphIndex);
+        if (elements.noteTextarea) {
+            elements.noteTextarea.value = annotation?.noteText || '';
+        }
+        if (elements.noteDelete) {
+            elements.noteDelete.disabled = !(annotation?.noteText && annotation.noteText.trim().length > 0);
+        }
+        if (elements.noteModalLocation) {
+            const chapterTitle = state.chapters[state.currentChapterIndex]?.title || chapterId;
+            elements.noteModalLocation.textContent =
+                `${chapterTitle}, paragraph ${state.noteModalParagraphIndex + 1}`;
+        }
+        if (elements.noteModal) {
+            elements.noteModal.classList.remove('hidden');
+        }
+        ttsPauseForModal();
+        elements.noteTextarea?.focus();
+        elements.noteTextarea?.setSelectionRange(elements.noteTextarea.value.length, elements.noteTextarea.value.length);
+    }
+
+    function closeNoteModal(shouldResumeTts = true) {
+        if (elements.noteModal) {
+            elements.noteModal.classList.add('hidden');
+        }
+        state.noteModalParagraphIndex = null;
+        if (shouldResumeTts) {
+            ttsResumeAfterModal();
+        }
+    }
+
+    async function saveNoteFromModal() {
+        const chapterId = getCurrentChapterId();
+        const paragraphIndex = state.noteModalParagraphIndex;
+        if (!chapterId || !Number.isInteger(paragraphIndex)) return;
+
+        const existing = getParagraphAnnotation(chapterId, paragraphIndex);
+        const payload = {
+            highlighted: !!existing?.highlighted,
+            bookmarked: !!existing?.bookmarked,
+            noteText: elements.noteTextarea?.value || ''
+        };
+
+        const saved = await upsertParagraphAnnotation(chapterId, paragraphIndex, payload);
+        if (saved) {
+            closeNoteModal();
+        }
+    }
+
+    async function deleteNoteFromModal() {
+        const chapterId = getCurrentChapterId();
+        const paragraphIndex = state.noteModalParagraphIndex;
+        if (!chapterId || !Number.isInteger(paragraphIndex)) return;
+
+        const existing = getParagraphAnnotation(chapterId, paragraphIndex);
+        if (!existing?.noteText) {
+            closeNoteModal();
+            return;
+        }
+
+        const payload = {
+            highlighted: !!existing.highlighted,
+            bookmarked: !!existing.bookmarked,
+            noteText: ''
+        };
+        const saved = await upsertParagraphAnnotation(chapterId, paragraphIndex, payload);
+        if (saved) {
+            closeNoteModal();
+        }
+    }
+
+    async function toggleHighlightForCurrentParagraph() {
+        const chapterId = getCurrentChapterId();
+        const paragraphIndex = state.currentParagraphIndex;
+        if (!chapterId || !Number.isInteger(paragraphIndex)) return;
+
+        const existing = getParagraphAnnotation(chapterId, paragraphIndex);
+        await upsertParagraphAnnotation(chapterId, paragraphIndex, {
+            highlighted: !existing?.highlighted,
+            bookmarked: !!existing?.bookmarked,
+            noteText: existing?.noteText || ''
+        });
+    }
+
+    async function toggleBookmarkForCurrentParagraph() {
+        const chapterId = getCurrentChapterId();
+        const paragraphIndex = state.currentParagraphIndex;
+        if (!chapterId || !Number.isInteger(paragraphIndex)) return;
+
+        const existing = getParagraphAnnotation(chapterId, paragraphIndex);
+        await upsertParagraphAnnotation(chapterId, paragraphIndex, {
+            highlighted: !!existing?.highlighted,
+            bookmarked: !existing?.bookmarked,
+            noteText: existing?.noteText || ''
+        });
     }
 
     // Calculate which paragraphs fit on each page
@@ -856,6 +1273,7 @@
             elements.columnLeft.innerHTML = '<p class="no-content">No content available</p>';
             elements.columnRight.innerHTML = '';
             elements.pageIndicator.textContent = '';
+            updateAnnotationControls();
             return;
         }
 
@@ -877,6 +1295,7 @@
         let rightHtml = '';
         let currentHeight = 0;
         let inRightColumn = false;
+        const chapterId = getCurrentChapterId();
 
         // Temporary container for measurement
         const measureContainer = document.createElement('div');
@@ -895,8 +1314,15 @@
             const globalIndex = pageData.startParagraph + i;
             const isFirst = i === 0 || (inRightColumn && rightHtml === '');
             const isHighlighted = globalIndex === state.currentParagraphIndex;
+            const annotation = getParagraphAnnotation(chapterId, globalIndex);
+            const hasNote = !!(annotation && typeof annotation.noteText === 'string' && annotation.noteText.trim().length > 0);
+            const classes = ['paragraph'];
+            if (isHighlighted) classes.push('highlighted');
+            if (annotation?.highlighted) classes.push('annotation-highlight');
+            if (annotation?.bookmarked) classes.push('annotation-bookmarked');
+            if (hasNote) classes.push('annotation-noted');
 
-            const paraHtml = `<p class="paragraph${isHighlighted ? ' highlighted' : ''}" data-index="${globalIndex}" style="text-indent: ${isFirst ? '0' : '1.5em'}">${para.content}</p>`;
+            const paraHtml = `<p class="${classes.join(' ')}" data-index="${globalIndex}" style="text-indent: ${isFirst ? '0' : '1.5em'}">${para.content}</p>`;
 
             // Measure
             measureContainer.innerHTML = `<p class="paragraph" style="text-indent: ${isFirst ? '0' : '1.5em'}; text-align: justify;">${para.content}</p>`;
@@ -930,6 +1356,7 @@
             state.currentParagraphIndex = pageData.startParagraph;
         }
 
+        updateAnnotationControls();
         scheduleCharacterDiscoveryCheck();
     }
 
@@ -1757,6 +2184,10 @@
     }
 
     function navigateToSearchResult(chapterId, paragraphIndex) {
+        navigateToChapterParagraph(chapterId, paragraphIndex);
+    }
+
+    function navigateToChapterParagraph(chapterId, paragraphIndex) {
         const chapterIndex = state.chapters.findIndex(c => c.id === chapterId);
         if (chapterIndex === -1) return;
 
@@ -1804,6 +2235,13 @@
         state.quizSelectedAnswers = [];
         state.quizSubmitting = false;
         state.quizResult = null;
+        closeAnnotationMenu();
+        hideShortcutsOverlay(false);
+        hideBookmarksOverlay();
+        closeNoteModal(false);
+        state.annotationsByKey = new Map();
+        state.bookmarks = [];
+        state.noteModalParagraphIndex = null;
         updateRecapOptOutControl();
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
@@ -1816,6 +2254,7 @@
 
     // Chapter list
     function showChapterList() {
+        closeAnnotationMenu();
         ttsPauseForModal();
         chapterListSelectedIndex = state.currentChapterIndex;
         renderChapterList();
@@ -4023,6 +4462,101 @@
         // Back to library
         elements.backToLibrary.addEventListener('click', backToLibrary);
 
+        if (elements.annotationMenuToggle) {
+            elements.annotationMenuToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleAnnotationMenu();
+            });
+        }
+
+        if (elements.highlightToggle) {
+            elements.highlightToggle.addEventListener('click', () => {
+                closeAnnotationMenu();
+                toggleHighlightForCurrentParagraph();
+            });
+        }
+        if (elements.noteToggle) {
+            elements.noteToggle.addEventListener('click', () => {
+                closeAnnotationMenu();
+                openNoteModal();
+            });
+        }
+        if (elements.bookmarkToggle) {
+            elements.bookmarkToggle.addEventListener('click', () => {
+                closeAnnotationMenu();
+                toggleBookmarkForCurrentParagraph();
+            });
+        }
+        if (elements.bookmarksToggle) {
+            elements.bookmarksToggle.addEventListener('click', () => {
+                closeAnnotationMenu();
+                showBookmarksOverlay();
+            });
+        }
+        document.addEventListener('click', (e) => {
+            if (!isAnnotationMenuVisible()) return;
+            const menuHost = e.target.closest('.annotation-menu');
+            if (!menuHost) {
+                closeAnnotationMenu();
+            }
+        });
+        if (elements.annotationMenuPanel) {
+            elements.annotationMenuPanel.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        if (elements.shortcutsToggle) {
+            elements.shortcutsToggle.addEventListener('click', () => {
+                showShortcutsOverlay();
+            });
+        }
+        if (elements.shortcutsOverlay) {
+            elements.shortcutsOverlay.addEventListener('click', (e) => {
+                if (e.target === elements.shortcutsOverlay) {
+                    hideShortcutsOverlay();
+                }
+            });
+        }
+        if (elements.bookmarkList) {
+            elements.bookmarkList.addEventListener('click', (e) => {
+                const item = e.target.closest('.bookmark-list-item');
+                if (!item) return;
+                const index = parseInt(item.dataset.bookmarkIndex, 10);
+                if (!Number.isInteger(index)) return;
+                selectBookmarkFromList(index);
+            });
+        }
+        if (elements.bookmarksOverlay) {
+            elements.bookmarksOverlay.addEventListener('click', (e) => {
+                if (e.target === elements.bookmarksOverlay) {
+                    hideBookmarksOverlay();
+                }
+            });
+        }
+        if (elements.noteModalClose) {
+            elements.noteModalClose.addEventListener('click', () => closeNoteModal());
+        }
+        if (elements.noteModalBackdrop) {
+            elements.noteModalBackdrop.addEventListener('click', () => closeNoteModal());
+        }
+        if (elements.noteCancel) {
+            elements.noteCancel.addEventListener('click', () => closeNoteModal());
+        }
+        if (elements.noteSave) {
+            elements.noteSave.addEventListener('click', saveNoteFromModal);
+        }
+        if (elements.noteDelete) {
+            elements.noteDelete.addEventListener('click', deleteNoteFromModal);
+        }
+        if (elements.noteTextarea) {
+            elements.noteTextarea.addEventListener('keydown', (e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    saveNoteFromModal();
+                }
+            });
+        }
+
         if (elements.authToggle) {
             elements.authToggle.addEventListener('click', () => {
                 if (state.authAuthenticated) {
@@ -4323,6 +4857,33 @@
                 return;
             }
 
+            if (isShortcutsOverlayVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    hideShortcutsOverlay();
+                }
+                return;
+            }
+
+            if (isAnnotationMenuVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeAnnotationMenu();
+                }
+                return;
+            }
+
+            if (isNoteModalVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeNoteModal();
+                } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    saveNoteFromModal();
+                }
+                return;
+            }
+
             // Handle prompt modal keyboard
             if (isPromptModalVisible()) {
                 if (e.key === 'Escape') {
@@ -4416,6 +4977,30 @@
                 return;
             }
 
+            if (isBookmarksOverlayVisible()) {
+                switch (e.key) {
+                    case 'ArrowDown':
+                    case 'j':
+                        e.preventDefault();
+                        bookmarkListNavigate(1);
+                        break;
+                    case 'ArrowUp':
+                    case 'k':
+                        e.preventDefault();
+                        bookmarkListNavigate(-1);
+                        break;
+                    case 'Enter':
+                        e.preventDefault();
+                        selectBookmarkFromList(bookmarkListSelectedIndex);
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        hideBookmarksOverlay();
+                        break;
+                }
+                return;
+            }
+
             // Handle chapter list keyboard navigation
             if (isChapterListVisible()) {
                 switch (e.key) {
@@ -4447,6 +5032,10 @@
             }
 
             switch (e.key) {
+                case '?':
+                    e.preventDefault();
+                    showShortcutsOverlay();
+                    break;
                 case '/':
                     e.preventDefault();
                     elements.searchInput.focus();
@@ -4454,6 +5043,22 @@
                 case 'c':
                     e.preventDefault();
                     showChapterList();
+                    break;
+                case 'u':
+                    e.preventDefault();
+                    toggleHighlightForCurrentParagraph();
+                    break;
+                case 'n':
+                    e.preventDefault();
+                    openNoteModal();
+                    break;
+                case 'b':
+                    e.preventDefault();
+                    toggleBookmarkForCurrentParagraph();
+                    break;
+                case 'B':
+                    e.preventDefault();
+                    showBookmarksOverlay();
                     break;
                 case 'j':
                     e.preventDefault();

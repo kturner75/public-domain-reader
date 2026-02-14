@@ -3,6 +3,7 @@ package org.example.reader.config;
 import jakarta.persistence.OptimisticLockException;
 import org.example.reader.entity.RateLimitWindowEntity;
 import org.example.reader.repository.RateLimitWindowRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,6 +27,7 @@ public class DatabaseRateLimiter implements PublicApiRateLimiter {
     private final int maxRetries;
     private final Clock clock;
 
+    @Autowired
     public DatabaseRateLimiter(
             RateLimitWindowRepository repository,
             @Value("${security.public.rate-limit.cleanup-interval:256}") int cleanupInterval,
