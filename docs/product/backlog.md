@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-002.3 - Retry/backoff + status API` (`Done`, validated with full `mvn test`).
+- Most recent completed slice: `BL-003 - Expand automated test coverage for AI/media pipelines` (`Done`, validated with full `mvn test`).
 - Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
-- Active priority work: `BL-003 - Expand automated test coverage for AI/media pipelines` (`P0`, `Proposed`).
+- Active priority work: `BL-004 - Migrate from H2 to production database` (`P0`, `Ready`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -199,23 +199,41 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P0
 - Effort: L
-- Status: Proposed
+- Status: Done
 - Problem: Tests focus on import/search/parser; high-risk flows (TTS/illustration/character/pregen) have minimal coverage.
 - Acceptance Criteria:
 - Add controller tests for `TtsController`, `IllustrationController`, `CharacterController`, `PreGenerationController`.
 - Add service-level tests for queue/retry/status transitions.
 - Add smoke test profile for end-to-end happy path with mocked providers.
+- Session Log:
+- 2026-02-14: Added controller coverage for `TtsController`, `IllustrationController`, `CharacterController`, and `PreGenerationController` (including cache-only conflicts + feature gating paths) in `TtsControllerTest`, `IllustrationControllerTest`, `CharacterControllerTest`, `PreGenerationControllerTest`, and `PreGenerationControllerCacheOnlyTest`; added book-scoped retry/pending aggregate coverage in `GenerationJobStatusServiceTest`.
+- 2026-02-14: Added `smoke` profile (`application-smoke.properties`) and `AiMediaPipelinesSmokeTest` as an end-to-end happy-path `@SpringBootTest` using mocked providers; validated via targeted smoke run and full `mvn test`.
 
-### BL-004 - Introduce DB migrations and controlled startup seeding
+### BL-004 - Migrate from H2 to production database
 - Type: Tech Debt
 - Priority: P0
 - Effort: M
-- Status: Proposed
-- Problem: Schema evolution relies on `ddl-auto=update`; sample seed behavior is startup-driven.
+- Status: Ready
+- Problem: Runtime still depends on H2 + `ddl-auto=update`, which increases schema drift and production risk for a public deployment.
+- Current Direction (2026-02-14):
+- Execute immediate DB cutover work now rather than deferring.
+- Default target is PostgreSQL unless explicitly switched to MariaDB before implementation starts.
+- Keep H2 only for local/dev convenience and selected tests after migration ownership is in place.
 - Acceptance Criteria:
-- Adopt Flyway or Liquibase migrations.
+- App runs against PostgreSQL or MariaDB in non-local environments with no H2 dependency for production runtime.
+- Adopt Flyway or Liquibase migrations and baseline existing schema/history.
 - Restrict seed data to explicit dev/test profiles.
-- Add rollback-safe migration guidance.
+- Replace `ddl-auto=update` with migration-owned schema management (`validate` or equivalent) outside local dev.
+- Add rollback-safe migration and cutover guidance (backup, restore, verification checklist).
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-004.1 Engine + runtime config | Ready | Finalize target engine (default PostgreSQL), add env-driven datasource profiles, and document local vs non-local DB behavior | Non-local profile starts cleanly on target engine using env vars only |
+| BL-004.2 Migration baseline | Proposed | Introduce Flyway/Liquibase and baseline current schema so schema changes are migration-owned | Fresh DB and existing DB both reach expected schema via migrations |
+| BL-004.3 Controlled seeding | Proposed | Move startup sample seed behavior to explicit dev/test profiles only | Production profile does not auto-seed sample books |
+| BL-004.4 Cutover + rollback runbook | Proposed | Add deployment runbook for backup, cutover steps, verification queries, and rollback | Operator can execute and reverse cutover without ad-hoc DB edits |
+- Session Log:
+- 2026-02-14: Reframed BL-004 as concrete production DB migration work, set status to `Ready`, and made PostgreSQL the default target unless explicitly changed to MariaDB.
 
 ## P1
 
