@@ -42,7 +42,42 @@
                     <path d="M19 12H5M12 19l-7-7 7-7"/>
                 </svg>
             </button>
-            <div class="tts-container">
+            <div id="mobile-header-menu" class="mobile-header-menu hidden">
+                <button id="mobile-header-menu-toggle" class="header-btn mobile-header-menu-toggle" type="button" title="Reader actions" aria-label="Reader actions">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="4" y1="6" x2="20" y2="6"/>
+                        <line x1="4" y1="12" x2="20" y2="12"/>
+                        <line x1="4" y1="18" x2="20" y2="18"/>
+                    </svg>
+                </button>
+                <div id="mobile-header-menu-panel" class="mobile-header-menu-panel hidden">
+                    <div class="mobile-header-menu-search">
+                        <input id="mobile-menu-search-input" class="mobile-header-menu-search-input" type="text" placeholder="Search chapter text..." />
+                        <button id="mobile-menu-search-submit" class="mobile-header-menu-search-btn" type="button">Search</button>
+                    </div>
+                    <div class="mobile-header-menu-row">
+                        <button id="mobile-menu-tts-toggle" class="mobile-header-menu-item mobile-header-menu-item-primary" type="button">Read Aloud</button>
+                        <button id="mobile-menu-tts-speed" class="mobile-header-menu-speed-btn" type="button" title="Cycle audio speed" aria-label="Cycle audio speed">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 12h10"/>
+                                <path d="M11 6l6 6-6 6"/>
+                            </svg>
+                            <span id="mobile-menu-tts-speed-value">1.0x</span>
+                        </button>
+                    </div>
+                    <button id="mobile-menu-illustration-toggle" class="mobile-header-menu-item" type="button">Illustration Mode</button>
+                    <button id="mobile-menu-character-toggle" class="mobile-header-menu-item" type="button">Characters</button>
+                    <button id="mobile-menu-reader-settings" class="mobile-header-menu-item" type="button">Reader Preferences</button>
+                    <button id="mobile-menu-highlight" class="mobile-header-menu-item" type="button">Toggle Highlight</button>
+                    <button id="mobile-menu-note" class="mobile-header-menu-item" type="button">Add/Edit Note</button>
+                    <button id="mobile-menu-bookmark" class="mobile-header-menu-item" type="button">Toggle Bookmark</button>
+                    <button id="mobile-menu-bookmarks" class="mobile-header-menu-item" type="button">Bookmarks</button>
+                    <button id="mobile-menu-recap-enable" class="mobile-header-menu-item hidden" type="button">Re-enable Recaps</button>
+                    <button id="mobile-menu-auth" class="mobile-header-menu-item hidden" type="button">Sign In</button>
+                    <button id="mobile-menu-speed-reading-toggle" class="mobile-header-menu-item" type="button">Speed Reading</button>
+                </div>
+            </div>
+            <div class="tts-container header-mobile-action">
                 <button id="tts-toggle" class="header-btn" title="Read Aloud (p)">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
@@ -53,7 +88,7 @@
                 <span id="tts-speed" class="tts-speed"></span>
                 <span id="tts-mode" class="tts-mode"></span>
             </div>
-            <div id="speed-reading-container" class="speed-reading-container">
+            <div id="speed-reading-container" class="speed-reading-container header-mobile-action">
                 <button id="speed-reading-toggle" class="header-btn" title="Speed Reading (r)">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 12h9"/>
@@ -62,7 +97,7 @@
                     </svg>
                 </button>
             </div>
-            <div class="illustration-container">
+            <div class="illustration-container header-mobile-action">
                 <button id="illustration-toggle" class="header-btn" title="Illustration Mode (i)" style="display: none;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -71,7 +106,7 @@
                     </svg>
                 </button>
             </div>
-            <div class="character-container">
+            <div class="character-container header-mobile-action">
                 <button id="character-toggle" class="header-btn" title="Characters (m)" style="display: none;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -79,7 +114,7 @@
                     </svg>
                 </button>
             </div>
-            <div class="annotation-menu">
+            <div class="annotation-menu header-mobile-action">
                 <button id="annotation-menu-toggle" class="header-btn" title="Annotations">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 21h18"/>
@@ -109,10 +144,10 @@
                 <h1 id="book-title" class="book-title"></h1>
                 <p id="book-author" class="book-author hidden"></p>
             </div>
-            <button id="recap-enable-btn" class="header-btn recap-enable-btn hidden" title="Re-enable chapter recap popups">
+            <button id="recap-enable-btn" class="header-btn recap-enable-btn header-mobile-action hidden" title="Re-enable chapter recap popups">
                 Re-enable Recaps
             </button>
-            <button id="auth-toggle" class="header-btn auth-toggle hidden" title="Collaborator access">
+            <button id="auth-toggle" class="header-btn auth-toggle header-mobile-action hidden" title="Collaborator access">
                 Sign In
             </button>
             <div class="header-right-controls">
@@ -123,7 +158,7 @@
                         <path d="M21 21l-4.35-4.35"/>
                     </svg>
                 </div>
-                <div class="reader-settings-menu">
+                <div class="reader-settings-menu header-mobile-action">
                     <button id="reader-settings-toggle" class="header-btn" type="button" title="Reader preferences" aria-label="Reader preferences">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"/>
@@ -203,6 +238,20 @@
             <button id="gutter-right" class="reader-gutter reader-gutter-right" type="button" title="Next page" aria-label="Next page"></button>
         </div>
 
+        <nav id="mobile-reader-nav" class="mobile-reader-nav hidden" aria-label="Touch reader navigation">
+            <div class="mobile-reader-nav-row mobile-reader-nav-row-chapter">
+                <button id="mobile-prev-chapter" class="mobile-reader-nav-btn" type="button">Chapter -</button>
+                <button id="mobile-chapter-list" class="mobile-reader-nav-btn" type="button">Chapters</button>
+                <button id="mobile-next-chapter" class="mobile-reader-nav-btn" type="button">Chapter +</button>
+            </div>
+            <div class="mobile-reader-nav-row mobile-reader-nav-row-reading">
+                <button id="mobile-prev-paragraph" class="mobile-reader-nav-btn" type="button">Paragraph -</button>
+                <button id="mobile-prev-page" class="mobile-reader-nav-btn" type="button">Page -</button>
+                <button id="mobile-next-page" class="mobile-reader-nav-btn" type="button">Page +</button>
+                <button id="mobile-next-paragraph" class="mobile-reader-nav-btn" type="button">Paragraph +</button>
+            </div>
+        </nav>
+
         <!-- Speed Reading Overlay -->
         <div id="speed-reading-overlay" class="speed-reading-overlay hidden">
             <div class="speed-reading-stage">
@@ -228,6 +277,7 @@
                         <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h8M6 17h.01M10 17h.01M14 17h.01M18 17h.01"/>
                     </svg>
                 </button>
+                <span id="mobile-layout-hint" class="mobile-layout-hint hidden">Touch navigation enabled</span>
                 <span id="cache-only-indicator" class="cache-only-indicator hidden">cache-only</span>
             </div>
             <span id="page-indicator" class="page-indicator"></span>
@@ -324,7 +374,7 @@
             <div class="chapter-list-container">
                 <div class="chapter-list-header">
                     <h3>Chapters</h3>
-                    <span class="chapter-list-hint">Arrow keys to navigate, Enter to select, Esc to close</span>
+                    <span id="chapter-list-hint" class="chapter-list-hint">Arrow keys to navigate, Enter to select, Esc to close</span>
                 </div>
                 <ul id="chapter-list" class="chapter-list"></ul>
             </div>
