@@ -119,3 +119,4 @@ Notes:
 - Tests run against a local static server (`node e2e/static-server.js`) and mock all `/api/*` traffic in Playwright.
 - Current coverage includes retry UX for recap overlay load errors, recap chat send failures, and character chat send failures (`e2e/retry-flows.spec.js`).
 - CI runs this suite via GitHub Actions workflow `/Users/kevinturner/IdeaProjects/public-domain-reader/.github/workflows/playwright-e2e.yml`.
+- Backend CI test coverage runs via `/Users/kevinturner/IdeaProjects/public-domain-reader/.github/workflows/maven-test.yml` (`mvn test` on Java 21).
