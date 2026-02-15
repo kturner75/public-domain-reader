@@ -88,6 +88,15 @@ class ChapterQuizControllerTest {
     }
 
     @Test
+    void getChapterQuiz_whenServiceFails_returnsServerError() throws Exception {
+        when(chapterQuizService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
+        when(chapterQuizService.getChapterQuiz("chapter-1")).thenThrow(new RuntimeException("db unavailable"));
+
+        mockMvc.perform(get("/api/quizzes/chapter/chapter-1"))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
     void getChapterQuizStatus_existingChapter_returnsStatus() throws Exception {
         ChapterQuizStatusResponse response = new ChapterQuizStatusResponse(
                 "book-1",
@@ -105,6 +114,15 @@ class ChapterQuizControllerTest {
                 .andExpect(jsonPath("$.bookId", is("book-1")))
                 .andExpect(jsonPath("$.status", is("PENDING")))
                 .andExpect(jsonPath("$.ready", is(false)));
+    }
+
+    @Test
+    void getChapterQuizStatus_whenServiceFails_returnsServerError() throws Exception {
+        when(chapterQuizService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
+        when(chapterQuizService.getChapterQuizStatus("chapter-1")).thenThrow(new RuntimeException("db unavailable"));
+
+        mockMvc.perform(get("/api/quizzes/chapter/chapter-1/status"))
+                .andExpect(status().isInternalServerError());
     }
 
     @Test

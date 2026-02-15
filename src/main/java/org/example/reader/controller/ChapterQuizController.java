@@ -6,6 +6,8 @@ import org.example.reader.model.ChapterQuizStatusResponse;
 import org.example.reader.model.QuizTrophy;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.QuizProgressService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +24,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/quizzes")
 public class ChapterQuizController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChapterQuizController.class);
 
     @Value("${quiz.enabled:true}")
     private boolean quizEnabled;
@@ -98,15 +102,27 @@ public class ChapterQuizController {
         }
         var bookId = chapterQuizService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
+            log.warn("Quiz fetch requested for unknown chapter {}", chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
-
-        return chapterQuizService.getChapterQuiz(chapterId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        try {
+            return chapterQuizService.getChapterQuiz(chapterId)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            log.error(
+                    "Failed to fetch quiz for chapter {} (bookId={}, cacheOnly={}, providerAvailable={})",
+                    chapterId,
+                    bookId,
+                    cacheOnly,
+                    chapterQuizService.isProviderAvailable(),
+                    e
+            );
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @GetMapping("/chapter/{chapterId}/status")
@@ -116,15 +132,27 @@ public class ChapterQuizController {
         }
         var bookId = chapterQuizService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
+            log.warn("Quiz status requested for unknown chapter {}", chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
-
-        return chapterQuizService.getChapterQuizStatus(chapterId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        try {
+            return chapterQuizService.getChapterQuizStatus(chapterId)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            log.error(
+                    "Failed to fetch quiz status for chapter {} (bookId={}, cacheOnly={}, providerAvailable={})",
+                    chapterId,
+                    bookId,
+                    cacheOnly,
+                    chapterQuizService.isProviderAvailable(),
+                    e
+            );
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @PostMapping("/chapter/{chapterId}/generate")
