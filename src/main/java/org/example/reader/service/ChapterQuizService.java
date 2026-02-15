@@ -53,6 +53,7 @@ public class ChapterQuizService {
     private final LlmProvider reasoningProvider;
     private final ObjectMapper objectMapper;
     private final QuizProgressService quizProgressService;
+    private final QuizMetricsService quizMetricsService;
     private final BlockingQueue<String> requestQueue = new LinkedBlockingQueue<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile boolean running = true;
@@ -87,12 +88,14 @@ public class ChapterQuizService {
             ParagraphRepository paragraphRepository,
             @Qualifier("quizReasoningLlmProvider") LlmProvider reasoningProvider,
             QuizProgressService quizProgressService,
+            QuizMetricsService quizMetricsService,
             ObjectMapper objectMapper) {
         this.chapterQuizRepository = chapterQuizRepository;
         this.chapterRepository = chapterRepository;
         this.paragraphRepository = paragraphRepository;
         this.reasoningProvider = reasoningProvider;
         this.quizProgressService = quizProgressService;
+        this.quizMetricsService = quizMetricsService;
         this.objectMapper = objectMapper;
     }
 
@@ -141,6 +144,14 @@ public class ChapterQuizService {
 
     public boolean isProviderAvailable() {
         return reasoningProvider.isAvailable();
+    }
+
+    public int getQueueDepth() {
+        return requestQueue.size();
+    }
+
+    public boolean isQueueProcessorRunning() {
+        return !executor.isShutdown() && !executor.isTerminated();
     }
 
     @Transactional
@@ -297,6 +308,7 @@ public class ChapterQuizService {
 
     private void queueQuizRequest(String chapterId) {
         if (offerIfNotQueued(chapterId)) {
+            quizMetricsService.recordGenerationRequested();
             log.debug("Queued chapter quiz generation for chapter: {}", chapterId);
         } else {
             log.debug("Skipped queueing duplicate chapter quiz request: {}", chapterId);
@@ -343,12 +355,20 @@ public class ChapterQuizService {
 
         ChapterEntity chapter = chapterOpt.get();
         updateQuizStatus(chapterId, ChapterQuizStatus.GENERATING);
+        long startedAtMs = System.currentTimeMillis();
         try {
             List<ParagraphEntity> paragraphs = paragraphRepository.findByChapterIdOrderByParagraphIndex(chapterId);
             QuizGenerationResult result = generateQuizPayload(chapter, paragraphs);
             saveGeneratedQuiz(chapterId, result.payload(), result.promptVersion(), result.modelName());
+            long durationMs = Math.max(0L, System.currentTimeMillis() - startedAtMs);
+            quizMetricsService.recordGenerationCompleted(
+                    !"v1-llm-json".equals(result.promptVersion()),
+                    durationMs
+            );
             log.info("Generated quiz for chapter {} ({})", chapter.getChapterIndex(), chapter.getTitle());
         } catch (Exception e) {
+            long durationMs = Math.max(0L, System.currentTimeMillis() - startedAtMs);
+            quizMetricsService.recordGenerationFailed(durationMs);
             log.error("Failed to generate quiz for chapter {}", chapterId, e);
             updateQuizStatus(chapterId, ChapterQuizStatus.FAILED);
         }

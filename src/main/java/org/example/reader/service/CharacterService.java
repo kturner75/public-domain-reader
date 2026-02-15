@@ -153,6 +153,14 @@ public class CharacterService {
         return extractionService.isReasoningProviderAvailable() && comfyUIService.isAvailable();
     }
 
+    public boolean isQueueProcessorRunning() {
+        return !executor.isShutdown() && !executor.isTerminated();
+    }
+
+    public int getQueueDepth() {
+        return requestQueue.size();
+    }
+
     @Transactional
     public void requestChapterAnalysis(String chapterId) {
         if (cacheOnly) {

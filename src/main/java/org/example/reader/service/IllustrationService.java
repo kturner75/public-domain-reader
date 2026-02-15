@@ -116,6 +116,10 @@ public class IllustrationService {
         return !executor.isShutdown() && !executor.isTerminated();
     }
 
+    public int getQueueDepth() {
+        return generationQueue.size();
+    }
+
     @PreDestroy
     public void shutdown() {
         running = false;

@@ -1,10 +1,13 @@
 package org.example.reader.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.example.reader.config.RequestCorrelation;
 import org.example.reader.model.ChapterQuizGradeResponse;
 import org.example.reader.model.ChapterQuizResponse;
 import org.example.reader.model.ChapterQuizStatusResponse;
 import org.example.reader.model.QuizTrophy;
 import org.example.reader.service.ChapterQuizService;
+import org.example.reader.service.QuizMetricsService;
 import org.example.reader.service.QuizProgressService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,12 +50,15 @@ public class ChapterQuizController {
 
     private final ChapterQuizService chapterQuizService;
     private final QuizProgressService quizProgressService;
+    private final QuizMetricsService quizMetricsService;
 
     public ChapterQuizController(
             ChapterQuizService chapterQuizService,
-            QuizProgressService quizProgressService) {
+            QuizProgressService quizProgressService,
+            QuizMetricsService quizMetricsService) {
         this.chapterQuizService = chapterQuizService;
         this.quizProgressService = quizProgressService;
+        this.quizMetricsService = quizMetricsService;
     }
 
     @GetMapping("/status")
@@ -64,9 +70,12 @@ public class ChapterQuizController {
         status.put("providerAvailable", chapterQuizService.isProviderAvailable());
         status.put("available", isQuizFeatureEnabled());
         status.put("generationAvailable", isQuizGenerationAvailable());
+        status.put("queueDepth", chapterQuizService.getQueueDepth());
+        status.put("queueProcessorRunning", chapterQuizService.isQueueProcessorRunning());
         status.put("difficultyRampEnabled", difficultyRampEnabled);
         status.put("difficultyRampChapterStep", difficultyRampChapterStep);
         status.put("difficultyRampMaxLevel", difficultyRampMaxLevel);
+        status.put("metrics", quizMetricsService.snapshot());
         return status;
     }
 
@@ -80,10 +89,13 @@ public class ChapterQuizController {
         status.put("providerAvailable", chapterQuizService.isProviderAvailable());
         status.put("available", isQuizFeatureEnabled());
         status.put("generationAvailable", isQuizGenerationAvailable());
+        status.put("queueDepth", chapterQuizService.getQueueDepth());
+        status.put("queueProcessorRunning", chapterQuizService.isQueueProcessorRunning());
         status.put("difficultyRampEnabled", difficultyRampEnabled);
         status.put("difficultyRampChapterStep", difficultyRampChapterStep);
         status.put("difficultyRampMaxLevel", difficultyRampMaxLevel);
         status.put("trophiesUnlocked", quizProgressService.getBookTrophies(bookId).size());
+        status.put("metrics", quizMetricsService.snapshot());
         return status;
     }
 
@@ -96,13 +108,16 @@ public class ChapterQuizController {
     }
 
     @GetMapping("/chapter/{chapterId}")
-    public ResponseEntity<ChapterQuizResponse> getChapterQuiz(@PathVariable String chapterId) {
+    public ResponseEntity<ChapterQuizResponse> getChapterQuiz(
+            @PathVariable String chapterId,
+            HttpServletRequest request) {
+        String requestId = RequestCorrelation.resolveRequestId(request);
         if (!quizEnabled) {
             return ResponseEntity.status(403).build();
         }
         var bookId = chapterQuizService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
-            log.warn("Quiz fetch requested for unknown chapter {}", chapterId);
+            log.warn("event=quiz_read_unknown_chapter requestId={} chapterId={}", requestId, chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isQuizFeatureEnabled()) {
@@ -113,12 +128,17 @@ public class ChapterQuizController {
                     .map(ResponseEntity::ok)
                     .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (Exception e) {
+            quizMetricsService.recordReadFailed();
             log.error(
-                    "Failed to fetch quiz for chapter {} (bookId={}, cacheOnly={}, providerAvailable={})",
+                    "event=quiz_read_failed requestId={} endpoint={} chapterId={} bookId={} cacheOnly={} providerAvailable={} errorType={} errorMessage={}",
+                    requestId,
+                    "/api/quizzes/chapter/{chapterId}",
                     chapterId,
                     bookId,
                     cacheOnly,
                     chapterQuizService.isProviderAvailable(),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
                     e
             );
             return ResponseEntity.status(500).build();
@@ -126,13 +146,16 @@ public class ChapterQuizController {
     }
 
     @GetMapping("/chapter/{chapterId}/status")
-    public ResponseEntity<ChapterQuizStatusResponse> getChapterQuizStatus(@PathVariable String chapterId) {
+    public ResponseEntity<ChapterQuizStatusResponse> getChapterQuizStatus(
+            @PathVariable String chapterId,
+            HttpServletRequest request) {
+        String requestId = RequestCorrelation.resolveRequestId(request);
         if (!quizEnabled) {
             return ResponseEntity.status(403).build();
         }
         var bookId = chapterQuizService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
-            log.warn("Quiz status requested for unknown chapter {}", chapterId);
+            log.warn("event=quiz_status_unknown_chapter requestId={} chapterId={}", requestId, chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isQuizFeatureEnabled()) {
@@ -143,12 +166,17 @@ public class ChapterQuizController {
                     .map(ResponseEntity::ok)
                     .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (Exception e) {
+            quizMetricsService.recordStatusReadFailed();
             log.error(
-                    "Failed to fetch quiz status for chapter {} (bookId={}, cacheOnly={}, providerAvailable={})",
+                    "event=quiz_status_read_failed requestId={} endpoint={} chapterId={} bookId={} cacheOnly={} providerAvailable={} errorType={} errorMessage={}",
+                    requestId,
+                    "/api/quizzes/chapter/{chapterId}/status",
                     chapterId,
                     bookId,
                     cacheOnly,
                     chapterQuizService.isProviderAvailable(),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
                     e
             );
             return ResponseEntity.status(500).build();

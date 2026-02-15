@@ -1,14 +1,14 @@
 # Product Backlog
 
-Last updated: 2026-02-14
+Last updated: 2026-02-15
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-008 - Upgrade in-reader search quality and navigation` (`Done`, implemented contextual snippets, chapter filter + grouped search results, and in-paragraph term highlighting on navigation).
-- Most recent shipped hardening (2026-02-13): cache-only mode no longer blocks recap/character chat when `ai.chat.enabled=true`; docs/tests/UI indicator were updated in PR #16.
-- Active priority work: `None currently in progress`; next implementation-ready P1 item is `BL-009 - Make pre-generation non-blocking with progress API` (`Proposed`).
+- Most recent completed slice: `BL-011 - Add observability for long-running generation flows` (`Done`, added request correlation IDs, quiz/recap metrics, and a health detail endpoint with provider + queue status snapshots).
+- Most recent shipped hardening (2026-02-15): hardened chapter loading against stale async responses in `reader.js` (prevents intermittent content wipe during rapid transitions) and added quiz endpoint diagnostic logging for read/status failures.
+- Active priority work: `None currently in progress`; no P1 items are currently marked `Ready`, and the next P1 candidate for scoping is `BL-023 - Adaptive mobile reader experience` (`Proposed`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -95,6 +95,8 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - 2026-02-11: Added chapter pause `Quiz` tab in reader overlay with multi-question submission flow, score summary, and missed-answer citation feedback.
 - 2026-02-11: Validated BL-020.1/BL-020.2 with passing `ChapterQuizServiceTest` and `ChapterQuizControllerTest` plus recap regression tests.
 - 2026-02-11: Completed BL-020.3 by adding chapter-index-based quiz difficulty ramping, persisted quiz attempt/trophy tracking, trophy/readout APIs, and UI feedback for unlocked trophies and streak progress.
+- 2026-02-15: Hardened reader chapter navigation against async race conditions by ensuring only the latest chapter-load request can mutate reader state (`reader.js` request sequencing + stale-result guards).
+- 2026-02-15: Added diagnostic error logging for `/api/quizzes/chapter/{chapterId}` and `/api/quizzes/chapter/{chapterId}/status` failures (with chapter/book/cache/provider context) and added controller tests for exception->500 behavior.
 
 ### BL-021 - User Registration and Account System
 - Type: Feature
@@ -337,12 +339,16 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P1
 - Effort: M
-- Status: Proposed
+- Status: Done
 - Problem: Debugging relies mostly on logs; queue/backlog metrics are not first-class.
 - Acceptance Criteria:
 - Expose metrics for queue depth, success/failure counts, and processing latency.
 - Add correlation IDs to generation requests.
 - Add health detail endpoint for provider and queue status.
+- Session Log:
+- 2026-02-15: Added request correlation infrastructure (`X-Request-Id` filter + request attribute + MDC) and included request IDs in quiz/recap endpoint failure diagnostics.
+- 2026-02-15: Added `/health/details` with provider availability, queue processor health, per-pipeline queue depths, global generation status snapshot, and recap/quiz metric snapshots.
+- 2026-02-15: Added quiz observability metrics (`generationRequested`, `generationCompleted`, `generationFallbackCompleted`, `generationFailed`, `generationAverageLatencyMs`, read failure counters) and exposed quiz queue depth/processor state in `/api/quizzes/status`.
 
 ### BL-023 - Adaptive mobile reader experience
 - Type: Feature

@@ -8,6 +8,7 @@ import org.example.reader.model.QuizProgress;
 import org.example.reader.model.QuizTrophy;
 import org.example.reader.service.QuizProgressService;
 import org.example.reader.service.ChapterQuizService;
+import org.example.reader.service.QuizMetricsService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -17,6 +18,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.is;
@@ -42,9 +44,23 @@ class ChapterQuizControllerTest {
     @MockitoBean
     private QuizProgressService quizProgressService;
 
+    @MockitoBean
+    private QuizMetricsService quizMetricsService;
+
     @Test
     void getStatus_returnsFeatureState() throws Exception {
         when(chapterQuizService.isProviderAvailable()).thenReturn(false);
+        when(chapterQuizService.getQueueDepth()).thenReturn(7);
+        when(chapterQuizService.isQueueProcessorRunning()).thenReturn(true);
+        when(quizMetricsService.snapshot()).thenReturn(Map.of(
+                "generationRequested", 9L,
+                "generationCompleted", 8L,
+                "generationFallbackCompleted", 2L,
+                "generationFailed", 1L,
+                "generationAverageLatencyMs", 250L,
+                "readFailed", 0L,
+                "statusReadFailed", 0L
+        ));
 
         mockMvc.perform(get("/api/quizzes/status"))
                 .andExpect(status().isOk())
@@ -53,7 +69,13 @@ class ChapterQuizControllerTest {
                 .andExpect(jsonPath("$.cacheOnly", is(false)))
                 .andExpect(jsonPath("$.providerAvailable", is(false)))
                 .andExpect(jsonPath("$.available", is(true)))
-                .andExpect(jsonPath("$.generationAvailable", is(true)));
+                .andExpect(jsonPath("$.generationAvailable", is(true)))
+                .andExpect(jsonPath("$.queueDepth", is(7)))
+                .andExpect(jsonPath("$.queueProcessorRunning", is(true)))
+                .andExpect(jsonPath("$.metrics.generationCompleted", is(8)))
+                .andExpect(jsonPath("$.metrics.generationAverageLatencyMs", is(250)))
+                .andExpect(jsonPath("$.metrics.readFailed", is(0)))
+                .andExpect(jsonPath("$.metrics.statusReadFailed", is(0)));
     }
 
     @Test
@@ -94,6 +116,8 @@ class ChapterQuizControllerTest {
 
         mockMvc.perform(get("/api/quizzes/chapter/chapter-1"))
                 .andExpect(status().isInternalServerError());
+
+        verify(quizMetricsService).recordReadFailed();
     }
 
     @Test
@@ -123,6 +147,8 @@ class ChapterQuizControllerTest {
 
         mockMvc.perform(get("/api/quizzes/chapter/chapter-1/status"))
                 .andExpect(status().isInternalServerError());
+
+        verify(quizMetricsService).recordStatusReadFailed();
     }
 
     @Test
