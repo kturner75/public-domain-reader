@@ -1,5 +1,7 @@
 package org.example.reader.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.example.reader.config.RequestCorrelation;
 import org.example.reader.model.ChatMessage;
 import org.example.reader.model.ChapterRecapResponse;
 import org.example.reader.model.ChapterRecapStatusResponse;
@@ -7,6 +9,8 @@ import org.example.reader.service.ChapterRecapChatService;
 import org.example.reader.service.ChapterRecapService;
 import org.example.reader.service.RecapMetricsService;
 import org.example.reader.service.RecapRolloutService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,6 +27,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/recaps")
 public class ChapterRecapController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChapterRecapController.class);
 
     @Value("${recap.enabled:true}")
     private boolean recapEnabled;
@@ -86,37 +92,77 @@ public class ChapterRecapController {
     }
 
     @GetMapping("/chapter/{chapterId}")
-    public ResponseEntity<ChapterRecapResponse> getChapterRecap(@PathVariable String chapterId) {
+    public ResponseEntity<ChapterRecapResponse> getChapterRecap(
+            @PathVariable String chapterId,
+            HttpServletRequest request) {
+        String requestId = RequestCorrelation.resolveRequestId(request);
         if (!recapEnabled) {
             return ResponseEntity.status(403).build();
         }
         var bookId = chapterRecapService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
+            log.warn("event=recap_read_unknown_chapter requestId={} chapterId={}", requestId, chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isBookAvailableForRecap(bookId)) {
             return ResponseEntity.status(403).build();
         }
-        return chapterRecapService.getChapterRecap(chapterId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        try {
+            return chapterRecapService.getChapterRecap(chapterId)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            recapMetricsService.recordReadFailed();
+            log.error(
+                    "event=recap_read_failed requestId={} endpoint={} chapterId={} bookId={} cacheOnly={} errorType={} errorMessage={}",
+                    requestId,
+                    "/api/recaps/chapter/{chapterId}",
+                    chapterId,
+                    bookId,
+                    cacheOnly,
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e
+            );
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @GetMapping("/chapter/{chapterId}/status")
-    public ResponseEntity<ChapterRecapStatusResponse> getChapterRecapStatus(@PathVariable String chapterId) {
+    public ResponseEntity<ChapterRecapStatusResponse> getChapterRecapStatus(
+            @PathVariable String chapterId,
+            HttpServletRequest request) {
+        String requestId = RequestCorrelation.resolveRequestId(request);
         if (!recapEnabled) {
             return ResponseEntity.status(403).build();
         }
         var bookId = chapterRecapService.findBookIdForChapter(chapterId).orElse(null);
         if (bookId == null) {
+            log.warn("event=recap_status_unknown_chapter requestId={} chapterId={}", requestId, chapterId);
             return ResponseEntity.notFound().build();
         }
         if (!isBookAvailableForRecap(bookId)) {
             return ResponseEntity.status(403).build();
         }
-        return chapterRecapService.getChapterRecapStatus(chapterId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        try {
+            return chapterRecapService.getChapterRecapStatus(chapterId)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            recapMetricsService.recordStatusReadFailed();
+            log.error(
+                    "event=recap_status_read_failed requestId={} endpoint={} chapterId={} bookId={} cacheOnly={} errorType={} errorMessage={}",
+                    requestId,
+                    "/api/recaps/chapter/{chapterId}/status",
+                    chapterId,
+                    bookId,
+                    cacheOnly,
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e
+            );
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @PostMapping("/chapter/{chapterId}/generate")

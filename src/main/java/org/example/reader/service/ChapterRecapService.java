@@ -155,6 +155,14 @@ public class ChapterRecapService {
         return requestQueue.size();
     }
 
+    public boolean isQueueProcessorRunning() {
+        return !executor.isShutdown() && !executor.isTerminated();
+    }
+
+    public boolean isProviderAvailable() {
+        return reasoningProvider.isAvailable();
+    }
+
     @Transactional
     public void requestChapterRecap(String chapterId) {
         if (cacheOnly) {

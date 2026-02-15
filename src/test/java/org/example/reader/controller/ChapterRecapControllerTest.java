@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.is;
@@ -51,6 +52,11 @@ class ChapterRecapControllerTest {
 
     @Test
     void getStatus_returnsFeatureState() throws Exception {
+        when(recapMetricsService.snapshot()).thenReturn(Map.of(
+                "readFailed", 0L,
+                "statusReadFailed", 0L
+        ));
+
         mockMvc.perform(get("/api/recaps/status"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled", is(true)))
@@ -58,7 +64,9 @@ class ChapterRecapControllerTest {
                 .andExpect(jsonPath("$.chatEnabled", is(true)))
                 .andExpect(jsonPath("$.cacheOnly", is(false)))
                 .andExpect(jsonPath("$.chatProviderAvailable", is(false)))
-                .andExpect(jsonPath("$.available", is(true)));
+                .andExpect(jsonPath("$.available", is(true)))
+                .andExpect(jsonPath("$.metrics.readFailed", is(0)))
+                .andExpect(jsonPath("$.metrics.statusReadFailed", is(0)));
     }
 
     @Test
@@ -116,6 +124,18 @@ class ChapterRecapControllerTest {
     }
 
     @Test
+    void getChapterRecap_whenServiceFails_returnsServerError() throws Exception {
+        when(chapterRecapService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
+        when(recapRolloutService.isBookAllowed("book-1")).thenReturn(true);
+        when(chapterRecapService.getChapterRecap("chapter-1")).thenThrow(new RuntimeException("db unavailable"));
+
+        mockMvc.perform(get("/api/recaps/chapter/chapter-1"))
+                .andExpect(status().isInternalServerError());
+
+        verify(recapMetricsService).recordReadFailed();
+    }
+
+    @Test
     void getChapterRecapStatus_existingChapter_returnsStatus() throws Exception {
         ChapterRecapStatusResponse response = new ChapterRecapStatusResponse(
                 "book-1",
@@ -135,6 +155,18 @@ class ChapterRecapControllerTest {
                 .andExpect(jsonPath("$.chapterId", is("chapter-1")))
                 .andExpect(jsonPath("$.status", is("PENDING")))
                 .andExpect(jsonPath("$.ready", is(false)));
+    }
+
+    @Test
+    void getChapterRecapStatus_whenServiceFails_returnsServerError() throws Exception {
+        when(chapterRecapService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
+        when(recapRolloutService.isBookAllowed("book-1")).thenReturn(true);
+        when(chapterRecapService.getChapterRecapStatus("chapter-1")).thenThrow(new RuntimeException("db unavailable"));
+
+        mockMvc.perform(get("/api/recaps/chapter/chapter-1/status"))
+                .andExpect(status().isInternalServerError());
+
+        verify(recapMetricsService).recordStatusReadFailed();
     }
 
     @Test

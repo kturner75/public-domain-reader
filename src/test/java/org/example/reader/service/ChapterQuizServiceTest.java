@@ -31,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,6 +55,9 @@ class ChapterQuizServiceTest {
     @Mock
     private QuizProgressService quizProgressService;
 
+    @Mock
+    private QuizMetricsService quizMetricsService;
+
     private ChapterQuizService chapterQuizService;
 
     @BeforeEach
@@ -63,6 +68,7 @@ class ChapterQuizServiceTest {
                 paragraphRepository,
                 reasoningProvider,
                 quizProgressService,
+                quizMetricsService,
                 new ObjectMapper()
         );
         ReflectionTestUtils.setField(chapterQuizService, "maxContextChars", 7000);
@@ -176,6 +182,7 @@ class ChapterQuizServiceTest {
         ArgumentCaptor<ChapterQuizEntity> captor = ArgumentCaptor.forClass(ChapterQuizEntity.class);
         verify(chapterQuizRepository).save(captor.capture());
         assertEquals(ChapterQuizStatus.PENDING, captor.getValue().getStatus());
+        verify(quizMetricsService).recordGenerationRequested();
     }
 
     @Test
@@ -215,6 +222,21 @@ class ChapterQuizServiceTest {
         assertEquals("xai", saved.getModelName());
         assertNotNull(saved.getPayloadJson());
         assertTrue(saved.getPayloadJson().contains("What does Holmes examine?"));
+        verify(quizMetricsService).recordGenerationCompleted(eq(false), anyLong());
+    }
+
+    @Test
+    void processChapterQuiz_whenSaveFails_recordsFailedGenerationMetric() {
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1, "Chapter 1");
+        when(chapterRepository.findByIdWithBook("chapter-1")).thenReturn(Optional.of(chapter));
+        when(chapterRepository.findById("chapter-1")).thenReturn(Optional.empty());
+        when(chapterQuizRepository.findByChapterId("chapter-1")).thenReturn(Optional.empty());
+        when(paragraphRepository.findByChapterIdOrderByParagraphIndex("chapter-1"))
+                .thenReturn(List.of(new ParagraphEntity(0, "Holmes studies the clue and explains his reasoning.")));
+
+        ReflectionTestUtils.invokeMethod(chapterQuizService, "processChapterQuiz", "chapter-1");
+
+        verify(quizMetricsService).recordGenerationFailed(anyLong());
     }
 
     @Test
