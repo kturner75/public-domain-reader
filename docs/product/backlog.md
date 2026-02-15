@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-011 - Add observability for long-running generation flows` (`Done`, added request correlation IDs, quiz/recap metrics, and a health detail endpoint with provider + queue status snapshots).
+- Most recent completed slice: `BL-023 - Adaptive mobile reader experience` (`Done`, delivered mobile touch navigation, hamburger action consolidation, mobile search/preferences UX fixes, and QA checklist validation on iOS + desktop regression flows).
 - Most recent shipped hardening (2026-02-15): hardened chapter loading against stale async responses in `reader.js` (prevents intermittent content wipe during rapid transitions) and added quiz endpoint diagnostic logging for read/status failures.
-- Active priority work: `None currently in progress`; no P1 items are currently marked `Ready`, and the next P1 candidate for scoping is `BL-023 - Adaptive mobile reader experience` (`Proposed`).
+- Active priority work: `None currently in progress`; no P1 items are currently marked `Ready`, and the next P1 candidates for scoping are `BL-018` and `BL-021` (`Discovery`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -354,7 +354,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P1
 - Effort: L
-- Status: In Progress
+- Status: Done
 - Problem: Reader interactions assume keyboard + desktop viewport, causing friction and broken affordances on phones.
 - Acceptance Criteria:
 - Preserve existing desktop keyboard shortcuts and behavior (`h/l`, `j/k`, `H/L`, `/`, `c`) for non-mobile layouts.
@@ -374,6 +374,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - 2026-02-15: Fixed mobile `Reader Preferences` launch reliability after search navigation by forcing the menu action to open settings (instead of toggle) and stopping click propagation that could prematurely close the panel.
 - 2026-02-15: Fixed mobile search-result overlap with `Reader Preferences` by preventing auto-search on mobile search-input focus, not restoring stale query text when reopening the hamburger menu, and force-hiding search results when preferences open.
 - 2026-02-15: Fixed mobile `Reader Preferences` layering by raising the mobile settings host/panel z-index stack above reader/search/content overlays; this prevents highlighted paragraph/search content from painting over slider rows.
+- 2026-02-15: Added BL-023 validation checklist at `docs/product/bl-023-qa-checklist.md` covering iOS Safari + Android Chrome mobile QA and desktop keyboard regression checks.
+- 2026-02-15: Addressed iOS QA defects: added compact mobile-landscape styling to preserve reading area, prevented empty first-page pagination when a paragraph exceeds viewport height, introduced smaller mobile default reader preferences, and added touch-action/text-size guards to reduce accidental zoom during repeated touch navigation.
+- 2026-02-15: Completed BL-023 after manual checklist validation passed on iOS simulator (portrait + landscape fallback) and desktop keyboard regression flows; no blocking defects remained.
 
 ### BL-024 - Cache Transfer + Remote Deploy Automation
 - Type: Improvement
