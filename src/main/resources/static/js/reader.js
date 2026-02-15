@@ -112,6 +112,7 @@
         chatCharacter: null,              // Current character being chatted with
         chatHistory: [],                  // Loaded from localStorage
         chatLoading: false,
+        isMobileLayout: false,
         cacheOnly: false,
         authPublicMode: false,
         authRequired: false,
@@ -138,7 +139,34 @@
         readerContent: document.querySelector('.reader-content'),
         gutterLeft: document.getElementById('gutter-left'),
         gutterRight: document.getElementById('gutter-right'),
+        mobileHeaderMenu: document.getElementById('mobile-header-menu'),
+        mobileHeaderMenuToggle: document.getElementById('mobile-header-menu-toggle'),
+        mobileHeaderMenuPanel: document.getElementById('mobile-header-menu-panel'),
+        mobileMenuSearchInput: document.getElementById('mobile-menu-search-input'),
+        mobileMenuSearchSubmit: document.getElementById('mobile-menu-search-submit'),
+        mobileMenuTtsToggle: document.getElementById('mobile-menu-tts-toggle'),
+        mobileMenuTtsSpeed: document.getElementById('mobile-menu-tts-speed'),
+        mobileMenuTtsSpeedValue: document.getElementById('mobile-menu-tts-speed-value'),
+        mobileMenuSpeedReadingToggle: document.getElementById('mobile-menu-speed-reading-toggle'),
+        mobileMenuIllustrationToggle: document.getElementById('mobile-menu-illustration-toggle'),
+        mobileMenuCharacterToggle: document.getElementById('mobile-menu-character-toggle'),
+        mobileMenuReaderSettings: document.getElementById('mobile-menu-reader-settings'),
+        mobileMenuHighlight: document.getElementById('mobile-menu-highlight'),
+        mobileMenuNote: document.getElementById('mobile-menu-note'),
+        mobileMenuBookmark: document.getElementById('mobile-menu-bookmark'),
+        mobileMenuBookmarks: document.getElementById('mobile-menu-bookmarks'),
+        mobileMenuRecapEnable: document.getElementById('mobile-menu-recap-enable'),
+        mobileMenuAuth: document.getElementById('mobile-menu-auth'),
         pageIndicator: document.getElementById('page-indicator'),
+        mobileLayoutHint: document.getElementById('mobile-layout-hint'),
+        mobileReaderNav: document.getElementById('mobile-reader-nav'),
+        mobilePrevChapter: document.getElementById('mobile-prev-chapter'),
+        mobileChapterList: document.getElementById('mobile-chapter-list'),
+        mobileNextChapter: document.getElementById('mobile-next-chapter'),
+        mobilePrevParagraph: document.getElementById('mobile-prev-paragraph'),
+        mobilePrevPage: document.getElementById('mobile-prev-page'),
+        mobileNextPage: document.getElementById('mobile-next-page'),
+        mobileNextParagraph: document.getElementById('mobile-next-paragraph'),
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
@@ -161,6 +189,7 @@
         shortcutsToggle: document.getElementById('shortcuts-toggle'),
         shortcutsOverlay: document.getElementById('shortcuts-overlay'),
         chapterListOverlay: document.getElementById('chapter-list-overlay'),
+        chapterListHint: document.getElementById('chapter-list-hint'),
         chapterList: document.getElementById('chapter-list'),
         annotationMenuToggle: document.getElementById('annotation-menu-toggle'),
         annotationMenuPanel: document.getElementById('annotation-menu-panel'),
@@ -327,6 +356,11 @@
         columnGap: 4,
         theme: 'warm'
     });
+    const SEARCH_PLACEHOLDER_DESKTOP = 'Search... (press /)';
+    const SEARCH_PLACEHOLDER_MOBILE = 'Search chapter text...';
+    const CHAPTER_LIST_HINT_DESKTOP = 'Arrow keys to navigate, Enter to select, Esc to close';
+    const CHAPTER_LIST_HINT_MOBILE = 'Tap a chapter to jump';
+
     const READER_THEMES = Object.freeze({
         warm: {
             textColor: '#2c2c2c',
@@ -802,6 +836,115 @@
         return !!elements.annotationMenuPanel && !elements.annotationMenuPanel.classList.contains('hidden');
     }
 
+    function isMobileHeaderMenuVisible() {
+        return !!elements.mobileHeaderMenuPanel
+            && !elements.mobileHeaderMenuPanel.classList.contains('hidden');
+    }
+
+    function closeMobileHeaderMenu() {
+        if (!elements.mobileHeaderMenuPanel || !elements.mobileHeaderMenuToggle) return;
+        elements.mobileHeaderMenuPanel.classList.add('hidden');
+        elements.mobileHeaderMenuToggle.classList.remove('active');
+    }
+
+    function openMobileHeaderMenu() {
+        if (!elements.mobileHeaderMenuPanel || !elements.mobileHeaderMenuToggle) return;
+        closeReaderSettingsPanel();
+        setSearchInputValues(elements.searchInput?.value || '', { skipDesktop: true });
+        updateMobileHeaderMenuState();
+        elements.mobileHeaderMenuPanel.classList.remove('hidden');
+        elements.mobileHeaderMenuToggle.classList.add('active');
+    }
+
+    function toggleMobileHeaderMenu() {
+        if (isMobileHeaderMenuVisible()) {
+            closeMobileHeaderMenu();
+        } else {
+            openMobileHeaderMenu();
+        }
+    }
+
+    function updateMobileHeaderMenuState() {
+        if (!elements.mobileHeaderMenu) return;
+
+        const showMenuHost = state.isMobileLayout
+            && !elements.readerView.classList.contains('hidden');
+        elements.mobileHeaderMenu.classList.toggle('hidden', !showMenuHost);
+
+        if (!showMenuHost) {
+            closeMobileHeaderMenu();
+            return;
+        }
+
+        if (elements.mobileMenuTtsToggle) {
+            elements.mobileMenuTtsToggle.textContent = state.ttsEnabled
+                ? 'Read Aloud: On'
+                : 'Read Aloud: Off';
+            elements.mobileMenuTtsToggle.disabled = !state.ttsAvailable && !state.ttsBrowserAvailable;
+        }
+        if (elements.mobileMenuTtsSpeed) {
+            const ttsSpeedControlAvailable = state.ttsAvailable || state.ttsBrowserAvailable;
+            elements.mobileMenuTtsSpeed.disabled = !ttsSpeedControlAvailable;
+            elements.mobileMenuTtsSpeed.title = ttsSpeedControlAvailable
+                ? `Cycle audio speed (${state.ttsPlaybackRate}x)`
+                : 'Audio unavailable';
+        }
+        if (elements.mobileMenuTtsSpeedValue) {
+            elements.mobileMenuTtsSpeedValue.textContent = `${state.ttsPlaybackRate}x`;
+        }
+        if (elements.mobileMenuSpeedReadingToggle) {
+            elements.mobileMenuSpeedReadingToggle.textContent = state.speedReadingActive
+                ? 'Exit Speed Reading'
+                : 'Start Speed Reading';
+            elements.mobileMenuSpeedReadingToggle.disabled = !state.speedReadingEnabled || !state.currentBook;
+        }
+        if (elements.mobileMenuIllustrationToggle) {
+            elements.mobileMenuIllustrationToggle.textContent = state.illustrationMode
+                ? 'Disable Illustration Mode'
+                : 'Enable Illustration Mode';
+            elements.mobileMenuIllustrationToggle.disabled = !state.illustrationAvailable;
+        }
+        if (elements.mobileMenuCharacterToggle) {
+            elements.mobileMenuCharacterToggle.disabled = !state.characterAvailable;
+        }
+        const hasBook = !!state.currentBook;
+        const hasCurrentParagraph = hasBook
+            && Array.isArray(state.paragraphs)
+            && state.paragraphs.length > 0
+            && Number.isInteger(state.currentParagraphIndex)
+            && state.currentParagraphIndex >= 0
+            && state.currentParagraphIndex < state.paragraphs.length;
+        if (elements.mobileMenuHighlight) {
+            elements.mobileMenuHighlight.disabled = !hasCurrentParagraph;
+        }
+        if (elements.mobileMenuNote) {
+            elements.mobileMenuNote.disabled = !hasCurrentParagraph;
+        }
+        if (elements.mobileMenuBookmark) {
+            elements.mobileMenuBookmark.disabled = !hasCurrentParagraph;
+        }
+        if (elements.mobileMenuBookmarks) {
+            elements.mobileMenuBookmarks.disabled = !hasBook;
+        }
+
+        const recapEnableAvailable = !!state.currentBook
+            && (state.recapAvailable || state.quizAvailable)
+            && state.recapOptOut;
+        if (elements.mobileMenuRecapEnable) {
+            elements.mobileMenuRecapEnable.classList.toggle('hidden', !recapEnableAvailable);
+        }
+
+        if (elements.mobileMenuAuth) {
+            const showAuth = state.authPublicMode;
+            elements.mobileMenuAuth.classList.toggle('hidden', !showAuth);
+            if (showAuth) {
+                elements.mobileMenuAuth.textContent = state.authAuthenticated
+                    ? 'Collaborator Access (Signed In)'
+                    : 'Collaborator Access (Sign In)';
+            }
+        }
+    }
+
     function isBookFeatureEnabled(flag) {
         return !!(state.currentBook && state.currentBook[flag] === true);
     }
@@ -809,6 +952,80 @@
     function updateCacheOnlyIndicator() {
         if (!elements.cacheOnlyIndicator) return;
         elements.cacheOnlyIndicator.classList.toggle('hidden', !state.cacheOnly);
+    }
+
+    function detectMobileLayout() {
+        const narrowViewport = window.matchMedia('(max-width: 960px)').matches;
+        const coarsePointer = window.matchMedia('(pointer: coarse)').matches
+            || window.matchMedia('(any-pointer: coarse)').matches;
+        const touchCapable = (navigator.maxTouchPoints || 0) > 0;
+        return narrowViewport && (coarsePointer || touchCapable);
+    }
+
+    function updateTouchNavigationControls() {
+        if (!elements.mobileReaderNav) return;
+        const showTouchControls = state.isMobileLayout
+            && !elements.readerView.classList.contains('hidden')
+            && !state.speedReadingActive;
+        elements.mobileReaderNav.classList.toggle('hidden', !showTouchControls);
+        if (!showTouchControls) return;
+
+        const hasBook = !!state.currentBook && Array.isArray(state.chapters) && state.chapters.length > 0;
+        const hasParagraphs = hasBook && Array.isArray(state.paragraphs) && state.paragraphs.length > 0;
+        const hasPreviousChapter = hasBook && state.currentChapterIndex > 0;
+        const hasNextChapter = hasBook && state.currentChapterIndex < state.chapters.length - 1;
+        const hasPreviousPage = hasParagraphs && (state.currentPage > 0 || hasPreviousChapter);
+        const hasNextPage = hasParagraphs && (state.currentPage < state.totalPages - 1 || hasNextChapter);
+        const hasPreviousParagraph = hasParagraphs && (state.currentParagraphIndex > 0 || hasPreviousChapter);
+        const hasNextParagraph = hasParagraphs && (state.currentParagraphIndex < state.paragraphs.length - 1 || hasNextChapter);
+
+        if (elements.mobilePrevChapter) elements.mobilePrevChapter.disabled = !hasPreviousChapter;
+        if (elements.mobileChapterList) elements.mobileChapterList.disabled = !hasBook;
+        if (elements.mobileNextChapter) elements.mobileNextChapter.disabled = !hasNextChapter;
+        if (elements.mobilePrevParagraph) elements.mobilePrevParagraph.disabled = !hasPreviousParagraph;
+        if (elements.mobilePrevPage) elements.mobilePrevPage.disabled = !hasPreviousPage;
+        if (elements.mobileNextPage) elements.mobileNextPage.disabled = !hasNextPage;
+        if (elements.mobileNextParagraph) elements.mobileNextParagraph.disabled = !hasNextParagraph;
+    }
+
+    function applyLayoutCapabilities({ repaginate = false } = {}) {
+        const mobileLayout = detectMobileLayout();
+        state.isMobileLayout = mobileLayout;
+
+        if (elements.readerView) {
+            elements.readerView.classList.toggle('mobile-layout', mobileLayout);
+        }
+        if (elements.shortcutsToggle) {
+            elements.shortcutsToggle.classList.toggle('hidden', mobileLayout);
+        }
+        if (elements.mobileLayoutHint) {
+            elements.mobileLayoutHint.classList.toggle('hidden', !mobileLayout);
+        }
+        if (elements.searchInput) {
+            elements.searchInput.placeholder = mobileLayout
+                ? SEARCH_PLACEHOLDER_MOBILE
+                : SEARCH_PLACEHOLDER_DESKTOP;
+        }
+        if (elements.chapterListHint) {
+            elements.chapterListHint.textContent = mobileLayout
+                ? CHAPTER_LIST_HINT_MOBILE
+                : CHAPTER_LIST_HINT_DESKTOP;
+        }
+
+        updateMobileHeaderMenuState();
+        updateColumnLayout();
+
+        if (repaginate
+            && !elements.readerView.classList.contains('hidden')
+            && Array.isArray(state.paragraphs)
+            && state.paragraphs.length > 0) {
+            calculatePages();
+            state.currentPage = Math.min(state.currentPage, state.totalPages - 1);
+            state.currentPage = Math.max(0, state.currentPage);
+            renderPage();
+        } else {
+            updateTouchNavigationControls();
+        }
     }
 
     const nativeFetch = window.fetch.bind(window);
@@ -862,12 +1079,14 @@
 
         if (!state.authPublicMode) {
             elements.authToggle.classList.add('hidden');
+            updateMobileHeaderMenuState();
             return;
         }
 
         elements.authToggle.classList.remove('hidden');
         elements.authToggle.classList.toggle('authenticated', state.authAuthenticated);
         elements.authToggle.textContent = state.authAuthenticated ? 'Signed In' : 'Sign In';
+        updateMobileHeaderMenuState();
     }
 
     async function authCheckStatus() {
@@ -889,6 +1108,7 @@
 
     function openAuthModal(message = '') {
         if (!elements.authModal) return;
+        closeMobileHeaderMenu();
         state.authPromptShown = true;
         elements.authModal.classList.remove('hidden');
         if (elements.authSignOut) {
@@ -1098,6 +1318,9 @@
 
     function openReaderSettingsPanel() {
         if (!elements.readerSettingsPanel || !elements.readerSettingsToggle) return;
+        if (elements.searchResults) {
+            elements.searchResults.classList.add('hidden');
+        }
         elements.readerSettingsPanel.classList.remove('hidden');
         elements.readerSettingsToggle.classList.add('active');
     }
@@ -1127,6 +1350,7 @@
         await authCheckStatus();
         await speedReadingCheckAvailability();
         setupEventListeners();
+        applyLayoutCapabilities();
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
         await characterCheckAvailability();
@@ -1377,6 +1601,7 @@
         // Switch to reader view
         elements.libraryView.classList.add('hidden');
         elements.readerView.classList.remove('hidden');
+        applyLayoutCapabilities();
 
         // Update title
         elements.bookTitle.textContent = book.title;
@@ -1495,6 +1720,7 @@
             elements.columnLeft.innerHTML = '<p class="no-content">Content not available</p>';
             elements.columnRight.innerHTML = '';
             updateAnnotationControls();
+            updateTouchNavigationControls();
             return false;
         }
     }
@@ -1851,8 +2077,8 @@
         const columnHeight = contentArea.clientHeight;
         const columnWidth = elements.columnLeft.clientWidth;
 
-        // In illustration mode, only use single column
-        const useSecondColumn = !state.illustrationMode;
+        // In illustration mode and mobile layout, use single reading column.
+        const useSecondColumn = !state.illustrationMode && !state.isMobileLayout;
 
         // Create a temporary measurement container
         const measureContainer = document.createElement('div');
@@ -1918,11 +2144,17 @@
             elements.columnRight.innerHTML = '';
             elements.pageIndicator.textContent = '';
             updateAnnotationControls();
+            updateTouchNavigationControls();
+            updateMobileHeaderMenuState();
             return;
         }
 
         const pageData = state.pagesData[state.currentPage];
-        if (!pageData) return;
+        if (!pageData) {
+            updateTouchNavigationControls();
+            updateMobileHeaderMenuState();
+            return;
+        }
 
         const pageParagraphs = state.paragraphs.slice(pageData.startParagraph, pageData.endParagraph + 1);
 
@@ -1931,8 +2163,8 @@
         const columnHeight = contentArea.clientHeight;
         const columnWidth = elements.columnLeft.clientWidth;
 
-        // In illustration mode, only use left column
-        const useSecondColumn = !state.illustrationMode;
+        // In illustration mode and mobile layout, only use left column.
+        const useSecondColumn = !state.illustrationMode && !state.isMobileLayout;
 
         // Build HTML for both columns
         let leftHtml = '';
@@ -1998,9 +2230,7 @@
         document.body.removeChild(measureContainer);
 
         elements.columnLeft.innerHTML = leftHtml || '';
-        if (useSecondColumn) {
-            elements.columnRight.innerHTML = rightHtml || '';
-        }
+        elements.columnRight.innerHTML = useSecondColumn ? (rightHtml || '') : '';
 
         // Update page indicator
         elements.pageIndicator.textContent = `Page ${state.currentPage + 1} of ${state.totalPages}`;
@@ -2012,6 +2242,8 @@
 
         updateAnnotationControls();
         scheduleCharacterDiscoveryCheck();
+        updateTouchNavigationControls();
+        updateMobileHeaderMenuState();
     }
 
     // Navigation functions
@@ -2834,6 +3066,33 @@
     // Search
     let searchTimeout = null;
 
+    function setSearchInputValues(value, options = {}) {
+        const nextValue = typeof value === 'string' ? value : '';
+        const skipDesktop = options.skipDesktop === true;
+        const skipMobile = options.skipMobile === true;
+        if (!skipDesktop && elements.searchInput && elements.searchInput.value !== nextValue) {
+            elements.searchInput.value = nextValue;
+        }
+        if (!skipMobile && elements.mobileMenuSearchInput && elements.mobileMenuSearchInput.value !== nextValue) {
+            elements.mobileMenuSearchInput.value = nextValue;
+        }
+    }
+
+    function scheduleSearch(query) {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            performSearch(query);
+        }, 300);
+    }
+
+    function submitMobileMenuSearch() {
+        if (!elements.mobileMenuSearchInput) return;
+        const query = elements.mobileMenuSearchInput.value || '';
+        setSearchInputValues(query, { skipMobile: true });
+        closeMobileHeaderMenu();
+        performSearch(query);
+    }
+
     function escapeRegExp(value) {
         return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
@@ -3020,7 +3279,7 @@
         }
 
         elements.searchResults.classList.add('hidden');
-        elements.searchInput.value = '';
+        setSearchInputValues('');
 
         const loadPromise = loadChapter(chapterIndex, 0, paragraphIndex, true);
         if (state.ttsEnabled) {
@@ -3048,6 +3307,7 @@
     // Back to library
     function backToLibrary() {
         ttsStop();
+        closeMobileHeaderMenu();
         closeChapterRecapOverlay(false);
         if (state.speedReadingActive) {
             exitSpeedReading(true);
@@ -3078,8 +3338,9 @@
         updateRecapOptOutControl();
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
+        updateTouchNavigationControls();
         elements.searchResults.classList.add('hidden');
-        elements.searchInput.value = '';
+        setSearchInputValues('');
         if (elements.searchResultsList) {
             elements.searchResultsList.innerHTML = '';
         }
@@ -3093,6 +3354,7 @@
 
     // Chapter list
     function showChapterList() {
+        closeMobileHeaderMenu();
         closeAnnotationMenu();
         ttsPauseForModal();
         chapterListSelectedIndex = state.currentChapterIndex;
@@ -3192,6 +3454,7 @@
             available: state.ttsAvailable
         });
         updateCacheOnlyIndicator();
+        updateMobileHeaderMenuState();
 
         return {
             openaiConfigured: state.ttsOpenAIConfigured,
@@ -3256,6 +3519,7 @@
             updateModeIndicator();
             ttsSpeakCurrent();
         }
+        updateMobileHeaderMenuState();
     }
 
     function ttsStop() {
@@ -3285,6 +3549,7 @@
         }
         updateSpeedIndicator();
         updateModeIndicator();
+        updateMobileHeaderMenuState();
     }
 
     async function ttsSpeakCurrent() {
@@ -3688,6 +3953,7 @@
 
         updateSpeedIndicator();
         showSpeedNotification();
+        updateMobileHeaderMenuState();
     }
 
     function updateSpeedIndicator() {
@@ -3803,6 +4069,7 @@
             elements.illustrationToggle.disabled = true;
         }
 
+        updateTouchNavigationControls();
         updateSpeedReadingControls();
         prepareSpeedReadingTokens(state.currentParagraphIndex);
         state.speedReadingTokenIndex = 0;
@@ -3824,6 +4091,7 @@
         if (elements.illustrationToggle) {
             elements.illustrationToggle.disabled = false;
         }
+        updateTouchNavigationControls();
 
         let restoredIllustration = false;
         if (state.speedReadingRestoreIllustration && !state.illustrationMode && state.illustrationAvailable) {
@@ -4069,6 +4337,7 @@
 
         console.log('Illustration availability:', state.illustrationAvailable, 'Prompt editing:', state.allowPromptEditing);
         updateCacheOnlyIndicator();
+        updateMobileHeaderMenuState();
     }
 
     async function illustrationAnalyzeBook() {
@@ -4141,6 +4410,10 @@
 
     function updateColumnLayout() {
         const contentArea = document.querySelector('.reader-content');
+        if (!contentArea || !elements.columnRight || !elements.illustrationColumn) {
+            return;
+        }
+        const showSecondReadingColumn = !state.illustrationMode && !state.isMobileLayout;
 
         if (state.illustrationMode) {
             contentArea.classList.add('illustration-mode');
@@ -4148,7 +4421,7 @@
             elements.illustrationColumn.classList.remove('hidden');
         } else {
             contentArea.classList.remove('illustration-mode');
-            elements.columnRight.classList.remove('hidden');
+            elements.columnRight.classList.toggle('hidden', !showSecondReadingColumn);
             elements.illustrationColumn.classList.add('hidden');
             // Hide all illustration states
             elements.illustrationSkeleton.classList.add('hidden');
@@ -4723,6 +4996,7 @@
             state.characterChatAvailable = false;
         }
         updateCacheOnlyIndicator();
+        updateMobileHeaderMenuState();
     }
 
     async function recapCheckAvailability() {
@@ -4753,6 +5027,7 @@
         updateRecapOptOutControl();
         updateCacheOnlyIndicator();
         setRecapChatControls();
+        updateMobileHeaderMenuState();
     }
 
     async function quizCheckAvailability() {
@@ -4776,6 +5051,7 @@
         updateRecapOptOutControl();
         updateCacheOnlyIndicator();
         setQuizControls();
+        updateMobileHeaderMenuState();
     }
 
     function trackRecapAnalytics(eventType) {
@@ -4810,6 +5086,7 @@
         if (!elements.recapEnableBtn) return;
         const showControl = !!state.currentBook && (state.recapAvailable || state.quizAvailable) && state.recapOptOut;
         elements.recapEnableBtn.classList.toggle('hidden', !showControl);
+        updateMobileHeaderMenuState();
     }
 
     function isChapterRecapVisible() {
@@ -5499,6 +5776,95 @@
                 setReaderPreferences({ ...DEFAULT_READER_PREFERENCES });
             });
         }
+        if (elements.mobileHeaderMenuToggle) {
+            elements.mobileHeaderMenuToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleMobileHeaderMenu();
+            });
+        }
+        if (elements.mobileHeaderMenuPanel) {
+            elements.mobileHeaderMenuPanel.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        if (elements.mobileMenuTtsToggle) {
+            elements.mobileMenuTtsToggle.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                ttsToggle();
+            });
+        }
+        if (elements.mobileMenuTtsSpeed) {
+            elements.mobileMenuTtsSpeed.addEventListener('click', () => {
+                ttsCycleSpeed();
+            });
+        }
+        if (elements.mobileMenuSpeedReadingToggle) {
+            elements.mobileMenuSpeedReadingToggle.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                speedReadingToggle();
+            });
+        }
+        if (elements.mobileMenuIllustrationToggle) {
+            elements.mobileMenuIllustrationToggle.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                illustrationToggle();
+            });
+        }
+        if (elements.mobileMenuCharacterToggle) {
+            elements.mobileMenuCharacterToggle.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                characterBrowserToggle();
+            });
+        }
+        if (elements.mobileMenuReaderSettings) {
+            elements.mobileMenuReaderSettings.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeMobileHeaderMenu();
+                syncReaderPreferencesControls();
+                openReaderSettingsPanel();
+            });
+        }
+        if (elements.mobileMenuHighlight) {
+            elements.mobileMenuHighlight.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                toggleHighlightForCurrentParagraph();
+            });
+        }
+        if (elements.mobileMenuNote) {
+            elements.mobileMenuNote.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                openNoteModal();
+            });
+        }
+        if (elements.mobileMenuBookmark) {
+            elements.mobileMenuBookmark.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                toggleBookmarkForCurrentParagraph();
+            });
+        }
+        if (elements.mobileMenuBookmarks) {
+            elements.mobileMenuBookmarks.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                showBookmarksOverlay();
+            });
+        }
+        if (elements.mobileMenuRecapEnable) {
+            elements.mobileMenuRecapEnable.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                if (state.currentBook?.id) {
+                    setRecapOptOut(state.currentBook.id, false);
+                    if (elements.chapterRecapOptout) {
+                        elements.chapterRecapOptout.checked = false;
+                    }
+                }
+            });
+        }
+        if (elements.mobileMenuAuth) {
+            elements.mobileMenuAuth.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                openAuthModal();
+            });
+        }
         document.addEventListener('click', (e) => {
             if (!isAnnotationMenuVisible()) return;
             const menuHost = e.target.closest('.annotation-menu');
@@ -5511,6 +5877,13 @@
             const settingsHost = e.target.closest('.reader-settings-menu');
             if (!settingsHost) {
                 closeReaderSettingsPanel();
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!isMobileHeaderMenuVisible()) return;
+            const menuHost = e.target.closest('.mobile-header-menu');
+            if (!menuHost) {
+                closeMobileHeaderMenu();
             }
         });
         if (elements.annotationMenuPanel) {
@@ -5631,6 +6004,55 @@
                     nextPage();
                     ttsInterrupt();
                 }
+            });
+        }
+
+        if (elements.mobilePrevChapter) {
+            elements.mobilePrevChapter.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                if (state.ttsEnabled) speechSynthesis.cancel();
+                prevChapter();
+            });
+        }
+        if (elements.mobileChapterList) {
+            elements.mobileChapterList.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden')) return;
+                showChapterList();
+            });
+        }
+        if (elements.mobileNextChapter) {
+            elements.mobileNextChapter.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                if (state.ttsEnabled) speechSynthesis.cancel();
+                nextChapter();
+            });
+        }
+        if (elements.mobilePrevParagraph) {
+            elements.mobilePrevParagraph.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                prevParagraph();
+                ttsInterrupt();
+            });
+        }
+        if (elements.mobilePrevPage) {
+            elements.mobilePrevPage.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                prevPage();
+                ttsInterrupt();
+            });
+        }
+        if (elements.mobileNextPage) {
+            elements.mobileNextPage.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                nextPage();
+                ttsInterrupt();
+            });
+        }
+        if (elements.mobileNextParagraph) {
+            elements.mobileNextParagraph.addEventListener('click', () => {
+                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
+                nextParagraph();
+                ttsInterrupt();
             });
         }
 
@@ -5806,11 +6228,21 @@
 
         // Search input
         elements.searchInput.addEventListener('input', (e) => {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
-                performSearch(e.target.value);
-            }, 300);
+            const value = e.target.value || '';
+            setSearchInputValues(value, { skipDesktop: true });
+            scheduleSearch(value);
         });
+        if (elements.mobileMenuSearchInput) {
+            elements.mobileMenuSearchInput.addEventListener('input', (e) => {
+                const value = e.target.value || '';
+                setSearchInputValues(value, { skipMobile: true });
+            });
+        }
+        if (elements.mobileMenuSearchSubmit) {
+            elements.mobileMenuSearchSubmit.addEventListener('click', () => {
+                submitMobileMenuSearch();
+            });
+        }
         if (elements.searchChapterFilter) {
             elements.searchChapterFilter.addEventListener('change', (e) => {
                 state.searchChapterFilter = e.target.value || '';
@@ -5831,10 +6263,20 @@
                 performSearch(elements.searchInput.value);
             }
         });
+        if (elements.mobileMenuSearchInput) {
+            elements.mobileMenuSearchInput.addEventListener('focus', () => {
+                ttsPauseForModal();
+            });
+        }
 
         elements.searchInput.addEventListener('blur', () => {
             ttsResumeAfterModal();
         });
+        if (elements.mobileMenuSearchInput) {
+            elements.mobileMenuSearchInput.addEventListener('blur', () => {
+                ttsResumeAfterModal();
+            });
+        }
 
         elements.searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -5843,6 +6285,21 @@
                 elements.searchInput.blur();
             }
         });
+        if (elements.mobileMenuSearchInput) {
+            elements.mobileMenuSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    submitMobileMenuSearch();
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    elements.searchResults.classList.add('hidden');
+                    elements.mobileMenuSearchInput.blur();
+                }
+            });
+        }
 
         // Search results click
         elements.searchResults.addEventListener('click', (e) => {
@@ -5931,6 +6388,14 @@
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     closeAuthModal();
+                }
+                return;
+            }
+
+            if (isMobileHeaderMenuVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeMobileHeaderMenu();
                 }
                 return;
             }
@@ -6124,7 +6589,12 @@
                     break;
                 case '/':
                     e.preventDefault();
-                    elements.searchInput.focus();
+                    if (state.isMobileLayout && elements.mobileMenuSearchInput) {
+                        openMobileHeaderMenu();
+                        elements.mobileMenuSearchInput.focus();
+                    } else {
+                        elements.searchInput.focus();
+                    }
                     break;
                 case 'c':
                     e.preventDefault();
@@ -6210,13 +6680,7 @@
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
-                if (!elements.readerView.classList.contains('hidden')) {
-                    calculatePages();
-                    // Ensure current page is still valid
-                    state.currentPage = Math.min(state.currentPage, state.totalPages - 1);
-                    state.currentPage = Math.max(0, state.currentPage);
-                    renderPage();
-                }
+                applyLayoutCapabilities({ repaginate: true });
             }, 250);
         });
     }
