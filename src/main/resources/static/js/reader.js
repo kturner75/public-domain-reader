@@ -137,6 +137,7 @@
         columnLeft: document.getElementById('column-left'),
         columnRight: document.getElementById('column-right'),
         readerContent: document.querySelector('.reader-content'),
+        readerFooter: document.querySelector('.reader-footer'),
         gutterLeft: document.getElementById('gutter-left'),
         gutterRight: document.getElementById('gutter-right'),
         mobileHeaderMenu: document.getElementById('mobile-header-menu'),
@@ -160,13 +161,9 @@
         pageIndicator: document.getElementById('page-indicator'),
         mobileLayoutHint: document.getElementById('mobile-layout-hint'),
         mobileReaderNav: document.getElementById('mobile-reader-nav'),
-        mobilePrevChapter: document.getElementById('mobile-prev-chapter'),
         mobileChapterList: document.getElementById('mobile-chapter-list'),
-        mobileNextChapter: document.getElementById('mobile-next-chapter'),
-        mobilePrevParagraph: document.getElementById('mobile-prev-paragraph'),
         mobilePrevPage: document.getElementById('mobile-prev-page'),
         mobileNextPage: document.getElementById('mobile-next-page'),
-        mobileNextParagraph: document.getElementById('mobile-next-paragraph'),
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
@@ -982,16 +979,10 @@
         const hasNextChapter = hasBook && state.currentChapterIndex < state.chapters.length - 1;
         const hasPreviousPage = hasParagraphs && (state.currentPage > 0 || hasPreviousChapter);
         const hasNextPage = hasParagraphs && (state.currentPage < state.totalPages - 1 || hasNextChapter);
-        const hasPreviousParagraph = hasParagraphs && (state.currentParagraphIndex > 0 || hasPreviousChapter);
-        const hasNextParagraph = hasParagraphs && (state.currentParagraphIndex < state.paragraphs.length - 1 || hasNextChapter);
 
-        if (elements.mobilePrevChapter) elements.mobilePrevChapter.disabled = !hasPreviousChapter;
         if (elements.mobileChapterList) elements.mobileChapterList.disabled = !hasBook;
-        if (elements.mobileNextChapter) elements.mobileNextChapter.disabled = !hasNextChapter;
-        if (elements.mobilePrevParagraph) elements.mobilePrevParagraph.disabled = !hasPreviousParagraph;
         if (elements.mobilePrevPage) elements.mobilePrevPage.disabled = !hasPreviousPage;
         if (elements.mobileNextPage) elements.mobileNextPage.disabled = !hasNextPage;
-        if (elements.mobileNextParagraph) elements.mobileNextParagraph.disabled = !hasNextParagraph;
     }
 
     function applyLayoutCapabilities({ repaginate = false } = {}) {
@@ -1003,6 +994,9 @@
         }
         if (elements.shortcutsToggle) {
             elements.shortcutsToggle.classList.toggle('hidden', mobileLayout);
+        }
+        if (elements.readerFooter) {
+            elements.readerFooter.classList.toggle('hidden', mobileLayout);
         }
         if (elements.mobileLayoutHint) {
             elements.mobileLayoutHint.classList.toggle('hidden', !mobileLayout);
@@ -6024,31 +6018,10 @@
             });
         }
 
-        if (elements.mobilePrevChapter) {
-            elements.mobilePrevChapter.addEventListener('click', () => {
-                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
-                if (state.ttsEnabled) speechSynthesis.cancel();
-                prevChapter();
-            });
-        }
         if (elements.mobileChapterList) {
             elements.mobileChapterList.addEventListener('click', () => {
                 if (elements.readerView.classList.contains('hidden')) return;
                 showChapterList();
-            });
-        }
-        if (elements.mobileNextChapter) {
-            elements.mobileNextChapter.addEventListener('click', () => {
-                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
-                if (state.ttsEnabled) speechSynthesis.cancel();
-                nextChapter();
-            });
-        }
-        if (elements.mobilePrevParagraph) {
-            elements.mobilePrevParagraph.addEventListener('click', () => {
-                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
-                prevParagraph();
-                ttsInterrupt();
             });
         }
         if (elements.mobilePrevPage) {
@@ -6062,13 +6035,6 @@
             elements.mobileNextPage.addEventListener('click', () => {
                 if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
                 nextPage();
-                ttsInterrupt();
-            });
-        }
-        if (elements.mobileNextParagraph) {
-            elements.mobileNextParagraph.addEventListener('click', () => {
-                if (elements.readerView.classList.contains('hidden') || state.speedReadingActive) return;
-                nextParagraph();
                 ttsInterrupt();
             });
         }
