@@ -1,0 +1,14 @@
+{
+  "name": "public-domain-reader-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright tests for reader frontend retry flows",
+  "scripts": {
+    "e2e:test": "playwright test",
+    "e2e:test:headed": "playwright test --headed",
+    "e2e:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1"
+  }
+}

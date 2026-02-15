@@ -319,12 +319,18 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Improvement
 - Priority: P1
 - Effort: M
-- Status: Proposed
+- Status: Done
 - Problem: Frontend still relies on `alert()` and scattered error patterns.
 - Acceptance Criteria:
 - Replace blocking alerts with consistent toast/inline error components.
 - Standardize retry affordances for import/search/generation failures.
 - Map backend error payloads to clear UX states.
+- Session Log:
+- 2026-02-14: Added shared frontend error UX primitives (global toast region + inline error blocks), removed all `alert()` usage in reader flows, and introduced backend-aware error mapping (`message`/`error` payload keys + HTTP status) for search/import/illustration generation failures.
+- 2026-02-14: Added standardized retry affordances for failed import actions (toast retry), in-reader search failures (inline retry), and illustration generation failures in both modal regeneration and chapter illustration panels (inline retry).
+- 2026-02-14: Extended unified error/retry UX to recap and chat flows by adding inline error + retry controls for chapter recap loading failures, recap chat send failures, and character chat send failures with shared backend/status-aware message mapping.
+- 2026-02-14: Added Playwright retry-flow coverage (`e2e/retry-flows.spec.js`) with deterministic `/api/*` mocks for recap overlay retry, recap chat retry, and character chat retry, plus local static test server + config (`playwright.config.js`, `e2e/static-server.js`).
+- 2026-02-14: Wired Playwright retry-flow suite into CI with GitHub Actions (`.github/workflows/playwright-e2e.yml`) to run on pull requests and pushes to `main`.
 
 ### BL-011 - Add observability for long-running generation flows
 - Type: Tech Debt

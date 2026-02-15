@@ -108,3 +108,14 @@ Notes:
 - Recap, illustration, and character workers use DB lease claims for cross-instance coordination; tune with `recap.generation.lease-minutes`, `illustration.generation.lease-minutes`, `character.analysis.lease-minutes`, `character.portrait.lease-minutes`, and optional worker IDs (`recap.generation.worker-id`, `illustration.generation.worker-id`, `character.generation.worker-id`).
 - Retry/backoff is explicit and persisted for recap/illustration/portrait/analysis jobs (`retryCount`, `nextRetryAt`) with configurable limits via `generation.retry.max-attempts`, `generation.retry.initial-delay-seconds`, and `generation.retry.max-delay-seconds`.
 - Aggregate generation status can be queried without log inspection via `GET /api/generation/status` and `GET /api/generation/book/{bookId}/status`.
+
+## Frontend E2E (Playwright)
+
+- Install dependencies: `npm install`
+- Install browser: `npm run e2e:install`
+- Run tests: `npm run e2e:test`
+
+Notes:
+- Tests run against a local static server (`node e2e/static-server.js`) and mock all `/api/*` traffic in Playwright.
+- Current coverage includes retry UX for recap overlay load errors, recap chat send failures, and character chat send failures (`e2e/retry-flows.spec.js`).
+- CI runs this suite via GitHub Actions workflow `/Users/kevinturner/IdeaProjects/public-domain-reader/.github/workflows/playwright-e2e.yml`.
