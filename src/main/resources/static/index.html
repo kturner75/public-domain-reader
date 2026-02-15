@@ -168,6 +168,10 @@
                     <option value="">All chapters</option>
                 </select>
             </div>
+            <div id="search-results-error" class="inline-error hidden" role="status" aria-live="polite">
+                <span id="search-results-error-message"></span>
+                <button id="search-results-retry" class="inline-error-btn hidden" type="button">Retry</button>
+            </div>
             <div id="search-results-list" class="search-results-list"></div>
         </div>
 
@@ -191,7 +195,8 @@
                             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
                             <line x1="3" y1="3" x2="21" y2="21"/>
                         </svg>
-                        <span>Illustration unavailable</span>
+                        <span id="illustration-error-message">Illustration unavailable</span>
+                        <button id="illustration-error-retry" class="inline-error-btn hidden" type="button">Retry</button>
                     </div>
                 </div>
             </main>
@@ -257,6 +262,10 @@
                 <div class="chapter-recap-scroll-body">
                     <div id="chapter-recap-panel-recap" class="chapter-recap-panel" role="tabpanel">
                         <p id="chapter-recap-status" class="chapter-recap-status"></p>
+                        <div id="chapter-recap-error" class="inline-error hidden" role="status" aria-live="polite">
+                            <span id="chapter-recap-error-message"></span>
+                            <button id="chapter-recap-retry" class="inline-error-btn hidden" type="button">Retry</button>
+                        </div>
                         <p id="chapter-recap-summary" class="chapter-recap-summary"></p>
 
                         <div class="chapter-recap-section">
@@ -273,6 +282,10 @@
                     <div id="chapter-recap-panel-chat" class="chapter-recap-panel hidden chapter-recap-chat" role="tabpanel">
                         <h4>Discuss This Chapter</h4>
                         <p id="chapter-recap-chat-status" class="chapter-recap-chat-status"></p>
+                        <div id="chapter-recap-chat-error" class="inline-error hidden" role="status" aria-live="polite">
+                            <span id="chapter-recap-chat-error-message"></span>
+                            <button id="chapter-recap-chat-retry" class="inline-error-btn hidden" type="button">Retry</button>
+                        </div>
                         <div id="chapter-recap-chat-messages" class="chat-messages chapter-recap-chat-messages"></div>
                         <div class="chat-input-container chapter-recap-chat-input-container">
                             <textarea id="chapter-recap-chat-input" placeholder="Ask a spoiler-safe question..." rows="2"></textarea>
@@ -435,6 +448,10 @@
                     <div id="prompt-edit-mode">
                         <p class="prompt-modal-hint">Edit the prompt below and regenerate the illustration. The more descriptive and specific your prompt, the better the result.</p>
                         <textarea id="prompt-textarea" class="prompt-textarea" rows="8" placeholder="Loading prompt..."></textarea>
+                        <div id="prompt-error" class="inline-error hidden" role="status" aria-live="polite">
+                            <span id="prompt-error-message"></span>
+                            <button id="prompt-error-retry" class="inline-error-btn hidden" type="button">Retry</button>
+                        </div>
                     </div>
                     <!-- Generating mode content -->
                     <div id="prompt-generating-mode" class="hidden">
@@ -531,6 +548,10 @@
                     <h3 id="chat-character-name"></h3>
                     <button id="character-chat-close" class="character-modal-close">&times;</button>
                 </div>
+                <div id="chat-error" class="inline-error hidden" role="status" aria-live="polite">
+                    <span id="chat-error-message"></span>
+                    <button id="chat-error-retry" class="inline-error-btn hidden" type="button">Retry</button>
+                </div>
                 <div id="chat-messages" class="chat-messages"></div>
                 <div class="chat-input-container">
                     <textarea id="chat-input" placeholder="Ask a question..." rows="2"></textarea>
@@ -562,6 +583,7 @@
             </div>
         </div>
     </div>
+    <div id="app-toast-region" class="app-toast-region" aria-live="polite" aria-atomic="false"></div>
 
     <script src="/js/reader.js"></script>
 </body>

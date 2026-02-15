@@ -49,3 +49,8 @@ build/
 .env.*
 !.env.example
 !.env.*.example
+
+### Node / Playwright ###
+node_modules/
+playwright-report/
+test-results/

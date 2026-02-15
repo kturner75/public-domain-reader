@@ -52,6 +52,7 @@
         illustrationMode: false,
         illustrationAvailable: false,
         illustrationCacheOnly: false,
+        illustrationRetryHandler: null,
         illustrationSettings: null,  // { style, promptPrefix, reasoning }
         illustrationPolling: null,   // polling interval ID
         allowPromptEditing: false,   // whether prompt editing is enabled
@@ -61,6 +62,11 @@
         promptModalChapterId: null,       // chapter being edited in modal
         promptModalPolling: null,         // polling interval for regeneration
         promptModalLastPrompt: '',        // last prompt used (for try again)
+        promptRetryHandler: null,
+        searchRetryHandler: null,
+        recapRetryHandler: null,
+        recapChatRetryHandler: null,
+        characterChatRetryHandler: null,
         // Character feature state
         characterAvailable: false,
         characterCacheOnly: false,
@@ -135,6 +141,9 @@
         backToLibrary: document.getElementById('back-to-library'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
+        searchResultsError: document.getElementById('search-results-error'),
+        searchResultsErrorMessage: document.getElementById('search-results-error-message'),
+        searchResultsRetry: document.getElementById('search-results-retry'),
         searchResultsList: document.getElementById('search-results-list'),
         searchChapterFilter: document.getElementById('search-chapter-filter'),
         readerSettingsToggle: document.getElementById('reader-settings-toggle'),
@@ -197,10 +206,16 @@
         chapterRecapPanelChat: document.getElementById('chapter-recap-panel-chat'),
         chapterRecapPanelQuiz: document.getElementById('chapter-recap-panel-quiz'),
         chapterRecapStatus: document.getElementById('chapter-recap-status'),
+        chapterRecapError: document.getElementById('chapter-recap-error'),
+        chapterRecapErrorMessage: document.getElementById('chapter-recap-error-message'),
+        chapterRecapRetry: document.getElementById('chapter-recap-retry'),
         chapterRecapSummary: document.getElementById('chapter-recap-summary'),
         chapterRecapEvents: document.getElementById('chapter-recap-events'),
         chapterRecapCharacters: document.getElementById('chapter-recap-characters'),
         chapterRecapChatStatus: document.getElementById('chapter-recap-chat-status'),
+        chapterRecapChatError: document.getElementById('chapter-recap-chat-error'),
+        chapterRecapChatErrorMessage: document.getElementById('chapter-recap-chat-error-message'),
+        chapterRecapChatRetry: document.getElementById('chapter-recap-chat-retry'),
         chapterRecapChatMessages: document.getElementById('chapter-recap-chat-messages'),
         chapterRecapChatInput: document.getElementById('chapter-recap-chat-input'),
         chapterRecapChatSend: document.getElementById('chapter-recap-chat-send'),
@@ -217,6 +232,8 @@
         illustrationSkeleton: document.getElementById('illustration-skeleton'),
         illustrationImage: document.getElementById('illustration-image'),
         illustrationError: document.getElementById('illustration-error'),
+        illustrationErrorMessage: document.getElementById('illustration-error-message'),
+        illustrationErrorRetry: document.getElementById('illustration-error-retry'),
         illustrationHint: document.getElementById('illustration-hint'),
         // Prompt editing modal elements
         promptModal: document.getElementById('prompt-modal'),
@@ -230,10 +247,14 @@
         promptPreviewImage: document.getElementById('prompt-preview-image'),
         promptEditButtons: document.getElementById('prompt-edit-buttons'),
         promptPreviewButtons: document.getElementById('prompt-preview-buttons'),
+        promptError: document.getElementById('prompt-error'),
+        promptErrorMessage: document.getElementById('prompt-error-message'),
+        promptErrorRetry: document.getElementById('prompt-error-retry'),
         promptCancel: document.getElementById('prompt-cancel'),
         promptRegenerate: document.getElementById('prompt-regenerate'),
         promptTryAgain: document.getElementById('prompt-try-again'),
         promptAccept: document.getElementById('prompt-accept'),
+        appToastRegion: document.getElementById('app-toast-region'),
         // Character elements
         characterToggle: document.getElementById('character-toggle'),
         characterHint: document.getElementById('character-hint'),
@@ -260,6 +281,9 @@
         characterChatClose: document.getElementById('character-chat-close'),
         chatCharacterPortrait: document.getElementById('chat-character-portrait'),
         chatCharacterName: document.getElementById('chat-character-name'),
+        chatError: document.getElementById('chat-error'),
+        chatErrorMessage: document.getElementById('chat-error-message'),
+        chatErrorRetry: document.getElementById('chat-error-retry'),
         chatMessages: document.getElementById('chat-messages'),
         chatInput: document.getElementById('chat-input'),
         chatSendBtn: document.getElementById('chat-send-btn'),
@@ -318,6 +342,416 @@
             highlightColor: '#f1ece2'
         }
     });
+
+    function firstMessageFromPayload(payload) {
+        if (!payload) {
+            return '';
+        }
+        if (typeof payload === 'string') {
+            return payload.trim();
+        }
+        if (typeof payload === 'object') {
+            const keys = ['message', 'error', 'detail', 'response'];
+            for (const key of keys) {
+                const value = payload[key];
+                if (typeof value === 'string' && value.trim()) {
+                    return value.trim();
+                }
+            }
+            if (typeof payload.error === 'object') {
+                return firstMessageFromPayload(payload.error);
+            }
+        }
+        return '';
+    }
+
+    async function readErrorPayload(response) {
+        if (!response) {
+            return null;
+        }
+        const contentType = response.headers?.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            return response.json().catch(() => null);
+        }
+        const text = await response.text().catch(() => '');
+        if (!text) {
+            return null;
+        }
+        try {
+            return JSON.parse(text);
+        } catch (_error) {
+            return text;
+        }
+    }
+
+    function mapSearchError(errorInfo = {}) {
+        const status = Number.isInteger(errorInfo.status) ? errorInfo.status : 0;
+        const backendMessage = (errorInfo.message || '').trim();
+        if (errorInfo.network) {
+            return { message: 'Search is unavailable right now. Check connection and retry.', retryable: true };
+        }
+        if (backendMessage) {
+            return { message: backendMessage, retryable: true };
+        }
+        if (status === 400) {
+            return { message: 'Search query could not be processed. Adjust it and retry.', retryable: true };
+        }
+        if (status === 403) {
+            return { message: 'Search is not available for this chapter.', retryable: false };
+        }
+        if (status === 429) {
+            return { message: 'Search is busy. Retry in a moment.', retryable: true };
+        }
+        if (status >= 500) {
+            return { message: 'Search service failed. Retry in a moment.', retryable: true };
+        }
+        return { message: 'Search failed. Please retry.', retryable: true };
+    }
+
+    function mapImportError(errorInfo = {}) {
+        const status = Number.isInteger(errorInfo.status) ? errorInfo.status : 0;
+        const backendMessage = (errorInfo.message || '').trim();
+        const normalizedMessage = backendMessage.toLowerCase();
+        if (errorInfo.network) {
+            return { message: 'Unable to reach the import service. Retry import.', retryable: true };
+        }
+        if (backendMessage) {
+            if (normalizedMessage.includes('no html version')
+                    || normalizedMessage.includes('not found in gutenberg')
+                    || normalizedMessage.includes('no content could be parsed')) {
+                return { message: backendMessage, retryable: false };
+            }
+            return { message: backendMessage, retryable: true };
+        }
+        if (status === 404) {
+            return { message: 'This Gutenberg book was not found.', retryable: false };
+        }
+        if (status === 429) {
+            return { message: 'Import is rate-limited. Retry shortly.', retryable: true };
+        }
+        if (status >= 500) {
+            return { message: 'Import service failed. Retry in a moment.', retryable: true };
+        }
+        return { message: 'Failed to import book.', retryable: true };
+    }
+
+    function mapGenerationError(errorInfo = {}) {
+        const status = Number.isInteger(errorInfo.status) ? errorInfo.status : 0;
+        const backendMessage = (errorInfo.message || '').trim();
+        const generationState = (errorInfo.generationState || '').toUpperCase();
+        if (errorInfo.timeout) {
+            return { message: 'Illustration generation timed out. Retry generation.', retryable: true };
+        }
+        if (errorInfo.network) {
+            return { message: 'Illustration service is unreachable. Retry generation.', retryable: true };
+        }
+        if (generationState === 'FAILED') {
+            return { message: 'Illustration generation failed on the server.', retryable: true };
+        }
+        if (generationState === 'DISABLED') {
+            return { message: 'Illustrations are disabled for this book.', retryable: false };
+        }
+        if (generationState === 'NOT_FOUND') {
+            return { message: 'Illustration is unavailable for this chapter.', retryable: false };
+        }
+        if (backendMessage) {
+            return { message: backendMessage, retryable: true };
+        }
+        if (status === 400) {
+            return { message: 'Prompt is invalid. Update it and retry.', retryable: true };
+        }
+        if (status === 403) {
+            return { message: 'Illustration generation is not available here.', retryable: false };
+        }
+        if (status === 404) {
+            return { message: 'Chapter illustration could not be found.', retryable: false };
+        }
+        if (status === 409) {
+            return { message: 'Generation is disabled in cache-only mode.', retryable: false };
+        }
+        if (status === 429) {
+            return { message: 'Generation is busy. Retry shortly.', retryable: true };
+        }
+        if (status >= 500) {
+            return { message: 'Generation failed on the server. Retry in a moment.', retryable: true };
+        }
+        return { message: 'Illustration generation failed.', retryable: true };
+    }
+
+    function mapRecapError(errorInfo = {}) {
+        const status = Number.isInteger(errorInfo.status) ? errorInfo.status : 0;
+        const backendMessage = (errorInfo.message || '').trim();
+        if (errorInfo.network) {
+            return { message: 'Recap service is unavailable right now. Retry loading recap.', retryable: true };
+        }
+        if (backendMessage) {
+            return { message: backendMessage, retryable: true };
+        }
+        if (status === 403) {
+            return { message: 'Recaps are not available for this book.', retryable: false };
+        }
+        if (status === 404) {
+            return { message: 'Recap is unavailable for this chapter.', retryable: false };
+        }
+        if (status === 409) {
+            return { message: 'Recap is still generating.', retryable: true };
+        }
+        if (status === 429) {
+            return { message: 'Recap service is busy. Retry in a moment.', retryable: true };
+        }
+        if (status >= 500) {
+            return { message: 'Recap service failed. Retry in a moment.', retryable: true };
+        }
+        return { message: 'Unable to load recap right now.', retryable: true };
+    }
+
+    function mapChatError(errorInfo = {}) {
+        const status = Number.isInteger(errorInfo.status) ? errorInfo.status : 0;
+        const backendMessage = (errorInfo.message || '').trim();
+        if (errorInfo.network) {
+            return { message: 'Chat service is unavailable right now. Retry your message.', retryable: true };
+        }
+        if (backendMessage) {
+            const normalized = backendMessage.toLowerCase();
+            const nonRetryable = normalized.includes('disabled')
+                || normalized.includes('only available')
+                || normalized.includes('not available');
+            return { message: backendMessage, retryable: !nonRetryable };
+        }
+        if (status === 400) {
+            return { message: 'Message could not be sent. Edit it and retry.', retryable: true };
+        }
+        if (status === 403) {
+            return { message: 'Chat is not available for this context.', retryable: false };
+        }
+        if (status === 404) {
+            return { message: 'Chat target was not found.', retryable: false };
+        }
+        if (status === 409) {
+            return { message: 'Chat is disabled in cache-only mode.', retryable: false };
+        }
+        if (status === 429) {
+            return { message: 'Chat is busy. Retry in a moment.', retryable: true };
+        }
+        if (status >= 500) {
+            return { message: 'Chat failed on the server. Retry in a moment.', retryable: true };
+        }
+        return { message: 'Unable to send chat message.', retryable: true };
+    }
+
+    function removeAppToast(toast) {
+        if (!toast) {
+            return;
+        }
+        toast.classList.add('fade-out');
+        setTimeout(() => {
+            toast.remove();
+        }, 220);
+    }
+
+    function showAppToast({ title = 'Error', message, actionLabel, onAction, autoDismissMs = 9000 }) {
+        if (!elements.appToastRegion || !message) {
+            return;
+        }
+
+        const toast = document.createElement('section');
+        toast.className = 'app-toast';
+        toast.setAttribute('role', 'status');
+
+        const titleRow = document.createElement('div');
+        titleRow.className = 'app-toast-title-row';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'app-toast-title';
+        titleEl.textContent = title;
+        titleRow.appendChild(titleEl);
+
+        const closeButton = document.createElement('button');
+        closeButton.className = 'app-toast-close';
+        closeButton.type = 'button';
+        closeButton.setAttribute('aria-label', 'Dismiss');
+        closeButton.textContent = '×';
+        closeButton.addEventListener('click', () => removeAppToast(toast));
+        titleRow.appendChild(closeButton);
+
+        const messageEl = document.createElement('div');
+        messageEl.className = 'app-toast-message';
+        messageEl.textContent = message;
+
+        toast.appendChild(titleRow);
+        toast.appendChild(messageEl);
+
+        if (actionLabel && typeof onAction === 'function') {
+            const actionWrap = document.createElement('div');
+            actionWrap.className = 'app-toast-actions';
+            const actionButton = document.createElement('button');
+            actionButton.className = 'app-toast-action';
+            actionButton.type = 'button';
+            actionButton.textContent = actionLabel;
+            actionButton.addEventListener('click', () => {
+                removeAppToast(toast);
+                onAction();
+            });
+            actionWrap.appendChild(actionButton);
+            toast.appendChild(actionWrap);
+        }
+
+        elements.appToastRegion.appendChild(toast);
+        if (autoDismissMs > 0) {
+            setTimeout(() => removeAppToast(toast), autoDismissMs);
+        }
+    }
+
+    function setSearchError(message, onRetry) {
+        if (!elements.searchResultsError || !elements.searchResultsErrorMessage || !message) {
+            return;
+        }
+        state.searchRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.searchResultsErrorMessage.textContent = message;
+        elements.searchResultsError.classList.remove('hidden');
+        if (elements.searchResultsRetry) {
+            elements.searchResultsRetry.classList.toggle('hidden', !state.searchRetryHandler);
+        }
+    }
+
+    function clearSearchError() {
+        state.searchRetryHandler = null;
+        if (elements.searchResultsError) {
+            elements.searchResultsError.classList.add('hidden');
+        }
+        if (elements.searchResultsErrorMessage) {
+            elements.searchResultsErrorMessage.textContent = '';
+        }
+        if (elements.searchResultsRetry) {
+            elements.searchResultsRetry.classList.add('hidden');
+        }
+    }
+
+    function setPromptError(message, onRetry) {
+        if (!elements.promptError || !elements.promptErrorMessage || !message) {
+            return;
+        }
+        state.promptRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.promptErrorMessage.textContent = message;
+        elements.promptError.classList.remove('hidden');
+        if (elements.promptErrorRetry) {
+            elements.promptErrorRetry.classList.toggle('hidden', !state.promptRetryHandler);
+        }
+    }
+
+    function clearPromptError() {
+        state.promptRetryHandler = null;
+        if (elements.promptError) {
+            elements.promptError.classList.add('hidden');
+        }
+        if (elements.promptErrorMessage) {
+            elements.promptErrorMessage.textContent = '';
+        }
+        if (elements.promptErrorRetry) {
+            elements.promptErrorRetry.classList.add('hidden');
+        }
+    }
+
+    function setIllustrationError(message, onRetry) {
+        state.illustrationRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        if (elements.illustrationErrorMessage && message) {
+            elements.illustrationErrorMessage.textContent = message;
+        }
+        if (elements.illustrationErrorRetry) {
+            elements.illustrationErrorRetry.classList.toggle('hidden', !state.illustrationRetryHandler);
+        }
+        if (elements.illustrationError) {
+            elements.illustrationError.classList.remove('hidden');
+        }
+    }
+
+    function clearIllustrationError() {
+        state.illustrationRetryHandler = null;
+        if (elements.illustrationErrorMessage) {
+            elements.illustrationErrorMessage.textContent = 'Illustration unavailable';
+        }
+        if (elements.illustrationErrorRetry) {
+            elements.illustrationErrorRetry.classList.add('hidden');
+        }
+        if (elements.illustrationError) {
+            elements.illustrationError.classList.add('hidden');
+        }
+    }
+
+    function setRecapOverlayError(message, onRetry) {
+        if (!elements.chapterRecapError || !elements.chapterRecapErrorMessage || !message) {
+            return;
+        }
+        state.recapRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.chapterRecapErrorMessage.textContent = message;
+        elements.chapterRecapError.classList.remove('hidden');
+        if (elements.chapterRecapRetry) {
+            elements.chapterRecapRetry.classList.toggle('hidden', !state.recapRetryHandler);
+        }
+    }
+
+    function clearRecapOverlayError() {
+        state.recapRetryHandler = null;
+        if (elements.chapterRecapError) {
+            elements.chapterRecapError.classList.add('hidden');
+        }
+        if (elements.chapterRecapErrorMessage) {
+            elements.chapterRecapErrorMessage.textContent = '';
+        }
+        if (elements.chapterRecapRetry) {
+            elements.chapterRecapRetry.classList.add('hidden');
+        }
+    }
+
+    function setRecapChatError(message, onRetry) {
+        if (!elements.chapterRecapChatError || !elements.chapterRecapChatErrorMessage || !message) {
+            return;
+        }
+        state.recapChatRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.chapterRecapChatErrorMessage.textContent = message;
+        elements.chapterRecapChatError.classList.remove('hidden');
+        if (elements.chapterRecapChatRetry) {
+            elements.chapterRecapChatRetry.classList.toggle('hidden', !state.recapChatRetryHandler);
+        }
+    }
+
+    function clearRecapChatError() {
+        state.recapChatRetryHandler = null;
+        if (elements.chapterRecapChatError) {
+            elements.chapterRecapChatError.classList.add('hidden');
+        }
+        if (elements.chapterRecapChatErrorMessage) {
+            elements.chapterRecapChatErrorMessage.textContent = '';
+        }
+        if (elements.chapterRecapChatRetry) {
+            elements.chapterRecapChatRetry.classList.add('hidden');
+        }
+    }
+
+    function setCharacterChatError(message, onRetry) {
+        if (!elements.chatError || !elements.chatErrorMessage || !message) {
+            return;
+        }
+        state.characterChatRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.chatErrorMessage.textContent = message;
+        elements.chatError.classList.remove('hidden');
+        if (elements.chatErrorRetry) {
+            elements.chatErrorRetry.classList.toggle('hidden', !state.characterChatRetryHandler);
+        }
+    }
+
+    function clearCharacterChatError() {
+        state.characterChatRetryHandler = null;
+        if (elements.chatError) {
+            elements.chatError.classList.add('hidden');
+        }
+        if (elements.chatErrorMessage) {
+            elements.chatErrorMessage.textContent = '';
+        }
+        if (elements.chatErrorRetry) {
+            elements.chatErrorRetry.classList.add('hidden');
+        }
+    }
 
     function annotationKey(chapterId, paragraphIndex) {
         return `${chapterId}:${paragraphIndex}`;
@@ -1691,6 +2125,8 @@
         state.quizDifficultyLevel = 0;
         await recapCheckAvailability();
         await quizCheckAvailability();
+        clearRecapOverlayError();
+        clearRecapChatError();
         if (elements.chapterRecapOptout) {
             elements.chapterRecapOptout.checked = state.recapOptOut;
         }
@@ -1805,19 +2241,35 @@
     async function refreshChapterRecapOverlay(chapterId) {
         const pollStates = [];
         try {
+            clearRecapOverlayError();
             const response = await fetch(`/api/recaps/chapter/${chapterId}`, { cache: 'no-store' });
             if (!response.ok) {
-                elements.chapterRecapStatus.textContent = 'Recap unavailable right now.';
+                const payload = await readErrorPayload(response);
+                const mapped = mapRecapError({
+                    status: response.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                elements.chapterRecapStatus.textContent = mapped.message;
                 elements.chapterRecapSummary.textContent = 'You can continue to the next chapter now, and recap data will populate once generation completes.';
+                setRecapOverlayError(
+                    mapped.message,
+                    mapped.retryable ? () => refreshChapterRecapOverlay(chapterId) : null
+                );
             } else {
                 const recap = await response.json();
+                clearRecapOverlayError();
                 populateChapterRecapOverlay(recap);
                 pollStates.push(recap && shouldPollRecapStatus(recap.status));
             }
         } catch (error) {
             console.debug('Failed to load chapter recap:', error);
-            elements.chapterRecapStatus.textContent = 'Recap unavailable right now.';
+            const mapped = mapRecapError({ network: true });
+            elements.chapterRecapStatus.textContent = mapped.message;
             elements.chapterRecapSummary.textContent = 'You can continue to the next chapter now, and recap data will populate once generation completes.';
+            setRecapOverlayError(
+                mapped.message,
+                mapped.retryable ? () => refreshChapterRecapOverlay(chapterId) : null
+            );
         }
 
         const shouldPollQuiz = await refreshChapterQuizOverlay(chapterId);
@@ -1926,6 +2378,9 @@
         }
         if (elements.chapterRecapTabRecap) {
             elements.chapterRecapTabRecap.classList.toggle('unavailable', recapUnavailable);
+        }
+        if (!canUseChat) {
+            clearRecapChatError();
         }
 
         if (!elements.chapterRecapChatStatus) return;
@@ -2195,19 +2650,24 @@
         }
     }
 
-    async function sendRecapChatMessage() {
-        const message = elements.chapterRecapChatInput?.value?.trim();
+    async function sendRecapChatMessage(options = {}) {
+        const retryMessage = typeof options.retryMessage === 'string' ? options.retryMessage : '';
+        const appendUserMessage = options.appendUser !== false;
+        const message = (retryMessage || elements.chapterRecapChatInput?.value || '').trim();
         if (!message || !state.currentBook || state.recapChatLoading || !state.recapChatAvailable) return;
+        clearRecapChatError();
         const chatChapterIndex = Number.isInteger(state.recapChatChapterIndex)
             ? state.recapChatChapterIndex
             : state.currentChapterIndex;
 
-        const userMsg = { role: 'user', content: message, timestamp: Date.now() };
-        state.recapChatHistory.push(userMsg);
-        saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
-        renderRecapChatMessages();
+        if (appendUserMessage) {
+            const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+            state.recapChatHistory.push(userMsg);
+            saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
+            renderRecapChatMessages();
+        }
 
-        if (elements.chapterRecapChatInput) {
+        if (appendUserMessage && elements.chapterRecapChatInput) {
             elements.chapterRecapChatInput.value = '';
         }
 
@@ -2233,19 +2693,24 @@
                 })
             });
 
-            let reply = '';
-            if (response.ok) {
-                const data = await response.json();
-                reply = (data && typeof data.response === 'string') ? data.response : '';
-            } else {
-                try {
-                    const errorData = await response.json();
-                    reply = (errorData && typeof errorData.response === 'string') ? errorData.response : '';
-                } catch (_error) {
-                    reply = '';
-                }
+            if (!response.ok) {
+                const payload = await readErrorPayload(response);
+                const mapped = mapChatError({
+                    status: response.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                loadingDiv.remove();
+                setRecapChatError(
+                    mapped.message,
+                    mapped.retryable ? () => {
+                        sendRecapChatMessage({ retryMessage: message, appendUser: false });
+                    } : null
+                );
+                return;
             }
 
+            const data = await response.json().catch(() => ({}));
+            const reply = (data && typeof data.response === 'string') ? data.response : '';
             loadingDiv.remove();
             const assistantMsg = {
                 role: 'assistant',
@@ -2258,14 +2723,13 @@
         } catch (error) {
             console.debug('Recap chat failed:', error);
             loadingDiv.remove();
-            const fallbackMsg = {
-                role: 'assistant',
-                content: "I can't answer right now, but you can continue reading and ask again.",
-                timestamp: Date.now()
-            };
-            state.recapChatHistory.push(fallbackMsg);
-            saveRecapChatHistory(state.recapChatHistory, chatChapterIndex);
-            renderRecapChatMessages();
+            const mapped = mapChatError({ network: true });
+            setRecapChatError(
+                mapped.message,
+                mapped.retryable ? () => {
+                    sendRecapChatMessage({ retryMessage: message, appendUser: false });
+                } : null
+            );
         } finally {
             state.recapChatLoading = false;
             setRecapChatControls();
@@ -2287,6 +2751,8 @@
         state.quizDifficultyLevel = 0;
         setChapterRecapTab('recap');
         state.recapChatLoading = false;
+        clearRecapOverlayError();
+        clearRecapChatError();
         if (elements.chapterRecapChatInput) {
             elements.chapterRecapChatInput.value = '';
         }
@@ -2421,6 +2887,7 @@
 
     function renderSearchResults(results, query) {
         if (!elements.searchResultsList) return;
+        clearSearchError();
         if (!Array.isArray(results) || results.length === 0) {
             elements.searchResultsList.innerHTML = '<div class="search-result-empty"><em>No results found</em></div>';
             return;
@@ -2464,6 +2931,7 @@
         const normalizedQuery = (query || '').trim();
         state.searchLastQuery = normalizedQuery;
         if (!normalizedQuery || normalizedQuery.length < 2) {
+            clearSearchError();
             elements.searchResults.classList.add('hidden');
             if (elements.searchResultsList) {
                 elements.searchResultsList.innerHTML = '';
@@ -2472,6 +2940,7 @@
         }
 
         try {
+            clearSearchError();
             const params = new URLSearchParams({
                 q: normalizedQuery,
                 bookId: state.currentBook.id,
@@ -2482,13 +2951,35 @@
             }
             const response = await fetch(`/api/search?${params.toString()}`);
             if (!response.ok) {
-                throw new Error(`Search request failed with status ${response.status}`);
+                const payload = await readErrorPayload(response);
+                const mapped = mapSearchError({
+                    status: response.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                if (elements.searchResultsList) {
+                    elements.searchResultsList.innerHTML = '';
+                }
+                setSearchError(
+                    mapped.message,
+                    mapped.retryable ? () => performSearch(normalizedQuery) : null
+                );
+                elements.searchResults.classList.remove('hidden');
+                return;
             }
             const results = await response.json();
             renderSearchResults(results, normalizedQuery);
             elements.searchResults.classList.remove('hidden');
         } catch (error) {
             console.error('Search failed:', error);
+            const mapped = mapSearchError({ network: true });
+            if (elements.searchResultsList) {
+                elements.searchResultsList.innerHTML = '';
+            }
+            setSearchError(
+                mapped.message,
+                mapped.retryable ? () => performSearch(normalizedQuery) : null
+            );
+            elements.searchResults.classList.remove('hidden');
         }
     }
 
@@ -3640,7 +4131,7 @@
             // Hide all illustration states
             elements.illustrationSkeleton.classList.add('hidden');
             elements.illustrationImage.classList.add('hidden');
-            elements.illustrationError.classList.add('hidden');
+            clearIllustrationError();
         }
     }
 
@@ -3656,17 +4147,48 @@
         try {
             // Check status
             const statusResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/status`);
+            if (!statusResponse.ok) {
+                const payload = await readErrorPayload(statusResponse);
+                const mapped = mapGenerationError({
+                    status: statusResponse.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                showIllustrationError(
+                    mapped.message,
+                    mapped.retryable ? () => loadChapterIllustration() : null
+                );
+                return;
+            }
             const status = await statusResponse.json();
 
             if (status.ready) {
                 // Load the image
                 displayIllustration(chapter.id);
+            } else if (status.status === 'FAILED' || status.status === 'DISABLED' || status.status === 'NOT_FOUND') {
+                const mapped = mapGenerationError({ generationState: status.status });
+                showIllustrationError(
+                    mapped.message,
+                    mapped.retryable ? () => loadChapterIllustration() : null
+                );
             } else if (state.illustrationCacheOnly) {
-                showIllustrationError();
+                const mapped = mapGenerationError({ status: 409 });
+                showIllustrationError(mapped.message, null);
             } else {
                 // Always call request first - backend handles duplicates gracefully
                 // and will re-queue stuck PENDING illustrations older than 5 minutes
-                await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
+                const requestResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
+                if (!requestResponse.ok) {
+                    const payload = await readErrorPayload(requestResponse);
+                    const mapped = mapGenerationError({
+                        status: requestResponse.status,
+                        message: firstMessageFromPayload(payload)
+                    });
+                    showIllustrationError(
+                        mapped.message,
+                        mapped.retryable ? () => loadChapterIllustration() : null
+                    );
+                    return;
+                }
                 // Still generating, poll for completion
                 pollForIllustration(chapter.id);
             }
@@ -3678,7 +4200,11 @@
 
         } catch (error) {
             console.error('Failed to load illustration:', error);
-            showIllustrationError();
+            const mapped = mapGenerationError({ network: true });
+            showIllustrationError(
+                mapped.message,
+                mapped.retryable ? () => loadChapterIllustration() : null
+            );
         }
     }
 
@@ -3705,7 +4231,11 @@
             if (attempts >= maxAttempts) {
                 clearInterval(state.illustrationPolling);
                 state.illustrationPolling = null;
-                showIllustrationError();
+                const mapped = mapGenerationError({ timeout: true });
+                showIllustrationError(
+                    mapped.message,
+                    mapped.retryable ? () => loadChapterIllustration() : null
+                );
                 return;
             }
 
@@ -3717,10 +4247,14 @@
                     clearInterval(state.illustrationPolling);
                     state.illustrationPolling = null;
                     displayIllustration(chapterId);
-                } else if (status.status === 'FAILED') {
+                } else if (status.status === 'FAILED' || status.status === 'DISABLED' || status.status === 'NOT_FOUND') {
                     clearInterval(state.illustrationPolling);
                     state.illustrationPolling = null;
-                    showIllustrationError();
+                    const mapped = mapGenerationError({ generationState: status.status });
+                    showIllustrationError(
+                        mapped.message,
+                        mapped.retryable ? () => loadChapterIllustration() : null
+                    );
                 }
                 // Otherwise keep polling
             } catch (error) {
@@ -3732,7 +4266,7 @@
 
     function displayIllustration(chapterId) {
         hideIllustrationSkeleton();
-        elements.illustrationError.classList.add('hidden');
+        clearIllustrationError();
         elements.illustrationImage.src = `/api/illustrations/chapter/${chapterId}?t=${Date.now()}`;
         elements.illustrationImage.classList.remove('hidden');
 
@@ -3747,17 +4281,17 @@
     function showIllustrationSkeleton() {
         elements.illustrationSkeleton.classList.remove('hidden');
         elements.illustrationImage.classList.add('hidden');
-        elements.illustrationError.classList.add('hidden');
+        clearIllustrationError();
     }
 
     function hideIllustrationSkeleton() {
         elements.illustrationSkeleton.classList.add('hidden');
     }
 
-    function showIllustrationError() {
+    function showIllustrationError(message = 'Illustration unavailable', onRetry = null) {
         hideIllustrationSkeleton();
         elements.illustrationImage.classList.add('hidden');
-        elements.illustrationError.classList.remove('hidden');
+        setIllustrationError(message, onRetry);
     }
 
     // ========================================
@@ -3777,6 +4311,7 @@
         state.promptModalChapterId = chapter.id;
 
         // Show modal in edit mode
+        clearPromptError();
         showPromptEditMode();
         elements.promptModal.classList.remove('hidden');
         elements.promptTextarea.value = 'Loading prompt...';
@@ -3809,6 +4344,7 @@
             state.promptModalPolling = null;
         }
 
+        clearPromptError();
         elements.promptModal.classList.add('hidden');
         elements.promptTextarea.value = '';
         state.promptModalChapterId = null;
@@ -3830,6 +4366,7 @@
     }
 
     function showPromptGeneratingMode() {
+        clearPromptError();
         elements.promptModalTitle.textContent = 'Generating Illustration';
         elements.promptEditMode.classList.add('hidden');
         elements.promptGeneratingMode.classList.remove('hidden');
@@ -3853,8 +4390,9 @@
         if (!chapterId) return;
 
         const newPrompt = elements.promptTextarea.value.trim();
+        clearPromptError();
         if (!newPrompt) {
-            alert('Please enter a prompt.');
+            setPromptError('Enter a prompt before regenerating.', null);
             return;
         }
 
@@ -3876,14 +4414,33 @@
                 showPromptGeneratingMode();
                 pollForRegeneratedIllustration(chapterId);
             } else {
-                alert('Failed to regenerate illustration. Please try again.');
-                elements.promptRegenerate.disabled = false;
+                const payload = await readErrorPayload(response);
+                const mapped = mapGenerationError({
+                    status: response.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                restorePromptEditModeForRetry();
+                setPromptError(
+                    mapped.message,
+                    mapped.retryable ? () => regenerateIllustration() : null
+                );
             }
         } catch (error) {
             console.error('Failed to regenerate:', error);
-            alert('Failed to regenerate illustration. Please try again.');
-            elements.promptRegenerate.disabled = false;
+            const mapped = mapGenerationError({ network: true });
+            restorePromptEditModeForRetry();
+            setPromptError(
+                mapped.message,
+                mapped.retryable ? () => regenerateIllustration() : null
+            );
         }
+    }
+
+    function restorePromptEditModeForRetry() {
+        showPromptEditMode();
+        elements.promptTextarea.value = state.promptModalLastPrompt;
+        elements.promptTextarea.disabled = false;
+        elements.promptRegenerate.disabled = false;
     }
 
     function pollForRegeneratedIllustration(chapterId) {
@@ -3908,11 +4465,12 @@
             if (attempts >= maxAttempts) {
                 clearInterval(state.promptModalPolling);
                 state.promptModalPolling = null;
-                alert('Generation timed out. Please try again.');
-                showPromptEditMode();
-                elements.promptTextarea.value = state.promptModalLastPrompt;
-                elements.promptTextarea.disabled = false;
-                elements.promptRegenerate.disabled = false;
+                const mapped = mapGenerationError({ timeout: true });
+                restorePromptEditModeForRetry();
+                setPromptError(
+                    mapped.message,
+                    mapped.retryable ? () => regenerateIllustration() : null
+                );
                 return;
             }
 
@@ -3929,11 +4487,12 @@
                 } else if (status.status === 'FAILED') {
                     clearInterval(state.promptModalPolling);
                     state.promptModalPolling = null;
-                    alert('Generation failed. Please try again.');
-                    showPromptEditMode();
-                    elements.promptTextarea.value = state.promptModalLastPrompt;
-                    elements.promptTextarea.disabled = false;
-                    elements.promptRegenerate.disabled = false;
+                    const mapped = mapGenerationError({ generationState: status.status });
+                    restorePromptEditModeForRetry();
+                    setPromptError(
+                        mapped.message,
+                        mapped.retryable ? () => regenerateIllustration() : null
+                    );
                 }
                 // Otherwise keep polling (PENDING or GENERATING)
             } catch (error) {
@@ -3956,6 +4515,7 @@
 
     function tryAgainRegeneration() {
         // Switch back to edit mode with the last prompt
+        clearPromptError();
         showPromptEditMode();
         elements.promptTextarea.value = state.promptModalLastPrompt;
         elements.promptTextarea.disabled = false;
@@ -4550,6 +5110,7 @@
 
         state.chatCharacterId = characterId;
         state.chatCharacter = character;
+        clearCharacterChatError();
 
         // Load chat history from localStorage
         state.chatHistory = loadChatHistory(characterId);
@@ -4578,6 +5139,7 @@
         state.chatCharacterId = null;
         state.chatCharacter = null;
         state.chatHistory = [];
+        clearCharacterChatError();
         elements.chatMessages.innerHTML = '';
         elements.chatInput.value = '';
         ttsResumeAfterModal();
@@ -4613,17 +5175,24 @@
         return div.innerHTML;
     }
 
-    async function sendChatMessage() {
-        const message = elements.chatInput.value.trim();
+    async function sendChatMessage(options = {}) {
+        const retryMessage = typeof options.retryMessage === 'string' ? options.retryMessage : '';
+        const appendUserMessage = options.appendUser !== false;
+        const message = (retryMessage || elements.chatInput.value || '').trim();
         if (!message || state.chatLoading || !state.chatCharacterId) return;
+        clearCharacterChatError();
 
-        // Add user message to history
-        const userMsg = { role: 'user', content: message, timestamp: Date.now() };
-        state.chatHistory.push(userMsg);
-        renderChatMessages();
+        if (appendUserMessage) {
+            // Add user message to history
+            const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+            state.chatHistory.push(userMsg);
+            renderChatMessages();
+        }
 
-        // Clear input
-        elements.chatInput.value = '';
+        if (appendUserMessage) {
+            // Clear input
+            elements.chatInput.value = '';
+        }
 
         // Show loading
         state.chatLoading = true;
@@ -4648,13 +5217,34 @@
                 })
             });
 
-            const data = await response.json();
+            if (!response.ok) {
+                const payload = await readErrorPayload(response);
+                const mapped = mapChatError({
+                    status: response.status,
+                    message: firstMessageFromPayload(payload)
+                });
+                loadingDiv.remove();
+                setCharacterChatError(
+                    mapped.message,
+                    mapped.retryable
+                        ? () => sendChatMessage({ retryMessage: message, appendUser: false })
+                        : null
+                );
+                return;
+            }
+
+            const data = await response.json().catch(() => ({}));
 
             // Remove loading message
             loadingDiv.remove();
 
             // Add character response
-            const charMsg = { role: 'character', content: data.response, timestamp: Date.now() };
+            const reply = (data && typeof data.response === 'string') ? data.response.trim() : '';
+            const charMsg = {
+                role: 'character',
+                content: reply || "I don't have enough context to answer that yet.",
+                timestamp: Date.now()
+            };
             state.chatHistory.push(charMsg);
             renderChatMessages();
 
@@ -4664,11 +5254,13 @@
         } catch (error) {
             console.error('Chat failed:', error);
             loadingDiv.remove();
-
-            // Add error message
-            const errorMsg = { role: 'character', content: "I... I'm not sure how to answer that.", timestamp: Date.now() };
-            state.chatHistory.push(errorMsg);
-            renderChatMessages();
+            const mapped = mapChatError({ network: true });
+            setCharacterChatError(
+                mapped.message,
+                mapped.retryable
+                    ? () => sendChatMessage({ retryMessage: message, appendUser: false })
+                    : null
+            );
         } finally {
             state.chatLoading = false;
             elements.chatSendBtn.disabled = false;
@@ -4691,11 +5283,14 @@
             const response = await fetch(`/api/import/gutenberg/${gutenbergId}`, {
                 method: 'POST'
             });
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
             if (result.success || result.message === 'Book already imported') {
                 // Fetch the full book from library
                 const bookResponse = await fetch(`/api/library/${result.bookId}`);
+                if (!bookResponse.ok) {
+                    throw new Error(`Book lookup failed with status ${bookResponse.status}`);
+                }
                 const book = await bookResponse.json();
 
                 // Update local books list
@@ -4713,12 +5308,27 @@
                 await selectBook(book);
             } else {
                 hideImportingOverlay();
-                alert('Failed to import book: ' + result.message);
+                const mapped = mapImportError({
+                    status: response.status,
+                    message: firstMessageFromPayload(result)
+                });
+                showAppToast({
+                    title: 'Import Failed',
+                    message: mapped.message,
+                    actionLabel: mapped.retryable ? 'Retry Import' : null,
+                    onAction: mapped.retryable ? () => importAndOpenBook(gutenbergId) : null
+                });
             }
         } catch (error) {
             console.error('Import failed:', error);
             hideImportingOverlay();
-            alert('Failed to import book. Please try again.');
+            const mapped = mapImportError({ network: true });
+            showAppToast({
+                title: 'Import Failed',
+                message: mapped.message,
+                actionLabel: mapped.retryable ? 'Retry Import' : null,
+                onAction: mapped.retryable ? () => importAndOpenBook(gutenbergId) : null
+            });
         } finally {
             state.isImporting = false;
         }
@@ -5072,13 +5682,30 @@
         if (elements.chapterRecapTabQuiz) {
             elements.chapterRecapTabQuiz.addEventListener('click', () => setChapterRecapTab('quiz'));
         }
+        if (elements.chapterRecapRetry) {
+            elements.chapterRecapRetry.addEventListener('click', () => {
+                if (typeof state.recapRetryHandler === 'function') {
+                    state.recapRetryHandler();
+                }
+            });
+        }
         if (elements.chapterRecapChatSend) {
             elements.chapterRecapChatSend.addEventListener('click', sendRecapChatMessage);
+        }
+        if (elements.chapterRecapChatRetry) {
+            elements.chapterRecapChatRetry.addEventListener('click', () => {
+                if (typeof state.recapChatRetryHandler === 'function') {
+                    state.recapChatRetryHandler();
+                }
+            });
         }
         if (elements.chapterQuizSubmit) {
             elements.chapterQuizSubmit.addEventListener('click', submitChapterQuiz);
         }
         if (elements.chapterRecapChatInput) {
+            elements.chapterRecapChatInput.addEventListener('input', () => {
+                clearRecapChatError();
+            });
             elements.chapterRecapChatInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -5115,6 +5742,13 @@
                 }
             });
         }
+        if (elements.illustrationErrorRetry) {
+            elements.illustrationErrorRetry.addEventListener('click', () => {
+                if (typeof state.illustrationRetryHandler === 'function') {
+                    state.illustrationRetryHandler();
+                }
+            });
+        }
 
         // Prompt modal event listeners
         if (elements.promptModalClose) {
@@ -5126,6 +5760,11 @@
         if (elements.promptRegenerate) {
             elements.promptRegenerate.addEventListener('click', regenerateIllustration);
         }
+        if (elements.promptTextarea) {
+            elements.promptTextarea.addEventListener('input', () => {
+                clearPromptError();
+            });
+        }
         if (elements.promptModalBackdrop) {
             elements.promptModalBackdrop.addEventListener('click', closePromptModal);
         }
@@ -5134,6 +5773,13 @@
         }
         if (elements.promptAccept) {
             elements.promptAccept.addEventListener('click', acceptRegeneration);
+        }
+        if (elements.promptErrorRetry) {
+            elements.promptErrorRetry.addEventListener('click', () => {
+                if (typeof state.promptRetryHandler === 'function') {
+                    state.promptRetryHandler();
+                }
+            });
         }
 
         // Search input
@@ -5147,6 +5793,13 @@
             elements.searchChapterFilter.addEventListener('change', (e) => {
                 state.searchChapterFilter = e.target.value || '';
                 performSearch(elements.searchInput.value);
+            });
+        }
+        if (elements.searchResultsRetry) {
+            elements.searchResultsRetry.addEventListener('click', () => {
+                if (typeof state.searchRetryHandler === 'function') {
+                    state.searchRetryHandler();
+                }
             });
         }
 
@@ -5236,6 +5889,18 @@
         }
         if (elements.chatSendBtn) {
             elements.chatSendBtn.addEventListener('click', sendChatMessage);
+        }
+        if (elements.chatErrorRetry) {
+            elements.chatErrorRetry.addEventListener('click', () => {
+                if (typeof state.characterChatRetryHandler === 'function') {
+                    state.characterChatRetryHandler();
+                }
+            });
+        }
+        if (elements.chatInput) {
+            elements.chatInput.addEventListener('input', () => {
+                clearCharacterChatError();
+            });
         }
 
         // Keyboard navigation
