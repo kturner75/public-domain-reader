@@ -356,6 +356,12 @@
         columnGap: 4,
         theme: 'warm'
     });
+    const MOBILE_DEFAULT_READER_PREFERENCES = Object.freeze({
+        fontSize: 1.08,
+        lineHeight: 1.65,
+        columnGap: 4,
+        theme: 'warm'
+    });
     const SEARCH_PLACEHOLDER_DESKTOP = 'Search... (press /)';
     const SEARCH_PLACEHOLDER_MOBILE = 'Search chapter text...';
     const CHAPTER_LIST_HINT_DESKTOP = 'Arrow keys to navigate, Enter to select, Esc to close';
@@ -1231,14 +1237,17 @@
     }
 
     function loadStoredReaderPreferences() {
+        const defaults = detectMobileLayout()
+            ? MOBILE_DEFAULT_READER_PREFERENCES
+            : DEFAULT_READER_PREFERENCES;
         const raw = localStorage.getItem(STORAGE_KEYS.READER_PREFERENCES);
         if (!raw) {
-            return { ...DEFAULT_READER_PREFERENCES };
+            return { ...defaults };
         }
         try {
             return normalizeReaderPreferences(JSON.parse(raw));
         } catch (_error) {
-            return { ...DEFAULT_READER_PREFERENCES };
+            return { ...defaults };
         }
     }
 
@@ -2110,6 +2119,11 @@
                     columnCount = 1;
                     currentHeight = paraHeight;
                 } else {
+                    // Ensure we never emit an empty page when the first paragraph exceeds available height.
+                    if (i === currentPageStart) {
+                        currentHeight = paraHeight;
+                        continue;
+                    }
                     // Start new page
                     state.pagesData.push({
                         startParagraph: currentPageStart,
@@ -5773,7 +5787,10 @@
         }
         if (elements.readerSettingsReset) {
             elements.readerSettingsReset.addEventListener('click', () => {
-                setReaderPreferences({ ...DEFAULT_READER_PREFERENCES });
+                const defaults = detectMobileLayout()
+                    ? MOBILE_DEFAULT_READER_PREFERENCES
+                    : DEFAULT_READER_PREFERENCES;
+                setReaderPreferences({ ...defaults });
             });
         }
         if (elements.mobileHeaderMenuToggle) {
