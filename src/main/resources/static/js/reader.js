@@ -7,6 +7,7 @@
         localBooks: [],        // Books imported locally
         currentBook: null,
         currentChapterIndex: 0,
+        chapterLoadRequestId: 0,
         chapters: [],
         paragraphs: [],
         currentPage: 0,
@@ -1434,7 +1435,11 @@
 
     // Load chapter content
     async function loadChapter(chapterIndex, pageIndex = 0, paragraphIndex = 0, suppressTts = false) {
-        if (chapterIndex < 0 || chapterIndex >= state.chapters.length) return;
+        if (chapterIndex < 0 || chapterIndex >= state.chapters.length) {
+            return false;
+        }
+
+        const loadRequestId = ++state.chapterLoadRequestId;
 
         state.ttsWaitingForChapter = true;
         state.currentChapterIndex = chapterIndex;
@@ -1445,7 +1450,13 @@
 
         try {
             const response = await fetch(`/api/library/${state.currentBook.id}/chapters/${chapter.id}`);
+            if (!response.ok) {
+                throw new Error(`Failed to load chapter content (${response.status})`);
+            }
             const content = await response.json();
+            if (loadRequestId !== state.chapterLoadRequestId) {
+                return false;
+            }
             state.paragraphs = content.paragraphs || [];
 
             // Calculate pages and render
@@ -1473,13 +1484,18 @@
             // Queue recap generation asynchronously (no-op when disabled or already generated)
             requestChapterRecapGeneration(chapter.id);
             requestChapterQuizGeneration(chapter.id);
+            return true;
         } catch (error) {
+            if (loadRequestId !== state.chapterLoadRequestId || error?.name === 'AbortError') {
+                return false;
+            }
             state.ttsWaitingForChapter = false;
             console.error('Failed to load chapter:', error);
             state.paragraphs = [];
             elements.columnLeft.innerHTML = '<p class="no-content">Content not available</p>';
             elements.columnRight.innerHTML = '';
             updateAnnotationControls();
+            return false;
         }
     }
 
@@ -2016,7 +2032,8 @@
             renderPage();
         } else if (state.currentChapterIndex > 0) {
             // Go to previous chapter, last page
-            loadChapter(state.currentChapterIndex - 1).then(() => {
+            loadChapter(state.currentChapterIndex - 1).then(applied => {
+                if (!applied) return;
                 state.currentPage = state.totalPages - 1;
                 if (state.pagesData[state.currentPage]) {
                     state.currentParagraphIndex = state.pagesData[state.currentPage].startParagraph;
@@ -2057,7 +2074,8 @@
             }
         } else if (state.currentChapterIndex > 0) {
             // Go to previous chapter, last paragraph
-            loadChapter(state.currentChapterIndex - 1).then(() => {
+            loadChapter(state.currentChapterIndex - 1).then(applied => {
+                if (!applied) return;
                 state.currentPage = state.totalPages - 1;
                 state.currentParagraphIndex = state.paragraphs.length - 1;
                 renderPage();
@@ -3009,7 +3027,8 @@
             ttsStopPlayback();
         }
 
-        loadPromise.then(() => {
+        loadPromise.then(applied => {
+            if (!applied) return;
             // Find which page contains this paragraph
             for (let i = 0; i < state.pagesData.length; i++) {
                 const pageData = state.pagesData[i];
@@ -3987,7 +4006,10 @@
         }
 
         elements.speedReadingChapterOverlay.classList.add('hidden');
-        await loadChapter(nextChapterIndex, 0, 0);
+        const loaded = await loadChapter(nextChapterIndex, 0, 0);
+        if (!loaded) {
+            return;
+        }
         prepareSpeedReadingTokens(state.currentParagraphIndex);
         state.speedReadingTokenIndex = 0;
         speedReadingStart();
