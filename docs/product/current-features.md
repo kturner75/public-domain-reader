@@ -1,6 +1,6 @@
 # Current Feature Inventory
 
-Last audited: 2026-02-14
+Last audited: 2026-02-17
 
 This inventory reflects implemented behavior in backend controllers/services and `static/js/reader.js`.
 
@@ -35,6 +35,22 @@ This inventory reflects implemented behavior in backend controllers/services and
   - `ttsEnabled`
   - `illustrationEnabled`
   - `characterEnabled`
+
+## Landing Personalization (BL-018)
+
+- Library landing renders personalized sections from local activity:
+  - `Continue Reading`
+  - `Up Next`
+  - `In Progress`
+  - `Completed`
+  - `My List` (favorites/saved-for-later)
+- Landing ranking is deterministic for active/completed queues (see `landing-ranking.md`).
+- `Discover` rail uses deterministic affinity recommendations with user-facing reason chips when library search is empty (see `discover-affinity.md`).
+- Landing search runs on explicit submit only (`Enter` key or `Search` button); it does not fire on every keystroke.
+- Landing search has visible in-flight/loading state, a status message, and retry affordance on failures.
+- Search mode hides classroom/personalized rails and shows query-driven catalog results.
+- Classroom-aware mode is available through `GET /api/classroom/context` and can switch landing to assignment-first behavior with teacher-controlled feature states.
+- Classroom setup/config details are documented in `classroom-landing-usage.md`.
 
 ## Search
 
