@@ -14,4 +14,6 @@ public interface QuizAttemptRepository extends JpaRepository<QuizAttemptEntity, 
     long countByChapterBookIdAndPerfectTrue(String bookId);
 
     List<QuizAttemptEntity> findByChapterBookIdOrderByCreatedAtDesc(String bookId);
+
+    boolean existsByChapterId(String chapterId);
 }

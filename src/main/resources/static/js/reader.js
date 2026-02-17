@@ -122,18 +122,36 @@
         lastBookActivitySignature: '',
         favoriteBookIds: new Set(),
         favoriteBookOrder: [],
+        classroomContext: null,
+        classroomAssignments: [],
         achievementsLoading: false,
         achievementsLoaded: false,
         achievementsSummary: '',
         achievementsItems: [],
-        achievementsAllItems: []
+        achievementsAllItems: [],
+        popularCatalogBooks: [],
+        librarySearchQuery: '',
+        librarySearchRetryHandler: null
     };
 
     // DOM Elements
     const elements = {
         libraryView: document.getElementById('library-view'),
         readerView: document.getElementById('reader-view'),
+        librarySearchContainer: document.querySelector('.library-search-container'),
         librarySearch: document.getElementById('library-search'),
+        librarySearchSubmit: document.getElementById('library-search-submit'),
+        librarySearchStatus: document.getElementById('library-search-status'),
+        librarySearchError: document.getElementById('library-search-error'),
+        librarySearchErrorMessage: document.getElementById('library-search-error-message'),
+        librarySearchRetry: document.getElementById('library-search-retry'),
+        classroomBanner: document.getElementById('classroom-banner'),
+        classroomLabel: document.getElementById('classroom-label'),
+        classroomFeatureSummary: document.getElementById('classroom-feature-summary'),
+        classroomAssignments: document.getElementById('classroom-assignments'),
+        classroomAssignmentsLabel: document.getElementById('classroom-assignments-label'),
+        classroomAssignmentsList: document.getElementById('classroom-assignments-list'),
+        classroomAssignmentsEmpty: document.getElementById('classroom-assignments-empty'),
         achievementsShelf: document.getElementById('achievements-shelf'),
         achievementsSummary: document.getElementById('achievements-summary'),
         achievementsList: document.getElementById('achievements-list'),
@@ -354,6 +372,9 @@
     // Chapter list state
     let chapterListSelectedIndex = 0;
     let bookmarkListSelectedIndex = 0;
+    let libraryLoadRequestId = 0;
+    let catalogSearchRequestId = 0;
+    let catalogSearchAbortController = null;
 
     // LocalStorage keys
     const STORAGE_KEYS = {
@@ -392,6 +413,15 @@
     const SEARCH_PLACEHOLDER_MOBILE = 'Search chapter text...';
     const CHAPTER_LIST_HINT_DESKTOP = 'Arrow keys to navigate, Enter to select, Esc to close';
     const CHAPTER_LIST_HINT_MOBILE = 'Tap a chapter to jump';
+    const DEFAULT_CLASSROOM_FEATURES = Object.freeze({
+        quizEnabled: true,
+        recapEnabled: true,
+        ttsEnabled: true,
+        illustrationEnabled: true,
+        characterEnabled: true,
+        chatEnabled: true,
+        speedReadingEnabled: true
+    });
 
     const READER_THEMES = Object.freeze({
         warm: {
@@ -1459,10 +1489,11 @@
         state.readerPreferences = loadStoredReaderPreferences();
         applyReaderPreferences();
         syncReaderPreferencesControls();
+        setupEventListeners();
+        await loadClassroomContext();
         await loadLibrary();
         await authCheckStatus();
         await speedReadingCheckAvailability();
-        setupEventListeners();
         applyLayoutCapabilities();
         await ttsCheckAvailability();
         await illustrationCheckAvailability();
@@ -1497,12 +1528,173 @@
         updateFavoriteUi();
     }
 
+    function setLibrarySearchBusy(busy, statusMessage = '') {
+        if (elements.librarySearchContainer) {
+            elements.librarySearchContainer.classList.toggle('is-loading', busy);
+        }
+        if (elements.bookList) {
+            elements.bookList.classList.toggle('is-loading', busy);
+        }
+        if (elements.librarySearchSubmit) {
+            elements.librarySearchSubmit.disabled = busy;
+            elements.librarySearchSubmit.textContent = busy ? 'Searching...' : 'Search';
+        }
+        if (elements.librarySearchStatus) {
+            if (busy && statusMessage) {
+                elements.librarySearchStatus.textContent = statusMessage;
+                elements.librarySearchStatus.classList.remove('hidden');
+            } else {
+                elements.librarySearchStatus.textContent = '';
+                elements.librarySearchStatus.classList.add('hidden');
+            }
+        }
+    }
+
+    function showLibrarySearchError(message, onRetry = null) {
+        if (!elements.librarySearchError || !elements.librarySearchErrorMessage || !message) {
+            return;
+        }
+        state.librarySearchRetryHandler = typeof onRetry === 'function' ? onRetry : null;
+        elements.librarySearchErrorMessage.textContent = message;
+        elements.librarySearchError.classList.remove('hidden');
+        if (elements.librarySearchRetry) {
+            elements.librarySearchRetry.classList.toggle('hidden', !state.librarySearchRetryHandler);
+        }
+    }
+
+    function clearLibrarySearchError() {
+        state.librarySearchRetryHandler = null;
+        if (elements.librarySearchError) {
+            elements.librarySearchError.classList.add('hidden');
+        }
+        if (elements.librarySearchErrorMessage) {
+            elements.librarySearchErrorMessage.textContent = '';
+        }
+        if (elements.librarySearchRetry) {
+            elements.librarySearchRetry.classList.add('hidden');
+        }
+    }
+
+    function submitLibrarySearch() {
+        if (elements.librarySearchSubmit?.disabled) {
+            return;
+        }
+        const query = (elements.librarySearch?.value || '').trim();
+        void searchCatalog(query);
+    }
+
+    function normalizeClassroomFeatures(features) {
+        return {
+            quizEnabled: features?.quizEnabled !== false,
+            recapEnabled: features?.recapEnabled !== false,
+            ttsEnabled: features?.ttsEnabled !== false,
+            illustrationEnabled: features?.illustrationEnabled !== false,
+            characterEnabled: features?.characterEnabled !== false,
+            chatEnabled: features?.chatEnabled !== false,
+            speedReadingEnabled: features?.speedReadingEnabled !== false
+        };
+    }
+
+    function normalizeClassroomContext(payload) {
+        const enrolled = payload?.enrolled === true;
+        if (!enrolled) {
+            return {
+                enrolled: false,
+                classId: null,
+                className: null,
+                teacherName: null,
+                features: { ...DEFAULT_CLASSROOM_FEATURES },
+                assignments: []
+            };
+        }
+
+        const assignments = Array.isArray(payload?.assignments)
+            ? payload.assignments
+                .filter(item => item && typeof item.bookId === 'string' && item.bookId.trim().length > 0)
+                .map((item, index) => ({
+                    assignmentId: typeof item.assignmentId === 'string' && item.assignmentId.trim().length > 0
+                        ? item.assignmentId.trim()
+                        : `assignment-${index + 1}`,
+                    title: typeof item.title === 'string' ? item.title.trim() : '',
+                    bookId: item.bookId.trim(),
+                    bookTitle: typeof item.bookTitle === 'string' ? item.bookTitle.trim() : '',
+                    bookAuthor: typeof item.bookAuthor === 'string' ? item.bookAuthor.trim() : '',
+                    chapterId: typeof item.chapterId === 'string' && item.chapterId.trim().length > 0
+                        ? item.chapterId.trim()
+                        : null,
+                    chapterIndex: Number.isInteger(item.chapterIndex) ? item.chapterIndex : null,
+                    chapterTitle: typeof item.chapterTitle === 'string' ? item.chapterTitle.trim() : '',
+                    dueAt: typeof item.dueAt === 'string' && item.dueAt.trim().length > 0
+                        ? item.dueAt.trim()
+                        : null,
+                    quizRequired: item.quizRequired === true,
+                    quizStatus: typeof item.quizStatus === 'string' ? item.quizStatus : 'UNKNOWN',
+                    bookAvailable: item.bookAvailable !== false
+                }))
+            : [];
+
+        return {
+            enrolled: true,
+            classId: typeof payload?.classId === 'string' ? payload.classId.trim() : null,
+            className: typeof payload?.className === 'string' ? payload.className.trim() : null,
+            teacherName: typeof payload?.teacherName === 'string' ? payload.teacherName.trim() : null,
+            features: normalizeClassroomFeatures(payload?.features),
+            assignments
+        };
+    }
+
+    function isClassroomFeatureEnabled(featureName) {
+        if (!state.classroomContext?.enrolled) {
+            return true;
+        }
+        const features = state.classroomContext.features || DEFAULT_CLASSROOM_FEATURES;
+        return features[featureName] !== false;
+    }
+
+    async function loadClassroomContext() {
+        try {
+            const response = await fetch('/api/classroom/context', { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`Classroom context request failed with status ${response.status}`);
+            }
+            const payload = await response.json();
+            state.classroomContext = normalizeClassroomContext(payload);
+            state.classroomAssignments = state.classroomContext.assignments || [];
+        } catch (error) {
+            console.debug('Failed to load classroom context:', error);
+            state.classroomContext = normalizeClassroomContext(null);
+            state.classroomAssignments = [];
+        }
+    }
+
     // Load library - both local books and popular from catalog
     async function loadLibrary() {
+        const requestId = ++libraryLoadRequestId;
+        setLibrarySearchBusy(true, 'Loading library...');
+        clearLibrarySearchError();
         try {
-            // Load local books and hydrate personalization state
-            const localResponse = await fetch('/api/library');
-            state.localBooks = await localResponse.json();
+            // Load local books and discover catalog in parallel.
+            const [localResponse, catalogResponse] = await Promise.all([
+                fetch('/api/library'),
+                fetch('/api/import/popular')
+            ]);
+
+            if (!localResponse.ok) {
+                throw new Error(`Local library request failed with status ${localResponse.status}`);
+            }
+            if (!catalogResponse.ok) {
+                throw new Error(`Popular catalog request failed with status ${catalogResponse.status}`);
+            }
+
+            const [localBooks, popularCatalog] = await Promise.all([
+                localResponse.json(),
+                catalogResponse.json()
+            ]);
+            if (requestId !== libraryLoadRequestId) {
+                return;
+            }
+
+            state.localBooks = localBooks;
             syncFavoriteBooksWithLocalBooks();
             syncBookActivityWithLocalBooks();
             state.achievementsLoaded = false;
@@ -1510,14 +1702,23 @@
             state.achievementsSummary = '';
             state.achievementsItems = [];
             state.achievementsAllItems = [];
-
-            // Load popular books from Gutenberg
-            const catalogResponse = await fetch('/api/import/popular');
-            state.catalogBooks = await catalogResponse.json();
-
+            state.popularCatalogBooks = Array.isArray(popularCatalog) ? popularCatalog : [];
+            state.catalogBooks = Array.isArray(popularCatalog) ? popularCatalog : [];
+            state.librarySearchQuery = '';
             renderLibrary();
         } catch (error) {
             console.error('Failed to load library:', error);
+            if (requestId !== libraryLoadRequestId) {
+                return;
+            }
+            showLibrarySearchError(
+                'Unable to load the library right now.',
+                () => { void loadLibrary(); }
+            );
+        } finally {
+            if (requestId === libraryLoadRequestId) {
+                setLibrarySearchBusy(false);
+            }
         }
     }
 
@@ -1526,11 +1727,14 @@
             const response = await fetch('/api/features');
             if (response.ok) {
                 const features = await response.json();
-                state.speedReadingEnabled = features.speedReadingEnabled !== false;
+                state.speedReadingEnabled = features.speedReadingEnabled !== false
+                    && isClassroomFeatureEnabled('speedReadingEnabled');
             }
         } catch (error) {
             console.warn('Speed reading feature check failed:', error);
         }
+
+        state.speedReadingEnabled = state.speedReadingEnabled && isClassroomFeatureEnabled('speedReadingEnabled');
 
         applySpeedReadingAvailability();
     }
@@ -1570,22 +1774,58 @@
     }
 
     // Search the Gutenberg catalog
-    let catalogSearchTimeout = null;
     async function searchCatalog(query) {
-        if (!query || query.length < 2) {
-            // Reset to popular books
-            const catalogResponse = await fetch('/api/import/popular');
-            state.catalogBooks = await catalogResponse.json();
-            renderLibrary();
-            return;
+        const normalizedQuery = (query || '').trim();
+        const requestId = ++catalogSearchRequestId;
+        const searchingPopular = normalizedQuery.length < 2;
+
+        if (catalogSearchAbortController) {
+            catalogSearchAbortController.abort();
         }
+        catalogSearchAbortController = new AbortController();
+        const signal = catalogSearchAbortController.signal;
+        clearLibrarySearchError();
+        setLibrarySearchBusy(
+            true,
+            searchingPopular ? 'Refreshing discover books...' : `Searching for "${normalizedQuery}"...`
+        );
 
         try {
-            const response = await fetch(`/api/import/search?q=${encodeURIComponent(query)}`);
-            state.catalogBooks = await response.json();
-            renderLibrary(query);
+            const response = await fetch(
+                searchingPopular
+                    ? '/api/import/popular'
+                    : `/api/import/search?q=${encodeURIComponent(normalizedQuery)}`,
+                { signal }
+            );
+            if (!response.ok) {
+                throw new Error(`Catalog search request failed with status ${response.status}`);
+            }
+            const catalogBooks = await response.json();
+            if (requestId !== catalogSearchRequestId) {
+                return;
+            }
+            if (searchingPopular) {
+                state.popularCatalogBooks = Array.isArray(catalogBooks) ? catalogBooks : [];
+            }
+            state.catalogBooks = Array.isArray(catalogBooks) ? catalogBooks : [];
+            state.librarySearchQuery = normalizedQuery;
+            renderLibrary(normalizedQuery);
         } catch (error) {
+            if (signal.aborted || requestId !== catalogSearchRequestId) {
+                return;
+            }
             console.error('Catalog search failed:', error);
+            showLibrarySearchError(
+                searchingPopular
+                    ? 'Unable to refresh discover books.'
+                    : 'Search failed. Please try again.',
+                () => { void searchCatalog(normalizedQuery); }
+            );
+        } finally {
+            if (requestId === catalogSearchRequestId) {
+                catalogSearchAbortController = null;
+                setLibrarySearchBusy(false);
+            }
         }
     }
 
@@ -1714,7 +1954,7 @@
         }
         updateFavoriteUi();
         if (options.rerenderLibrary) {
-            renderLibrary(elements.librarySearch?.value || '');
+            renderLibrary();
         }
         if (options.showToast) {
             showAppToast({
@@ -2141,7 +2381,9 @@
     }
 
     function getDiscoverCatalogEntries() {
-        const catalog = Array.isArray(state.catalogBooks) ? state.catalogBooks : [];
+        const catalog = Array.isArray(state.popularCatalogBooks) && state.popularCatalogBooks.length > 0
+            ? state.popularCatalogBooks
+            : (Array.isArray(state.catalogBooks) ? state.catalogBooks : []);
         if (catalog.length === 0) {
             return [];
         }
@@ -2350,6 +2592,205 @@
         }
     }
 
+    function parseDueTimestamp(value) {
+        if (!value || typeof value !== 'string') {
+            return 0;
+        }
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function formatAssignmentDueLabel(value) {
+        const dueTs = parseDueTimestamp(value);
+        if (!dueTs) {
+            return { label: '', overdue: false };
+        }
+        const delta = dueTs - Date.now();
+        const absMs = Math.abs(delta);
+        const dayMs = 86_400_000;
+        const hourMs = 3_600_000;
+        const overdue = delta < 0;
+
+        if (absMs < hourMs) {
+            return {
+                label: overdue ? 'Due now (late)' : 'Due soon',
+                overdue
+            };
+        }
+        if (absMs < dayMs) {
+            const hours = Math.max(1, Math.round(absMs / hourMs));
+            return {
+                label: overdue ? `${hours}h late` : `Due in ${hours}h`,
+                overdue
+            };
+        }
+        const days = Math.max(1, Math.round(absMs / dayMs));
+        return {
+            label: overdue ? `${days}d late` : `Due in ${days}d`,
+            overdue
+        };
+    }
+
+    function compareClassroomAssignments(a, b) {
+        const aDue = parseDueTimestamp(a?.dueAt);
+        const bDue = parseDueTimestamp(b?.dueAt);
+        if (aDue && bDue && aDue !== bDue) {
+            return aDue - bDue;
+        }
+        if (aDue && !bDue) {
+            return -1;
+        }
+        if (!aDue && bDue) {
+            return 1;
+        }
+        return (a.assignmentId || '').localeCompare(b.assignmentId || '', undefined, { sensitivity: 'base' });
+    }
+
+    function renderClassroomAssignmentItem(assignment, localEntry) {
+        const title = localEntry?.book?.title || assignment.bookTitle || 'Assigned Book';
+        const author = normalizeAuthorName(localEntry?.book?.author || assignment.bookAuthor || '');
+        const progress = localEntry ? buildBookProgressSnapshot(localEntry.activity) : null;
+        const meta = localEntry
+            ? formatBookActivityLabel(localEntry.activity, progress)
+            : (assignment.bookAvailable ? 'Open this book to start reading.' : 'Book not available in this library yet.');
+        const due = formatAssignmentDueLabel(assignment.dueAt);
+        const dueChip = due.label
+            ? `<span class="book-progress-chip assignment-due${due.overdue ? ' overdue' : ''}">${escapeHtml(due.label)}</span>`
+            : '';
+
+        let quizChip = '<span class="book-progress-chip assignment-quiz-unknown">Quiz status unknown</span>';
+        if (assignment.quizStatus === 'NOT_REQUIRED') {
+            quizChip = '<span class="book-progress-chip assignment-quiz-unknown">Reading only</span>';
+        } else if (assignment.quizStatus === 'COMPLETE') {
+            quizChip = '<span class="book-progress-chip assignment-quiz-complete">Quiz complete</span>';
+        } else if (assignment.quizStatus === 'PENDING') {
+            quizChip = '<span class="book-progress-chip assignment-quiz-required">Quiz required</span>';
+        }
+
+        const assignmentLabel = assignment.title
+            ? `<div class="book-item-assignment-label">${escapeHtml(assignment.title)}</div>`
+            : '';
+        const chapterLabel = assignment.chapterTitle
+            ? `<span class="book-progress-chip">${escapeHtml(assignment.chapterTitle)}</span>`
+            : '';
+        const progressChips = progress
+            ? `
+                <span class="book-progress-chip book-progress-chip-status status-${progress.statusClass}">${progress.statusLabel}</span>
+                <span class="book-progress-chip">${progress.chapterLabel}</span>
+                <span class="book-progress-chip">${progress.percentLabel}</span>
+            `
+            : '<span class="book-progress-chip book-progress-chip-status status-not-started">Not Started</span>';
+
+        const bookIdAttr = localEntry?.book?.id
+            ? ` data-book-id="${escapeHtml(localEntry.book.id)}"`
+            : '';
+        return `
+            <div class="book-item"${bookIdAttr}>
+                <div class="book-item-title-row">
+                    <div class="book-item-title">${escapeHtml(title)}</div>
+                </div>
+                <div class="book-item-author">${escapeHtml(author)}</div>
+                ${assignmentLabel}
+                <div class="book-item-progress">
+                    ${chapterLabel}
+                    ${dueChip}
+                    ${quizChip}
+                </div>
+                <div class="book-item-progress">
+                    ${progressChips}
+                </div>
+                <div class="book-item-meta">${escapeHtml(meta)}</div>
+            </div>
+        `;
+    }
+
+    function hideClassroomLandingSections() {
+        if (elements.classroomBanner) {
+            elements.classroomBanner.classList.add('hidden');
+        }
+        if (elements.classroomLabel) {
+            elements.classroomLabel.textContent = '';
+        }
+        if (elements.classroomFeatureSummary) {
+            elements.classroomFeatureSummary.textContent = '';
+        }
+        if (elements.classroomAssignments) {
+            elements.classroomAssignments.classList.add('hidden');
+        }
+        if (elements.classroomAssignmentsList) {
+            elements.classroomAssignmentsList.innerHTML = '';
+        }
+        if (elements.classroomAssignmentsLabel) {
+            elements.classroomAssignmentsLabel.textContent = '';
+        }
+        if (elements.classroomAssignmentsEmpty) {
+            elements.classroomAssignmentsEmpty.classList.add('hidden');
+        }
+    }
+
+    function renderClassroomLandingSections() {
+        if (!state.classroomContext?.enrolled) {
+            hideClassroomLandingSections();
+            return;
+        }
+
+        const className = state.classroomContext.className || 'Classroom';
+        const teacherName = state.classroomContext.teacherName || '';
+        if (elements.classroomBanner) {
+            elements.classroomBanner.classList.remove('hidden');
+        }
+        if (elements.classroomLabel) {
+            elements.classroomLabel.textContent = teacherName
+                ? `${className} with ${teacherName}`
+                : className;
+        }
+
+        const disabled = [];
+        if (!isClassroomFeatureEnabled('quizEnabled')) disabled.push('quizzes');
+        if (!isClassroomFeatureEnabled('recapEnabled')) disabled.push('recaps');
+        if (!isClassroomFeatureEnabled('ttsEnabled')) disabled.push('read-aloud');
+        if (!isClassroomFeatureEnabled('illustrationEnabled')) disabled.push('illustrations');
+        if (!isClassroomFeatureEnabled('characterEnabled')) disabled.push('characters');
+        if (!isClassroomFeatureEnabled('chatEnabled')) disabled.push('chat');
+        if (elements.classroomFeatureSummary) {
+            elements.classroomFeatureSummary.textContent = disabled.length > 0
+                ? `Teacher controls active: ${disabled.join(', ')} off for this class.`
+                : 'Teacher controls active for this class.';
+        }
+
+        const assignments = Array.isArray(state.classroomAssignments)
+            ? [...state.classroomAssignments].sort(compareClassroomAssignments)
+            : [];
+        const localEntriesByBookId = new Map(getLocalBookEntries().map(entry => [entry.book.id, entry]));
+
+        if (elements.classroomAssignmentsLabel) {
+            const count = assignments.length;
+            elements.classroomAssignmentsLabel.textContent = count === 1 ? '1 active' : `${count} active`;
+        }
+        if (elements.classroomAssignments) {
+            elements.classroomAssignments.classList.remove('hidden');
+        }
+
+        if (assignments.length === 0) {
+            if (elements.classroomAssignmentsList) {
+                elements.classroomAssignmentsList.innerHTML = '';
+            }
+            if (elements.classroomAssignmentsEmpty) {
+                elements.classroomAssignmentsEmpty.classList.remove('hidden');
+            }
+            return;
+        }
+
+        if (elements.classroomAssignmentsEmpty) {
+            elements.classroomAssignmentsEmpty.classList.add('hidden');
+        }
+        if (elements.classroomAssignmentsList) {
+            elements.classroomAssignmentsList.innerHTML = assignments.map((assignment) =>
+                renderClassroomAssignmentItem(assignment, localEntriesByBookId.get(assignment.bookId))
+            ).join('');
+        }
+    }
+
     function hidePersonalizedSections() {
         renderLocalSection(elements.continueReading, elements.continueReadingList, []);
         renderLocalSection(elements.upNext, elements.upNextList, []);
@@ -2394,13 +2835,15 @@
     }
 
     // Render library view
-    function renderLibrary(filter = '') {
+    function renderLibrary(filter = state.librarySearchQuery) {
         const searchTerm = (filter || '').toLowerCase().trim();
 
         if (searchTerm) {
+            hideClassroomLandingSections();
             hideAchievementsShelf();
             hidePersonalizedSections();
         } else {
+            renderClassroomLandingSections();
             renderAchievementsShelf();
             void loadAchievementsShelf();
             renderPersonalizedSections();
@@ -4206,9 +4649,16 @@
             elements.searchChapterFilter.value = '';
         }
         elements.librarySearch.value = '';
+        state.librarySearchQuery = '';
+        clearLibrarySearchError();
         state.achievementsLoaded = false;
         state.achievementsAllItems = [];
         renderLibrary();
+        void loadClassroomContext().then(() => {
+            if (!state.currentBook && elements.libraryView && !elements.libraryView.classList.contains('hidden')) {
+                renderLibrary();
+            }
+        });
         updateFavoriteUi();
         elements.librarySearch.focus();
     }
@@ -4293,6 +4743,7 @@
 
         // TTS is available if either OpenAI or browser is available and the book allows it
         state.ttsAvailable = isBookFeatureEnabled('ttsEnabled')
+            && isClassroomFeatureEnabled('ttsEnabled')
             && (state.ttsOpenAIAvailable || state.ttsBrowserAvailable);
         if (!state.ttsAvailable) {
             ttsStop();
@@ -5165,7 +5616,8 @@
         try {
             const response = await fetch('/api/illustrations/status');
             const status = await response.json();
-            state.illustrationAvailable = isBookFeatureEnabled('illustrationEnabled');
+            state.illustrationAvailable = isBookFeatureEnabled('illustrationEnabled')
+                && isClassroomFeatureEnabled('illustrationEnabled');
             state.allowPromptEditing = state.illustrationAvailable
                 && !status.cacheOnly
                 && (status.allowPromptEditing || false);
@@ -5822,11 +6274,14 @@
         try {
             const response = await fetch('/api/characters/status');
             const status = await response.json();
-            state.characterAvailable = status.enabled && isBookFeatureEnabled('characterEnabled');
+            state.characterAvailable = status.enabled
+                && isBookFeatureEnabled('characterEnabled')
+                && isClassroomFeatureEnabled('characterEnabled');
             state.characterCacheOnly = status.cacheOnly === true;
             // Chat is available if enabled in config and the provider is reachable
             state.characterChatAvailable = state.characterAvailable
                 && status.chatEnabled === true
+                && isClassroomFeatureEnabled('chatEnabled')
                 && status.chatProviderAvailable === true;
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
 
@@ -5869,10 +6324,13 @@
             const status = await response.json();
             state.recapGenerationAvailable = status.enabled === true
                 && status.reasoningEnabled === true
+                && isClassroomFeatureEnabled('recapEnabled')
                 && status.cacheOnly !== true;
-            state.recapAvailable = status.available === true;
+            state.recapAvailable = status.available === true
+                && isClassroomFeatureEnabled('recapEnabled');
             state.recapCacheOnly = status.cacheOnly === true;
-            state.recapChatEnabled = status.chatEnabled === true;
+            state.recapChatEnabled = status.chatEnabled === true
+                && isClassroomFeatureEnabled('chatEnabled');
             state.recapChatAvailable = state.recapAvailable &&
                 state.recapChatEnabled &&
                 status.chatProviderAvailable === true;
@@ -5900,9 +6358,11 @@
             const response = await fetch(statusUrl, { cache: 'no-store' });
             const status = await response.json();
             state.quizCacheOnly = status.cacheOnly === true;
-            state.quizAvailable = status.available === true;
-            state.quizGenerationAvailable = status.generationAvailable === true
-                || (status.enabled === true && status.reasoningEnabled === true && status.cacheOnly !== true);
+            state.quizAvailable = status.available === true
+                && isClassroomFeatureEnabled('quizEnabled');
+            state.quizGenerationAvailable = (status.generationAvailable === true
+                || (status.enabled === true && status.reasoningEnabled === true && status.cacheOnly !== true))
+                && isClassroomFeatureEnabled('quizEnabled');
             state.cacheOnly = state.cacheOnly || status.cacheOnly === true;
         } catch (error) {
             console.debug('Failed to check quiz availability:', error);
@@ -5930,7 +6390,7 @@
         setQuizControls();
         updateMobileHeaderMenuState();
         if (!state.currentBook && elements.libraryView && !elements.libraryView.classList.contains('hidden')) {
-            renderLibrary(elements.librarySearch?.value || '');
+            renderLibrary();
         }
     }
 
@@ -6482,6 +6942,10 @@
                 if (catalogBook) {
                     catalogBook.alreadyImported = true;
                 }
+                const popularBook = state.popularCatalogBooks.find(b => b.gutenbergId === gutenbergId);
+                if (popularBook) {
+                    popularBook.alreadyImported = true;
+                }
 
                 hideImportingOverlay();
                 await selectBook(book);
@@ -6534,13 +6998,31 @@
 
     // Event listeners
     function setupEventListeners() {
-        // Library search - search the Gutenberg catalog
-        elements.librarySearch.addEventListener('input', (e) => {
-            clearTimeout(catalogSearchTimeout);
-            catalogSearchTimeout = setTimeout(() => {
-                searchCatalog(e.target.value);
-            }, 300);
-        });
+        // Library search - explicit submit only (Enter or Search button)
+        if (elements.librarySearch) {
+            elements.librarySearch.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') {
+                    return;
+                }
+                e.preventDefault();
+                submitLibrarySearch();
+            });
+            elements.librarySearch.addEventListener('input', () => {
+                clearLibrarySearchError();
+            });
+        }
+        if (elements.librarySearchSubmit) {
+            elements.librarySearchSubmit.addEventListener('click', () => {
+                submitLibrarySearch();
+            });
+        }
+        if (elements.librarySearchRetry) {
+            elements.librarySearchRetry.addEventListener('click', () => {
+                if (typeof state.librarySearchRetryHandler === 'function') {
+                    state.librarySearchRetryHandler();
+                }
+            });
+        }
 
         // Personalized/local book selection
         elements.libraryView.addEventListener('click', async (e) => {

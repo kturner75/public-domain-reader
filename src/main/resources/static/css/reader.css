@@ -76,6 +76,7 @@ html, body {
     width: 100%;
     padding: 0.75rem 1rem;
     padding-left: 2.5rem;
+    padding-right: 6.75rem;
     font-family: var(--font-serif);
     font-size: 1.1rem;
     border: 1px solid var(--border-color);
@@ -103,6 +104,70 @@ html, body {
     pointer-events: none;
 }
 
+.library-search-submit {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--text-color);
+    font-family: var(--font-serif);
+    font-size: 0.88rem;
+    padding: 0.26rem 0.82rem;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s, opacity 0.2s;
+}
+
+.library-search-submit:hover {
+    background: var(--highlight-color);
+}
+
+.library-search-submit:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+.library-search-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: -1.15rem;
+    margin-bottom: 1.15rem;
+    color: var(--muted-color);
+    font-size: 0.84rem;
+}
+
+.library-search-status::before {
+    content: '';
+    width: 0.72rem;
+    height: 0.72rem;
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--muted-color);
+    animation: librarySearchSpin 0.8s linear infinite;
+}
+
+#library-search-error {
+    margin: -0.35rem 0 1rem;
+}
+
+.library-search-container.is-loading .library-search {
+    border-color: var(--muted-color);
+}
+
+.book-list.is-loading {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+@keyframes librarySearchSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .section-title {
     font-size: 0.9rem;
     font-weight: 500;
@@ -122,6 +187,76 @@ html, body {
 
 .section-title-row .section-title {
     margin-bottom: 0;
+}
+
+.classroom-banner {
+    margin: -0.2rem 0 1.15rem;
+    border: 1px solid #c7c0ae;
+    border-radius: 8px;
+    background: #f7f2e6;
+    padding: 0.7rem 0.85rem;
+}
+
+.classroom-label {
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6b5b37;
+}
+
+.classroom-feature-summary {
+    margin-top: 0.22rem;
+    font-size: 0.83rem;
+    color: #6a6558;
+}
+
+.classroom-assignments-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6a6558;
+}
+
+.classroom-assignments-empty {
+    margin-top: 0.6rem;
+    font-size: 0.84rem;
+    color: var(--muted-color);
+}
+
+.book-item-assignment-label {
+    margin-top: 0.24rem;
+    font-size: 0.76rem;
+    color: #6f603f;
+}
+
+.book-progress-chip.assignment-due {
+    border-color: #c8b37a;
+    color: #6a5328;
+    background: #f8efd8;
+}
+
+.book-progress-chip.assignment-due.overdue {
+    border-color: #cf8f84;
+    color: #7f372c;
+    background: #fde9e5;
+}
+
+.book-progress-chip.assignment-quiz-required {
+    border-color: #cf9d95;
+    color: #7f372c;
+    background: #fdecea;
+}
+
+.book-progress-chip.assignment-quiz-complete {
+    border-color: #9cc3a8;
+    color: #2f6f44;
+    background: #eef7ef;
+}
+
+.book-progress-chip.assignment-quiz-unknown {
+    border-color: #c2c7cd;
+    color: #55606a;
+    background: #f2f4f6;
 }
 
 .library-section {
@@ -2993,6 +3128,33 @@ kbd {
 
     .library-search-container {
         margin-bottom: 1.25rem;
+    }
+
+    .library-search {
+        padding-right: 6.25rem;
+    }
+
+    .library-search-submit {
+        font-size: 0.82rem;
+        padding: 0.24rem 0.72rem;
+    }
+
+    .library-search-status {
+        margin-top: -0.6rem;
+        margin-bottom: 0.9rem;
+    }
+
+    .classroom-banner {
+        margin-bottom: 0.9rem;
+        padding: 0.62rem 0.72rem;
+    }
+
+    .classroom-label {
+        font-size: 0.76rem;
+    }
+
+    .classroom-feature-summary {
+        font-size: 0.78rem;
     }
 
     .library-section {
