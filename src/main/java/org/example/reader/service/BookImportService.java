@@ -40,6 +40,8 @@ public class BookImportService {
         String title,
         String author,
         int downloadCount,
+        List<String> subjects,
+        List<String> bookshelves,
         boolean alreadyImported
     ) {}
 
@@ -89,6 +91,8 @@ public class BookImportService {
                 book.title(),
                 book.getPrimaryAuthor(),
                 book.downloadCount(),
+                sanitizeMetadataList(book.subjects()),
+                sanitizeMetadataList(book.bookshelves()),
                 imported
             );
 
@@ -103,6 +107,18 @@ public class BookImportService {
         }
 
         return new ArrayList<>(deduped.values());
+    }
+
+    private List<String> sanitizeMetadataList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+            .filter(value -> value != null && !value.isBlank())
+            .map(String::trim)
+            .distinct()
+            .limit(8)
+            .toList();
     }
 
     public ImportResult importBook(int gutenbergId) {

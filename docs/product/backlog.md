@@ -1,6 +1,6 @@
 # Product Backlog
 
-Last updated: 2026-02-15
+Last updated: 2026-02-17
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
@@ -8,7 +8,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 - Most recent completed slice: `BL-023 - Adaptive mobile reader experience` (`Done`, delivered mobile touch navigation, hamburger action consolidation, mobile search/preferences UX fixes, and QA checklist validation on iOS + desktop regression flows).
 - Most recent shipped hardening (2026-02-15): hardened chapter loading against stale async responses in `reader.js` (prevents intermittent content wipe during rapid transitions) and added quiz endpoint diagnostic logging for read/status failures.
-- Active priority work: `None currently in progress`; no P1 items are currently marked `Ready`, and the next P1 candidates for scoping are `BL-018` and `BL-021` (`Discovery`).
+- Active priority work: `None currently in progress`; no P1 items are currently marked `Ready`, and the next P1 candidates for scoping are `BL-018`, `BL-021`, and `BL-025` (`Discovery`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -19,13 +19,18 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Status: Discovery
 - Problem: Current library landing does not adapt to reading behavior or intent.
 - Scope Buckets:
-- Personalization model (continue reading, streaks, recommended next action).
-- Information architecture for library/recents/discovery sections.
+- Personalization model (continue reading, recommended next action, visible progress state).
+- Information architecture for landing sections (`Continue Reading`, `My List`, `In Progress`, `Completed`, `Discover`, optional achievements shelf).
 - Lightweight ranking logic using local activity signals.
+- Favorite/bookmarking model for library curation (`My List` or favorites).
+- Discovery ranking seed model (behavioral + genre/author affinity from reading history and explicit favorites).
 - Discovery Questions:
 - Should the landing page prioritize "continue reading" over exploration?
-- What activity dimensions matter most (recency, completion, pace, favorites)?
+- What activity dimensions matter most (recency, completion %, pace, favorites, quiz performance)?
 - Should this personalization be local-only initially or account-backed later?
+- Should achievements/trophies be visible on the landing page or kept in a profile-only surface?
+- Should discover recommendations favor "same genre/style as favorites" or "adjacent exploration" by default?
+- Should landing behavior change when a reader is in a class-assigned context?
 - Current Direction (2026-02-08):
 - Move from generic catalog landing to reader-activity-driven sections:
 - User library (books started or explicitly saved).
@@ -33,9 +38,34 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Completed.
 - Up next queue.
 - Keep a discovery rail for new books so exploration remains visible.
+- Current Direction (2026-02-15):
+- Add `% complete` readouts for in-progress cards and preserve stable tie-break rules.
+- Add a `My List` section as explicit user intent signal (favorites/saved for later).
+- Keep achievements discoverable from landing (lightweight trophy strip or badge summary) but avoid crowding top priority reading actions.
+- Start discover recommendations with deterministic local heuristics (favorites + author/genre affinity) before ML-heavy ranking.
 - Exit Criteria for Discovery:
 - Ranked section model with tie-break rules.
 - Approved landing page layout and interaction flow.
+- Decision record for favorites model (`My List`) and achievements placement.
+- Recommendation seed strategy documented (data inputs + fallback behavior when user has sparse history).
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-018.1 My List / Favorites Foundation | Done | Add explicit `favorite`/saved-for-later state model and surface `My List` row with add/remove affordances in library + reader | Reader can add/remove favorites and see stable `My List` ordering across sessions |
+| BL-018.2 In Progress + Completion Readouts | Done | Standardize per-book `% complete`, chapter position, and completion status signals used by landing cards | `In Progress` and `Completed` rows show consistent progress chips and update as reading advances |
+| BL-018.3 Ranking + Continue Reading Tie-Breaks | Done | Formalize deterministic ranking rules (recency, progress depth, favorite intent, completion state) for `Continue Reading` and `Up Next` | Ranking outputs are deterministic/test-covered and documented for product review |
+| BL-018.4 Achievements Shelf Integration | Done | Add compact landing-level trophy/achievement summary (not full profile replacement) with drill-in path | Landing exposes recent/next achievement context without displacing primary reading CTA |
+| BL-018.5 Discover Affinity v1 | Done | Implement deterministic recommendation seeds using favorites + author/genre affinity + recent activity (with sparse-history fallback) | `Discover` rail explains recommendation basis (for example, "Because you liked X") and handles cold start gracefully |
+| BL-018.6 Classroom-Aware Landing Variant | Proposed | Add class-context landing adjustments (`Assignments`, required quiz status, teacher-controlled feature states) when reader is in an enrolled class | Classroom readers see assignment-first landing behavior while non-class readers keep consumer flow |
+- Session Log:
+- 2026-02-17: Started BL-018.1 by adding local favorite persistence (`My List`), library card save/remove actions, and reader-level favorite toggles (desktop + mobile menu).
+- 2026-02-17: Started BL-018.2 by adding standardized progress chips on local landing cards (`status`, `chapter position`, `% complete`) and unified activity/completion readouts.
+- 2026-02-17: Completed BL-018.2 by extracting progress snapshot logic into shared frontend utility (`library-progress.js`) and adding a tiny Node frontend harness (`src/test/frontend/library-progress.test.cjs`) covering not-started/in-progress/completed boundary cases.
+- 2026-02-17: Completed BL-018.3 by extracting deterministic ranking comparators into shared frontend utility (`library-ranking.js`), wiring personalized section ordering to those comparators, adding Node ranking tests (`src/test/frontend/library-ranking.test.cjs`), and documenting tie-break rules in `docs/product/landing-ranking.md`.
+- 2026-02-17: Completed BL-018.1 by finalizing explicit `My List` persistence and add/remove affordances from both landing cards and reader controls.
+- 2026-02-17: Started BL-018.4 by adding a compact landing achievements shelf backed by quiz trophy APIs with recent unlock chips and book drill-in behavior.
+- 2026-02-17: Completed BL-018.4 by adding a `View all` achievements modal (with keyboard/backdrop close), full trophy listing with per-book drill-in, and shelf refresh wiring tied to quiz availability + library lifecycle.
+- 2026-02-17: Completed BL-018.5 by adding deterministic discover affinity ranking (`library-discover.js`) using favorite intent + author/genre overlap + recent activity with cold-start popularity fallback, surfacing explainable recommendation reasons in the `Discover` rail, extending import catalog payloads with `subjects/bookshelves`, and adding backend/frontend tests for ranking determinism and payload mapping.
 
 ### BL-019 - Gamification and Trophy System
 - Type: Feature
@@ -138,6 +168,44 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Exit Criteria for Discovery:
 - Defined feedback rubric and output format.
 - Decision on placement in chapter transition flow.
+
+### BL-025 - Classroom Admin and Assignment Workflows
+- Type: Feature
+- Priority: P1
+- Effort: XL
+- Status: Discovery
+- Problem: Current product is reader-centric; it lacks teacher/admin controls needed for classroom deployment.
+- Scope Buckets:
+- Teacher/admin role model (class creation, student roster management, invite/enrollment flow).
+- Classroom-level feature controls (enable/disable recap, quiz, AI features, media generation).
+- Assignment workflows (assign books/chapters, due dates, required quiz completion).
+- Teacher-authored quiz support (custom question sets, override/generated quiz coexistence).
+- Classroom progress visibility (student in-progress/completed states, quiz outcomes, activity snapshots).
+- Discovery Questions:
+- Should teachers create student accounts directly, issue invite codes, or both?
+- Which features must be controllable at class-level for pilot safety (for example recap off, quiz on)?
+- How should teacher-authored quizzes interact with generated quizzes (replace, merge, or fallback)?
+- What minimum reporting is needed for pilot value without overbuilding gradebook integrations?
+- Current Direction (2026-02-15):
+- Prioritize classroom pilot readiness over broad LMS integrations.
+- Treat quiz workflows as classroom-positive and recap as classroom-optional/off by default based on early educator feedback.
+- Sequence work so BL-021 account foundations unblock class roster and assignment capabilities.
+- Exit Criteria for Discovery:
+- Classroom architecture decision (roles, enrollment flow, class ownership boundaries).
+- v1 classroom control matrix (which features are class-configurable).
+- v1 assignment + quiz authoring scope with acceptance criteria for teacher and student flows.
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-025.1 Classroom Domain Model + Roles | Proposed | Define entities/relationships for teacher, class, student enrollment, and role-based access boundaries | ADR + schema draft approved and role checks mapped to API surfaces |
+| BL-025.2 Teacher Onboarding + Roster Management | Proposed | Build teacher class setup flow and student registration/invite/import patterns (post-account foundation) | Teacher can create class, enroll students, and manage active roster without manual DB operations |
+| BL-025.3 Class Feature Controls | Proposed | Add class-level toggles (quiz/recap/AI/media capabilities) with policy enforcement in UI + API | Teacher settings deterministically govern student feature availability per class |
+| BL-025.4 Assignment Workflow v1 | Proposed | Support assigning books/chapters, due windows, and required completion/quiz states | Teacher can publish assignments and students see clear due/required states in app |
+| BL-025.5 Teacher-Authored Quiz Authoring | Proposed | Enable teacher custom quiz creation/editing and define coexistence with generated quizzes (override/merge/fallback) | Students receive expected quiz source by class policy and teacher can preview/publish updates |
+| BL-025.6 Classroom Progress + Insights | Proposed | Provide teacher dashboard for assignment completion, in-progress state, and quiz outcomes (pilot-level reporting) | Teacher can quickly identify struggling or incomplete students without external tooling |
+- Dependency Notes:
+- BL-021 (`User Registration and Account System`) is a prerequisite for BL-025.2 onward.
+- BL-018.6 depends on BL-025.3 and BL-025.4 for classroom context and assignment signals.
 
 ## P0
 

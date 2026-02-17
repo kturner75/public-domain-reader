@@ -28,8 +28,8 @@ class ImportControllerTest {
     @Test
     void searchGutenbergReturnsResults() throws Exception {
         List<SearchResult> results = List.of(
-            new SearchResult(1234, "Pride and Prejudice", "Jane Austen", 50000, false),
-            new SearchResult(5678, "Sense and Sensibility", "Jane Austen", 30000, true)
+            new SearchResult(1234, "Pride and Prejudice", "Jane Austen", 50000, List.of("Courtship fiction"), List.of("Best Books Ever Listings"), false),
+            new SearchResult(5678, "Sense and Sensibility", "Jane Austen", 30000, List.of("England -- Fiction"), List.of("Romance"), true)
         );
         when(bookImportService.searchGutenberg("austen")).thenReturn(results);
 
@@ -39,6 +39,8 @@ class ImportControllerTest {
             .andExpect(jsonPath("$[0].title").value("Pride and Prejudice"))
             .andExpect(jsonPath("$[0].author").value("Jane Austen"))
             .andExpect(jsonPath("$[0].downloadCount").value(50000))
+            .andExpect(jsonPath("$[0].subjects[0]").value("Courtship fiction"))
+            .andExpect(jsonPath("$[0].bookshelves[0]").value("Best Books Ever Listings"))
             .andExpect(jsonPath("$[0].alreadyImported").value(false))
             .andExpect(jsonPath("$[1].gutenbergId").value(5678))
             .andExpect(jsonPath("$[1].alreadyImported").value(true));
@@ -57,7 +59,7 @@ class ImportControllerTest {
     @Test
     void getPopularBooksReturnsResults() throws Exception {
         List<SearchResult> results = List.of(
-            new SearchResult(1, "Frankenstein", "Mary Shelley", 100000, false)
+            new SearchResult(1, "Frankenstein", "Mary Shelley", 100000, List.of("Science fiction"), List.of("Horror"), false)
         );
         when(bookImportService.getPopularBooks(1)).thenReturn(results);
 
@@ -70,7 +72,7 @@ class ImportControllerTest {
     @Test
     void getPopularBooksAcceptsPageParameter() throws Exception {
         List<SearchResult> results = List.of(
-            new SearchResult(2, "Dracula", "Bram Stoker", 80000, false)
+            new SearchResult(2, "Dracula", "Bram Stoker", 80000, List.of("Vampires -- Fiction"), List.of("Gothic"), false)
         );
         when(bookImportService.getPopularBooks(3)).thenReturn(results);
 

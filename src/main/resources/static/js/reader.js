@@ -118,7 +118,15 @@
         authRequired: false,
         authCanAccessSensitive: true,
         authAuthenticated: false,
-        authPromptShown: false
+        authPromptShown: false,
+        lastBookActivitySignature: '',
+        favoriteBookIds: new Set(),
+        favoriteBookOrder: [],
+        achievementsLoading: false,
+        achievementsLoaded: false,
+        achievementsSummary: '',
+        achievementsItems: [],
+        achievementsAllItems: []
     };
 
     // DOM Elements
@@ -126,13 +134,31 @@
         libraryView: document.getElementById('library-view'),
         readerView: document.getElementById('reader-view'),
         librarySearch: document.getElementById('library-search'),
-        recentlyRead: document.getElementById('recently-read'),
-        recentlyReadList: document.getElementById('recently-read-list'),
+        achievementsShelf: document.getElementById('achievements-shelf'),
+        achievementsSummary: document.getElementById('achievements-summary'),
+        achievementsList: document.getElementById('achievements-list'),
+        achievementsViewAll: document.getElementById('achievements-view-all'),
+        achievementsModal: document.getElementById('achievements-modal'),
+        achievementsModalBackdrop: document.getElementById('achievements-modal-backdrop'),
+        achievementsModalClose: document.getElementById('achievements-modal-close'),
+        achievementsModalSummary: document.getElementById('achievements-modal-summary'),
+        achievementsModalList: document.getElementById('achievements-modal-list'),
+        continueReading: document.getElementById('continue-reading'),
+        continueReadingList: document.getElementById('continue-reading-list'),
+        upNext: document.getElementById('up-next'),
+        upNextList: document.getElementById('up-next-list'),
+        inProgress: document.getElementById('in-progress'),
+        inProgressList: document.getElementById('in-progress-list'),
+        completedBooks: document.getElementById('completed-books'),
+        completedBooksList: document.getElementById('completed-books-list'),
+        myList: document.getElementById('my-list'),
+        myListList: document.getElementById('my-list-list'),
         allBooks: document.getElementById('all-books'),
         bookList: document.getElementById('book-list'),
         noResults: document.getElementById('no-results'),
         bookTitle: document.getElementById('book-title'),
         bookAuthor: document.getElementById('book-author'),
+        favoriteToggle: document.getElementById('favorite-toggle'),
         chapterTitle: document.getElementById('chapter-title'),
         columnLeft: document.getElementById('column-left'),
         columnRight: document.getElementById('column-right'),
@@ -156,6 +182,7 @@
         mobileMenuNote: document.getElementById('mobile-menu-note'),
         mobileMenuBookmark: document.getElementById('mobile-menu-bookmark'),
         mobileMenuBookmarks: document.getElementById('mobile-menu-bookmarks'),
+        mobileMenuFavorite: document.getElementById('mobile-menu-favorite'),
         mobileMenuRecapEnable: document.getElementById('mobile-menu-recap-enable'),
         mobileMenuAuth: document.getElementById('mobile-menu-auth'),
         pageIndicator: document.getElementById('page-indicator'),
@@ -335,6 +362,8 @@
         LAST_PAGE: 'reader_lastPage',
         LAST_PARAGRAPH: 'reader_lastParagraph',
         RECENTLY_READ: 'reader_recentlyRead',
+        BOOK_ACTIVITY: 'reader_bookActivity',
+        FAVORITE_BOOKS: 'reader_favoriteBooks',
         TTS_SPEED: 'reader_ttsSpeed',
         SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
@@ -380,6 +409,22 @@
             highlightColor: '#f1ece2'
         }
     });
+    const libraryProgressHelpers = (typeof globalThis !== 'undefined'
+        && globalThis.LibraryProgress
+        && typeof globalThis.LibraryProgress.buildBookProgressSnapshot === 'function')
+        ? globalThis.LibraryProgress
+        : null;
+    const libraryRankingHelpers = (typeof globalThis !== 'undefined'
+        && globalThis.LibraryRanking
+        && typeof globalThis.LibraryRanking.compareForActiveQueue === 'function'
+        && typeof globalThis.LibraryRanking.compareForCompleted === 'function')
+        ? globalThis.LibraryRanking
+        : null;
+    const libraryDiscoverHelpers = (typeof globalThis !== 'undefined'
+        && globalThis.LibraryDiscover
+        && typeof globalThis.LibraryDiscover.buildRecommendations === 'function')
+        ? globalThis.LibraryDiscover
+        : null;
 
     function firstMessageFromPayload(payload) {
         if (!payload) {
@@ -867,12 +912,32 @@
         }
     }
 
+    function updateFavoriteUi() {
+        const hasBook = !!state.currentBook?.id;
+        const favorite = hasBook && isBookFavorite(state.currentBook.id);
+
+        if (elements.favoriteToggle) {
+            elements.favoriteToggle.disabled = !hasBook;
+            elements.favoriteToggle.classList.toggle('saved', !!favorite);
+            elements.favoriteToggle.textContent = favorite ? 'In My List' : 'Add to My List';
+            elements.favoriteToggle.title = favorite ? 'Remove from My List' : 'Add to My List';
+        }
+
+        if (elements.mobileMenuFavorite) {
+            elements.mobileMenuFavorite.disabled = !hasBook;
+            elements.mobileMenuFavorite.textContent = favorite
+                ? 'Remove from My List'
+                : 'Add to My List';
+        }
+    }
+
     function updateMobileHeaderMenuState() {
         if (!elements.mobileHeaderMenu) return;
 
         const showMenuHost = state.isMobileLayout
             && !elements.readerView.classList.contains('hidden');
         elements.mobileHeaderMenu.classList.toggle('hidden', !showMenuHost);
+        updateFavoriteUi();
 
         if (!showMenuHost) {
             closeMobileHeaderMenu();
@@ -946,6 +1011,7 @@
                     : 'Collaborator Access (Sign In)';
             }
         }
+
     }
 
     function isBookFeatureEnabled(flag) {
@@ -1061,6 +1127,50 @@
 
     function isAuthModalVisible() {
         return !!elements.authModal && !elements.authModal.classList.contains('hidden');
+    }
+
+    function isAchievementsModalVisible() {
+        return !!elements.achievementsModal && !elements.achievementsModal.classList.contains('hidden');
+    }
+
+    function closeAchievementsModal() {
+        if (!elements.achievementsModal) return;
+        elements.achievementsModal.classList.add('hidden');
+    }
+
+    function renderAchievementsModal() {
+        if (!elements.achievementsModalSummary || !elements.achievementsModalList) {
+            return;
+        }
+
+        elements.achievementsModalSummary.textContent = state.achievementsSummary
+            || 'No trophies unlocked yet. Complete quizzes to start collecting achievements.';
+
+        if (!Array.isArray(state.achievementsAllItems) || state.achievementsAllItems.length === 0) {
+            elements.achievementsModalList.innerHTML = '';
+            return;
+        }
+
+        elements.achievementsModalList.innerHTML = state.achievementsAllItems.map((item) => {
+            const detail = formatAchievementDetail(item);
+            return `
+                <button
+                    class="achievements-modal-item"
+                    type="button"
+                    data-achievement-book-id="${item.bookId}"
+                    title="${escapeHtml(item.description || item.trophyTitle)}"
+                >
+                    <span class="achievements-modal-item-title">${escapeHtml(item.trophyTitle)}</span>
+                    <span class="achievements-modal-item-subtitle">${escapeHtml(detail)}</span>
+                </button>
+            `;
+        }).join('');
+    }
+
+    function openAchievementsModal() {
+        if (!elements.achievementsModal) return;
+        renderAchievementsModal();
+        elements.achievementsModal.classList.remove('hidden');
     }
 
     function setAuthStatusMessage(message, tone = 'neutral') {
@@ -1383,27 +1493,23 @@
 
         updateSpeedReadingControls();
 
-        // Check for saved book
-        const lastBookId = localStorage.getItem(STORAGE_KEYS.LAST_BOOK);
-        if (lastBookId) {
-            const book = state.localBooks.find(b => b.id === lastBookId);
-            if (book) {
-                const lastChapter = parseInt(localStorage.getItem(STORAGE_KEYS.LAST_CHAPTER)) || 0;
-                const lastPage = parseInt(localStorage.getItem(STORAGE_KEYS.LAST_PAGE)) || 0;
-                const lastParagraph = parseInt(localStorage.getItem(STORAGE_KEYS.LAST_PARAGRAPH)) || 0;
-                await selectBook(book, lastChapter, lastPage, lastParagraph);
-            }
-        }
-
         updateAnnotationControls();
+        updateFavoriteUi();
     }
 
     // Load library - both local books and popular from catalog
     async function loadLibrary() {
         try {
-            // Load local books (for recently read)
+            // Load local books and hydrate personalization state
             const localResponse = await fetch('/api/library');
             state.localBooks = await localResponse.json();
+            syncFavoriteBooksWithLocalBooks();
+            syncBookActivityWithLocalBooks();
+            state.achievementsLoaded = false;
+            state.achievementsLoading = false;
+            state.achievementsSummary = '';
+            state.achievementsItems = [];
+            state.achievementsAllItems = [];
 
             // Load popular books from Gutenberg
             const catalogResponse = await fetch('/api/import/popular');
@@ -1483,22 +1589,325 @@
         }
     }
 
+    function clampNumber(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function toFiniteNumber(value, fallback = 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function clampInteger(value, min, max) {
+        return Math.floor(clampNumber(toFiniteNumber(value, min), min, max));
+    }
+
+    function toTimestamp(value) {
+        if (!value || typeof value !== 'string') {
+            return 0;
+        }
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
     // Get recently read book IDs
     function getRecentlyRead() {
         const stored = localStorage.getItem(STORAGE_KEYS.RECENTLY_READ);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(stored);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_error) {
+            return [];
+        }
     }
 
     // Add book to recently read
     function addToRecentlyRead(bookId) {
         let recent = getRecentlyRead();
-        // Remove if already exists
         recent = recent.filter(id => id !== bookId);
-        // Add to front
         recent.unshift(bookId);
-        // Limit size
         recent = recent.slice(0, MAX_RECENTLY_READ);
         localStorage.setItem(STORAGE_KEYS.RECENTLY_READ, JSON.stringify(recent));
+    }
+
+    function readFavoriteBookIdsFromStorage() {
+        const stored = localStorage.getItem(STORAGE_KEYS.FAVORITE_BOOKS);
+        if (!stored) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(stored);
+            if (!Array.isArray(parsed)) {
+                return [];
+            }
+            return parsed
+                .filter(id => typeof id === 'string' && id.trim().length > 0)
+                .map(id => id.trim());
+        } catch (_error) {
+            return [];
+        }
+    }
+
+    function hydrateFavoriteState(favoriteIds) {
+        const uniqueIds = [];
+        const seen = new Set();
+        (favoriteIds || []).forEach((bookId) => {
+            if (!bookId || seen.has(bookId)) {
+                return;
+            }
+            seen.add(bookId);
+            uniqueIds.push(bookId);
+        });
+        state.favoriteBookOrder = uniqueIds;
+        state.favoriteBookIds = new Set(uniqueIds);
+    }
+
+    function persistFavoriteState() {
+        localStorage.setItem(STORAGE_KEYS.FAVORITE_BOOKS, JSON.stringify(state.favoriteBookOrder));
+    }
+
+    function syncFavoriteBooksWithLocalBooks() {
+        const availableBookIds = new Set((state.localBooks || []).map(book => book.id));
+        const filtered = readFavoriteBookIdsFromStorage().filter(bookId => availableBookIds.has(bookId));
+        hydrateFavoriteState(filtered);
+        persistFavoriteState();
+    }
+
+    function isBookFavorite(bookId) {
+        return !!bookId && state.favoriteBookIds.has(bookId);
+    }
+
+    function getFavoriteOrderIndex(bookId) {
+        const index = state.favoriteBookOrder.indexOf(bookId);
+        return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+    }
+
+    function setBookFavorite(bookId, favorite) {
+        if (!bookId) {
+            return false;
+        }
+        const currentlyFavorite = isBookFavorite(bookId);
+        if (currentlyFavorite === favorite) {
+            return currentlyFavorite;
+        }
+
+        const nextOrder = state.favoriteBookOrder.filter(id => id !== bookId);
+        if (favorite) {
+            nextOrder.unshift(bookId);
+        }
+        hydrateFavoriteState(nextOrder);
+        persistFavoriteState();
+        return favorite;
+    }
+
+    function toggleBookFavorite(bookId, options = {}) {
+        if (!bookId) {
+            return null;
+        }
+        const nextValue = !isBookFavorite(bookId);
+        const favorite = setBookFavorite(bookId, nextValue);
+        if (favorite === null) {
+            return null;
+        }
+        updateFavoriteUi();
+        if (options.rerenderLibrary) {
+            renderLibrary(elements.librarySearch?.value || '');
+        }
+        if (options.showToast) {
+            showAppToast({
+                title: favorite ? 'Saved to My List' : 'Removed from My List',
+                message: favorite
+                    ? 'This book will stay pinned in your My List section.'
+                    : 'This book was removed from your My List section.',
+                autoDismissMs: 3200
+            });
+        }
+        return favorite;
+    }
+
+    function readBookActivityStore() {
+        const raw = localStorage.getItem(STORAGE_KEYS.BOOK_ACTIVITY);
+        if (!raw) {
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return {};
+            }
+            return parsed;
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    function writeBookActivityStore(store) {
+        localStorage.setItem(STORAGE_KEYS.BOOK_ACTIVITY, JSON.stringify(store));
+    }
+
+    function computeProgressRatio(chapterIndex, pageIndex, totalPages, chapterCount) {
+        const safeChapterCount = Math.max(1, Math.round(toFiniteNumber(chapterCount, 1)));
+        const safeTotalPages = Math.max(1, Math.round(toFiniteNumber(totalPages, 1)));
+        const safeChapterIndex = clampInteger(chapterIndex, 0, safeChapterCount - 1);
+        const safePageIndex = clampInteger(pageIndex, 0, safeTotalPages - 1);
+        const chapterProgress = (safePageIndex + 1) / safeTotalPages;
+        return clampNumber((safeChapterIndex + chapterProgress) / safeChapterCount, 0, 1);
+    }
+
+    function normalizeBookActivity(book, rawActivity) {
+        const raw = rawActivity && typeof rawActivity === 'object' ? rawActivity : {};
+        const chapterCount = Math.max(
+            1,
+            (Array.isArray(book?.chapters) && book.chapters.length > 0)
+                ? book.chapters.length
+                : Math.round(toFiniteNumber(raw.chapterCount, 1))
+        );
+        const totalPages = Math.max(1, Math.round(toFiniteNumber(raw.totalPages, 1)));
+        const lastChapterIndex = clampInteger(raw.lastChapterIndex, 0, chapterCount - 1);
+        const lastPage = clampInteger(raw.lastPage, 0, totalPages - 1);
+        const hasProgressData = raw.progressRatio !== undefined
+            || raw.maxProgressRatio !== undefined
+            || raw.lastChapterIndex !== undefined
+            || raw.lastPage !== undefined
+            || raw.totalPages !== undefined;
+        const fallbackProgress = hasProgressData
+            ? computeProgressRatio(lastChapterIndex, lastPage, totalPages, chapterCount)
+            : 0;
+        const progressRatio = clampNumber(toFiniteNumber(raw.progressRatio, fallbackProgress), 0, 1);
+        const maxProgressRatio = clampNumber(
+            Math.max(progressRatio, toFiniteNumber(raw.maxProgressRatio, progressRatio)),
+            0,
+            1
+        );
+        const completed = Boolean(raw.completed) || maxProgressRatio >= 0.999;
+        return {
+            chapterCount,
+            lastChapterIndex,
+            lastPage,
+            totalPages,
+            progressRatio,
+            maxProgressRatio,
+            completed,
+            openCount: Math.max(0, Math.round(toFiniteNumber(raw.openCount, 0))),
+            lastOpenedAt: typeof raw.lastOpenedAt === 'string' ? raw.lastOpenedAt : null,
+            lastReadAt: typeof raw.lastReadAt === 'string' ? raw.lastReadAt : null,
+            completedAt: completed && typeof raw.completedAt === 'string' ? raw.completedAt : null
+        };
+    }
+
+    function upsertBookActivity(bookId, updater) {
+        if (!bookId || typeof updater !== 'function') {
+            return;
+        }
+        const store = readBookActivityStore();
+        const existing = store[bookId] && typeof store[bookId] === 'object' ? store[bookId] : {};
+        const next = updater(existing);
+        if (!next || typeof next !== 'object') {
+            return;
+        }
+        store[bookId] = next;
+        writeBookActivityStore(store);
+    }
+
+    function markBookOpened(book) {
+        if (!book?.id) {
+            return;
+        }
+        const now = new Date().toISOString();
+        upsertBookActivity(book.id, (existing) => {
+            const normalized = normalizeBookActivity(book, existing);
+            return {
+                ...normalized,
+                chapterCount: Math.max(1, Array.isArray(book.chapters) ? book.chapters.length : normalized.chapterCount),
+                openCount: normalized.openCount + 1,
+                lastOpenedAt: now,
+                lastReadAt: normalized.lastReadAt || now
+            };
+        });
+    }
+
+    function persistCurrentBookActivity() {
+        if (!state.currentBook?.id || !Array.isArray(state.chapters) || state.chapters.length === 0) {
+            return;
+        }
+        const chapterCount = Math.max(1, state.chapters.length);
+        const totalPages = Math.max(1, state.totalPages || 1);
+        const chapterIndex = clampInteger(state.currentChapterIndex, 0, chapterCount - 1);
+        const pageIndex = clampInteger(state.currentPage, 0, totalPages - 1);
+        const signature = `${state.currentBook.id}:${chapterIndex}:${pageIndex}:${totalPages}:${chapterCount}`;
+        if (signature === state.lastBookActivitySignature) {
+            return;
+        }
+        state.lastBookActivitySignature = signature;
+
+        const now = new Date().toISOString();
+        const progressRatio = computeProgressRatio(chapterIndex, pageIndex, totalPages, chapterCount);
+        const reachedEnd = chapterIndex >= chapterCount - 1 && pageIndex >= totalPages - 1;
+
+        upsertBookActivity(state.currentBook.id, (existing) => {
+            const normalized = normalizeBookActivity(state.currentBook, existing);
+            const maxProgressRatio = Math.max(normalized.maxProgressRatio, progressRatio);
+            const completed = normalized.completed || reachedEnd || maxProgressRatio >= 0.999;
+            return {
+                ...normalized,
+                chapterCount,
+                lastChapterIndex: chapterIndex,
+                lastPage: pageIndex,
+                totalPages,
+                progressRatio,
+                maxProgressRatio,
+                completed,
+                completedAt: completed ? (normalized.completedAt || now) : null,
+                lastOpenedAt: normalized.lastOpenedAt || now,
+                lastReadAt: now,
+                openCount: Math.max(1, normalized.openCount)
+            };
+        });
+    }
+
+    function syncBookActivityWithLocalBooks() {
+        const localBooks = Array.isArray(state.localBooks) ? state.localBooks : [];
+        const bookIds = new Set(localBooks.map(book => book.id));
+        const recentIds = getRecentlyRead();
+        const recentOrder = new Map();
+        recentIds.forEach((bookId, index) => {
+            recentOrder.set(bookId, index);
+        });
+
+        const now = Date.now();
+        const store = readBookActivityStore();
+        Object.keys(store).forEach((bookId) => {
+            if (!bookIds.has(bookId)) {
+                delete store[bookId];
+            }
+        });
+
+        localBooks.forEach((book) => {
+            const existing = store[book.id];
+            const normalized = normalizeBookActivity(book, existing);
+            const recencySeed = recentOrder.has(book.id)
+                ? new Date(now - (recentOrder.get(book.id) * 60000)).toISOString()
+                : null;
+            const seededProgress = recencySeed && normalized.maxProgressRatio <= 0
+                ? computeProgressRatio(0, 0, 1, normalized.chapterCount)
+                : normalized.maxProgressRatio;
+            const seededCompleted = Boolean(normalized.completed) || seededProgress >= 0.999;
+            store[book.id] = {
+                ...normalized,
+                chapterCount: Math.max(1, Array.isArray(book.chapters) ? book.chapters.length : normalized.chapterCount),
+                progressRatio: Math.max(normalized.progressRatio, seededProgress),
+                maxProgressRatio: Math.max(normalized.maxProgressRatio, seededProgress),
+                completed: seededCompleted,
+                completedAt: seededCompleted ? normalized.completedAt : null,
+                lastOpenedAt: normalized.lastOpenedAt || recencySeed,
+                lastReadAt: normalized.lastReadAt || recencySeed
+            };
+        });
+
+        writeBookActivityStore(store);
     }
 
     function normalizeAuthorName(author) {
@@ -1518,13 +1927,198 @@
         return `${parts[1]} ${parts[0]}`.trim();
     }
 
-    // Render a book item (local book with id)
-    function renderLocalBookItem(book) {
-        const author = normalizeAuthorName(book.author);
+    function getLocalBookEntries() {
+        const store = readBookActivityStore();
+        return state.localBooks.map(book => ({
+            book,
+            activity: normalizeBookActivity(book, store[book.id]),
+            favorite: isBookFavorite(book.id),
+            favoriteOrderIndex: getFavoriteOrderIndex(book.id)
+        }));
+    }
+
+    function getLastActivityTimestamp(entry) {
+        if (libraryRankingHelpers && typeof libraryRankingHelpers.toTimestamp === 'function') {
+            return Math.max(
+                libraryRankingHelpers.toTimestamp(entry?.activity?.lastReadAt),
+                libraryRankingHelpers.toTimestamp(entry?.activity?.lastOpenedAt),
+                0
+            );
+        }
+        return Math.max(
+            toTimestamp(entry.activity.lastReadAt),
+            toTimestamp(entry.activity.lastOpenedAt),
+            0
+        );
+    }
+
+    function isInProgressEntry(entry) {
+        if (libraryRankingHelpers && typeof libraryRankingHelpers.isInProgress === 'function') {
+            return libraryRankingHelpers.isInProgress(entry);
+        }
+        return !entry.activity.completed && entry.activity.maxProgressRatio > 0;
+    }
+
+    function isCompletedEntry(entry) {
+        if (libraryRankingHelpers && typeof libraryRankingHelpers.isCompleted === 'function') {
+            return libraryRankingHelpers.isCompleted(entry);
+        }
+        return entry.activity.completed;
+    }
+
+    function isUnreadEntry(entry) {
+        return !entry.activity.completed && entry.activity.maxProgressRatio <= 0;
+    }
+
+    function compareByTitle(a, b) {
+        return (a.book.title || '').localeCompare(b.book.title || '', undefined, { sensitivity: 'base' });
+    }
+
+    function compareByLibraryPriority(a, b) {
+        if (libraryRankingHelpers) {
+            return libraryRankingHelpers.compareForActiveQueue(a, b);
+        }
+
+        // Fallback tie-break order: reading state, recency, favorite, progress depth, title.
+        const aState = isInProgressEntry(a) ? 2 : (isUnreadEntry(a) ? 1 : 0);
+        const bState = isInProgressEntry(b) ? 2 : (isUnreadEntry(b) ? 1 : 0);
+        if (aState !== bState) {
+            return bState - aState;
+        }
+
+        const recencyDiff = getLastActivityTimestamp(b) - getLastActivityTimestamp(a);
+        if (recencyDiff !== 0) {
+            return recencyDiff;
+        }
+
+        const favoriteDiff = Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
+        if (favoriteDiff !== 0) {
+            return favoriteDiff;
+        }
+
+        const progressDiff = b.activity.maxProgressRatio - a.activity.maxProgressRatio;
+        if (Math.abs(progressDiff) > 0.0001) {
+            return progressDiff;
+        }
+
+        return compareByTitle(a, b);
+    }
+
+    function compareCompletedEntries(a, b) {
+        if (libraryRankingHelpers) {
+            return libraryRankingHelpers.compareForCompleted(a, b);
+        }
+
+        const completedDiff = toTimestamp(b.activity.completedAt) - toTimestamp(a.activity.completedAt);
+        if (completedDiff !== 0) {
+            return completedDiff;
+        }
+
+        const recencyDiff = getLastActivityTimestamp(b) - getLastActivityTimestamp(a);
+        if (recencyDiff !== 0) {
+            return recencyDiff;
+        }
+
+        const favoriteDiff = Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
+        if (favoriteDiff !== 0) {
+            return favoriteDiff;
+        }
+
+        return compareByLibraryPriority(a, b);
+    }
+
+    function formatRelativeActivityTime(value) {
+        const timestamp = toTimestamp(value);
+        if (!timestamp) {
+            return '';
+        }
+        const elapsedMs = Date.now() - timestamp;
+        if (elapsedMs < 60_000) {
+            return 'just now';
+        }
+        if (elapsedMs < 3_600_000) {
+            return `${Math.round(elapsedMs / 60_000)}m ago`;
+        }
+        if (elapsedMs < 86_400_000) {
+            return `${Math.round(elapsedMs / 3_600_000)}h ago`;
+        }
+        return `${Math.round(elapsedMs / 86_400_000)}d ago`;
+    }
+
+    function buildBookProgressSnapshot(activity) {
+        if (libraryProgressHelpers) {
+            return libraryProgressHelpers.buildBookProgressSnapshot(activity);
+        }
+
+        const chapterCount = Math.max(1, clampInteger(activity?.chapterCount, 1, Number.MAX_SAFE_INTEGER));
+        const rawProgress = clampNumber(toFiniteNumber(activity?.maxProgressRatio, 0), 0, 1);
+        const completed = Boolean(activity?.completed) || rawProgress >= 0.999;
+
+        let chapterNumber = 0;
+        let percentComplete = clampInteger(Math.round(rawProgress * 100), 0, 100);
+        let statusLabel = 'Not Started';
+        let statusClass = 'not-started';
+
+        if (completed) {
+            chapterNumber = chapterCount;
+            percentComplete = 100;
+            statusLabel = 'Completed';
+            statusClass = 'completed';
+        } else if (rawProgress > 0) {
+            chapterNumber = clampInteger(toFiniteNumber(activity?.lastChapterIndex, 0) + 1, 1, chapterCount);
+            percentComplete = Math.max(1, percentComplete);
+            statusLabel = 'In Progress';
+            statusClass = 'in-progress';
+        }
+
+        return {
+            chapterLabel: `Chapter ${chapterNumber}/${chapterCount}`,
+            percentLabel: `${percentComplete}%`,
+            statusLabel,
+            statusClass
+        };
+    }
+
+    function formatBookActivityLabel(activity, progressSnapshot) {
+        if (progressSnapshot.statusClass === 'completed') {
+            const completedAt = formatRelativeActivityTime(activity.completedAt || activity.lastReadAt || activity.lastOpenedAt);
+            return completedAt ? `Finished ${completedAt}` : 'Finished';
+        }
+
+        const activeAt = formatRelativeActivityTime(activity.lastReadAt || activity.lastOpenedAt);
+        return activeAt ? `Active ${activeAt}` : 'No recent activity';
+    }
+
+    function renderLocalBookItem(entry, options = {}) {
+        const author = normalizeAuthorName(entry.book.author);
+        const badge = options.badge ? `<span class="book-item-badge">${options.badge}</span>` : '';
+        const progress = buildBookProgressSnapshot(entry.activity);
+        const meta = formatBookActivityLabel(entry.activity, progress);
+        const favoriteLabel = entry.favorite ? 'Saved' : 'Save';
+        const favoriteTitle = entry.favorite ? 'Remove from My List' : 'Add to My List';
+        const favoriteClass = entry.favorite ? ' active' : '';
         return `
-            <div class="book-item" data-book-id="${book.id}">
-                <div class="book-item-title">${book.title}</div>
+            <div class="book-item" data-book-id="${entry.book.id}">
+                <div class="book-item-title-row">
+                    <div class="book-item-title">${entry.book.title}${badge}</div>
+                    <button
+                        class="book-item-favorite-btn${favoriteClass}"
+                        type="button"
+                        data-favorite-toggle="true"
+                        data-book-id="${entry.book.id}"
+                        aria-pressed="${entry.favorite ? 'true' : 'false'}"
+                        title="${favoriteTitle}"
+                    >
+                        ${favoriteLabel}
+                    </button>
+                </div>
                 <div class="book-item-author">${author}</div>
+                <div class="book-item-progress">
+                    <span class="book-progress-chip book-progress-chip-status status-${progress.statusClass}">${progress.statusLabel}</span>
+                    <span class="book-progress-chip">${progress.chapterLabel}</span>
+                    <span class="book-progress-chip">${progress.percentLabel}</span>
+                </div>
+                <div class="book-item-meta">${meta}</div>
             </div>
         `;
     }
@@ -1534,38 +2128,288 @@
         const importedClass = book.alreadyImported ? ' imported' : '';
         const importedBadge = book.alreadyImported ? '<span class="imported-badge">✓</span>' : '';
         const author = normalizeAuthorName(book.author);
+        const reason = (typeof book.discoverReason === 'string' && book.discoverReason.trim().length > 0)
+            ? `<div class="book-item-discover-reason">${escapeHtml(book.discoverReason)}</div>`
+            : '';
         return `
             <div class="book-item catalog-book${importedClass}" data-gutenberg-id="${book.gutenbergId}">
                 <div class="book-item-title">${book.title}${importedBadge}</div>
                 <div class="book-item-author">${author}</div>
+                ${reason}
             </div>
         `;
     }
 
-    // Render library view
-    function renderLibrary(filter = '') {
-        const searchTerm = filter.toLowerCase().trim();
-        const recentIds = getRecentlyRead();
-
-        // Recently read books (only show if no search filter, from local books)
-        if (!searchTerm && recentIds.length > 0) {
-            const recentBooks = recentIds
-                .map(id => state.localBooks.find(b => b.id === id))
-                .filter(Boolean);
-
-            if (recentBooks.length > 0) {
-                elements.recentlyReadList.innerHTML = recentBooks.map(renderLocalBookItem).join('');
-                elements.recentlyRead.classList.remove('hidden');
-            } else {
-                elements.recentlyRead.classList.add('hidden');
-            }
-        } else {
-            elements.recentlyRead.classList.add('hidden');
+    function getDiscoverCatalogEntries() {
+        const catalog = Array.isArray(state.catalogBooks) ? state.catalogBooks : [];
+        if (catalog.length === 0) {
+            return [];
         }
 
-        // Show catalog books (already filtered by search via API)
-        if (state.catalogBooks.length > 0) {
-            elements.bookList.innerHTML = state.catalogBooks.map(renderCatalogBookItem).join('');
+        if (libraryDiscoverHelpers) {
+            return libraryDiscoverHelpers.buildRecommendations(catalog, getLocalBookEntries());
+        }
+
+        return catalog.map(book => ({
+            ...book,
+            discoverReason: 'Popular with readers right now',
+            discoverReasonType: 'popularity'
+        }));
+    }
+
+    function renderLocalSection(sectionElement, listElement, entries, options = {}) {
+        if (!sectionElement || !listElement) {
+            return;
+        }
+        if (!entries || entries.length === 0) {
+            listElement.innerHTML = '';
+            sectionElement.classList.add('hidden');
+            return;
+        }
+        listElement.innerHTML = entries.map((entry, index) => {
+            const badge = typeof options.badge === 'function'
+                ? options.badge(entry, index)
+                : options.badge;
+            return renderLocalBookItem(entry, { badge });
+        }).join('');
+        sectionElement.classList.remove('hidden');
+    }
+
+    function hideAchievementsShelf() {
+        if (!elements.achievementsShelf || !elements.achievementsSummary || !elements.achievementsList) {
+            return;
+        }
+        elements.achievementsSummary.textContent = '';
+        elements.achievementsList.innerHTML = '';
+        if (elements.achievementsViewAll) {
+            elements.achievementsViewAll.classList.add('hidden');
+        }
+        elements.achievementsShelf.classList.add('hidden');
+        closeAchievementsModal();
+    }
+
+    function summarizeAchievements(totalUnlocked, booksWithTrophies) {
+        if (totalUnlocked <= 0) {
+            return 'No trophies unlocked yet. Complete quizzes to start collecting achievements.';
+        }
+        const trophyWord = totalUnlocked === 1 ? 'trophy' : 'trophies';
+        const bookWord = booksWithTrophies === 1 ? 'book' : 'books';
+        return `${totalUnlocked} ${trophyWord} unlocked across ${booksWithTrophies} ${bookWord}.`;
+    }
+
+    function toAchievementRecord(book, trophy) {
+        if (!book || !trophy) {
+            return null;
+        }
+        const title = (typeof trophy.title === 'string' && trophy.title.trim())
+            ? trophy.title.trim()
+            : (typeof trophy.code === 'string' && trophy.code.trim() ? trophy.code.trim() : 'Trophy');
+        return {
+            bookId: book.id,
+            bookTitle: book.title || 'Book',
+            trophyTitle: title,
+            trophyCode: typeof trophy.code === 'string' ? trophy.code : '',
+            description: typeof trophy.description === 'string' ? trophy.description : '',
+            unlockedAt: typeof trophy.unlockedAt === 'string' ? trophy.unlockedAt : null
+        };
+    }
+
+    function compareAchievementsNewestFirst(a, b) {
+        const timeDiff = toTimestamp(b.unlockedAt) - toTimestamp(a.unlockedAt);
+        if (timeDiff !== 0) {
+            return timeDiff;
+        }
+        const titleDiff = (a.trophyTitle || '').localeCompare(b.trophyTitle || '', undefined, { sensitivity: 'base' });
+        if (titleDiff !== 0) {
+            return titleDiff;
+        }
+        return (a.bookTitle || '').localeCompare(b.bookTitle || '', undefined, { sensitivity: 'base' });
+    }
+
+    function formatAchievementDetail(item) {
+        const relativeTime = formatRelativeActivityTime(item.unlockedAt);
+        return relativeTime
+            ? `${item.bookTitle} • ${relativeTime}`
+            : item.bookTitle;
+    }
+
+    function renderAchievementsShelf() {
+        if (!elements.achievementsShelf || !elements.achievementsSummary || !elements.achievementsList) {
+            return;
+        }
+
+        if (!state.quizAvailable || !Array.isArray(state.localBooks) || state.localBooks.length === 0) {
+            hideAchievementsShelf();
+            return;
+        }
+
+        elements.achievementsShelf.classList.remove('hidden');
+
+        if (state.achievementsLoading && state.achievementsAllItems.length === 0) {
+            elements.achievementsSummary.textContent = 'Loading achievements...';
+            elements.achievementsList.innerHTML = '';
+            if (elements.achievementsViewAll) {
+                elements.achievementsViewAll.classList.add('hidden');
+            }
+            return;
+        }
+
+        elements.achievementsSummary.textContent = state.achievementsSummary
+            || 'No trophies unlocked yet. Complete quizzes to start collecting achievements.';
+
+        if (!Array.isArray(state.achievementsAllItems) || state.achievementsAllItems.length === 0) {
+            elements.achievementsList.innerHTML = '';
+            if (elements.achievementsViewAll) {
+                elements.achievementsViewAll.classList.add('hidden');
+            }
+            return;
+        }
+
+        const shelfItems = state.achievementsAllItems.slice(0, 6);
+        elements.achievementsList.innerHTML = shelfItems.map((item) => {
+            const detail = formatAchievementDetail(item);
+            return `
+                <button
+                    class="achievement-item"
+                    type="button"
+                    data-achievement-book-id="${item.bookId}"
+                    title="${escapeHtml(item.description || item.trophyTitle)}"
+                >
+                    <span class="achievement-title">${escapeHtml(item.trophyTitle)}</span>
+                    <span class="achievement-meta">${escapeHtml(detail)}</span>
+                </button>
+            `;
+        }).join('');
+
+        if (elements.achievementsViewAll) {
+            elements.achievementsViewAll.classList.toggle('hidden', state.achievementsAllItems.length <= shelfItems.length);
+        }
+
+        if (isAchievementsModalVisible()) {
+            renderAchievementsModal();
+        }
+    }
+
+    async function loadAchievementsShelf(force = false) {
+        if (state.achievementsLoading) {
+            return;
+        }
+        if (!state.quizAvailable || !Array.isArray(state.localBooks) || state.localBooks.length === 0) {
+            state.achievementsLoaded = true;
+            state.achievementsSummary = '';
+            state.achievementsItems = [];
+            state.achievementsAllItems = [];
+            renderAchievementsShelf();
+            return;
+        }
+        if (state.achievementsLoaded && !force) {
+            renderAchievementsShelf();
+            return;
+        }
+
+        state.achievementsLoading = true;
+        renderAchievementsShelf();
+
+        try {
+            const requests = state.localBooks.map(async (book) => {
+                try {
+                    const response = await fetch(`/api/quizzes/book/${encodeURIComponent(book.id)}/trophies`, {
+                        cache: 'no-store'
+                    });
+                    if (response.status === 403 || response.status === 404) {
+                        return [];
+                    }
+                    if (!response.ok) {
+                        throw new Error(`Trophy fetch failed (${response.status})`);
+                    }
+                    const trophies = await response.json();
+                    if (!Array.isArray(trophies)) {
+                        return [];
+                    }
+                    return trophies
+                        .map((trophy) => toAchievementRecord(book, trophy))
+                        .filter(Boolean);
+                } catch (error) {
+                    console.debug('Failed to load trophy data for book:', book.id, error);
+                    return [];
+                }
+            });
+
+            const results = await Promise.all(requests);
+            const combined = results.flat().sort(compareAchievementsNewestFirst);
+            const totalUnlocked = combined.length;
+            const booksWithTrophies = new Set(combined.map(item => item.bookId)).size;
+
+            state.achievementsAllItems = combined;
+            state.achievementsItems = combined.slice(0, 6);
+            state.achievementsSummary = summarizeAchievements(totalUnlocked, booksWithTrophies);
+            state.achievementsLoaded = true;
+        } finally {
+            state.achievementsLoading = false;
+            renderAchievementsShelf();
+        }
+    }
+
+    function hidePersonalizedSections() {
+        renderLocalSection(elements.continueReading, elements.continueReadingList, []);
+        renderLocalSection(elements.upNext, elements.upNextList, []);
+        renderLocalSection(elements.inProgress, elements.inProgressList, []);
+        renderLocalSection(elements.completedBooks, elements.completedBooksList, []);
+        renderLocalSection(elements.myList, elements.myListList, []);
+    }
+
+    function renderPersonalizedSections() {
+        const entries = getLocalBookEntries();
+        if (entries.length === 0) {
+            hidePersonalizedSections();
+            return;
+        }
+
+        const activeQueue = [...entries]
+            .filter(entry => !isCompletedEntry(entry))
+            .sort(compareByLibraryPriority);
+        const inProgress = activeQueue.filter(isInProgressEntry);
+        const completed = entries.filter(isCompletedEntry).sort(compareCompletedEntries);
+        const continueEntry = activeQueue[0] || null;
+        const upNext = activeQueue.slice(1, 5);
+        const myListEntries = [...entries]
+            .filter(entry => entry.favorite)
+            .sort((a, b) => a.favoriteOrderIndex - b.favoriteOrderIndex);
+
+        renderLocalSection(
+            elements.continueReading,
+            elements.continueReadingList,
+            continueEntry ? [continueEntry] : [],
+            { badge: 'Now' }
+        );
+        renderLocalSection(
+            elements.upNext,
+            elements.upNextList,
+            upNext,
+            { badge: (_entry, index) => `Next ${index + 1}` }
+        );
+        renderLocalSection(elements.inProgress, elements.inProgressList, inProgress);
+        renderLocalSection(elements.completedBooks, elements.completedBooksList, completed);
+        renderLocalSection(elements.myList, elements.myListList, myListEntries);
+    }
+
+    // Render library view
+    function renderLibrary(filter = '') {
+        const searchTerm = (filter || '').toLowerCase().trim();
+
+        if (searchTerm) {
+            hideAchievementsShelf();
+            hidePersonalizedSections();
+        } else {
+            renderAchievementsShelf();
+            void loadAchievementsShelf();
+            renderPersonalizedSections();
+        }
+
+        const discoverCatalog = searchTerm ? state.catalogBooks : getDiscoverCatalogEntries();
+
+        if (discoverCatalog.length > 0) {
+            elements.bookList.innerHTML = discoverCatalog.map(renderCatalogBookItem).join('');
             elements.allBooks.classList.remove('hidden');
             elements.noResults.classList.add('hidden');
         } else if (searchTerm) {
@@ -1600,6 +2444,8 @@
         // Save to localStorage and recently read
         localStorage.setItem(STORAGE_KEYS.LAST_BOOK, book.id);
         addToRecentlyRead(book.id);
+        markBookOpened(book);
+        state.lastBookActivitySignature = '';
 
         // Switch to reader view
         elements.libraryView.classList.add('hidden');
@@ -1613,6 +2459,7 @@
             elements.bookAuthor.textContent = author;
             elements.bookAuthor.classList.toggle('hidden', author.length === 0);
         }
+        updateFavoriteUi();
         renderSearchChapterFilterOptions();
 
         await ttsCheckAvailability();
@@ -2146,6 +2993,7 @@
     function renderPage() {
         localStorage.setItem(STORAGE_KEYS.LAST_PAGE, state.currentPage);
         localStorage.setItem(STORAGE_KEYS.LAST_PARAGRAPH, state.currentParagraphIndex);
+        persistCurrentBookActivity();
 
         if (state.paragraphs.length === 0) {
             elements.columnLeft.innerHTML = '<p class="no-content">No content available</p>';
@@ -3314,6 +4162,8 @@
 
     // Back to library
     function backToLibrary() {
+        persistCurrentBookActivity();
+        state.lastBookActivitySignature = '';
         ttsStop();
         closeMobileHeaderMenu();
         closeChapterRecapOverlay(false);
@@ -3356,7 +4206,10 @@
             elements.searchChapterFilter.value = '';
         }
         elements.librarySearch.value = '';
+        state.achievementsLoaded = false;
+        state.achievementsAllItems = [];
         renderLibrary();
+        updateFavoriteUi();
         elements.librarySearch.focus();
     }
 
@@ -5039,6 +5892,7 @@
     }
 
     async function quizCheckAvailability() {
+        const wasQuizAvailable = state.quizAvailable;
         try {
             const statusUrl = state.currentBook?.id
                 ? `/api/quizzes/book/${state.currentBook.id}/status`
@@ -5056,10 +5910,28 @@
             state.quizGenerationAvailable = false;
             state.quizCacheOnly = false;
         }
+        if (state.quizAvailable && !wasQuizAvailable) {
+            // Force a fresh trophy read when quiz support becomes available after startup checks.
+            state.achievementsLoaded = false;
+            state.achievementsLoading = false;
+            state.achievementsSummary = '';
+            state.achievementsItems = [];
+            state.achievementsAllItems = [];
+        }
+        if (!state.quizAvailable) {
+            state.achievementsLoaded = true;
+            state.achievementsLoading = false;
+            state.achievementsSummary = '';
+            state.achievementsItems = [];
+            state.achievementsAllItems = [];
+        }
         updateRecapOptOutControl();
         updateCacheOnlyIndicator();
         setQuizControls();
         updateMobileHeaderMenuState();
+        if (!state.currentBook && elements.libraryView && !elements.libraryView.classList.contains('hidden')) {
+            renderLibrary(elements.librarySearch?.value || '');
+        }
     }
 
     function trackRecapAnalytics(eventType) {
@@ -5670,17 +6542,60 @@
             }, 300);
         });
 
-        // Recently read book selection (local books)
-        elements.recentlyReadList.addEventListener('click', async (e) => {
-            const bookItem = e.target.closest('.book-item');
-            if (bookItem) {
-                const bookId = bookItem.dataset.bookId;
-                const book = state.localBooks.find(b => b.id === bookId);
-                if (book) {
-                    await selectBook(book);
+        // Personalized/local book selection
+        elements.libraryView.addEventListener('click', async (e) => {
+            const achievementItem = e.target.closest('[data-achievement-book-id]');
+            if (achievementItem && elements.libraryView.contains(achievementItem)) {
+                const achievementBookId = achievementItem.dataset.achievementBookId;
+                const achievementBook = state.localBooks.find(b => b.id === achievementBookId);
+                if (achievementBook) {
+                await selectBook(achievementBook);
                 }
+                return;
+            }
+
+            const favoriteToggle = e.target.closest('[data-favorite-toggle="true"]');
+            if (favoriteToggle && elements.libraryView.contains(favoriteToggle)) {
+                e.preventDefault();
+                e.stopPropagation();
+                const favoriteBookId = favoriteToggle.dataset.bookId;
+                toggleBookFavorite(favoriteBookId, { rerenderLibrary: true, showToast: true });
+                return;
+            }
+
+            const bookItem = e.target.closest('.book-item[data-book-id]');
+            if (!bookItem || !elements.libraryView.contains(bookItem)) {
+                return;
+            }
+            const bookId = bookItem.dataset.bookId;
+            const book = state.localBooks.find(b => b.id === bookId);
+            if (book) {
+                await selectBook(book);
             }
         });
+        if (elements.achievementsViewAll) {
+            elements.achievementsViewAll.addEventListener('click', () => {
+                openAchievementsModal();
+            });
+        }
+        if (elements.achievementsModalClose) {
+            elements.achievementsModalClose.addEventListener('click', closeAchievementsModal);
+        }
+        if (elements.achievementsModalBackdrop) {
+            elements.achievementsModalBackdrop.addEventListener('click', closeAchievementsModal);
+        }
+        if (elements.achievementsModalList) {
+            elements.achievementsModalList.addEventListener('click', async (e) => {
+                const item = e.target.closest('[data-achievement-book-id]');
+                if (!item) return;
+                const achievementBookId = item.dataset.achievementBookId;
+                const achievementBook = state.localBooks.find(b => b.id === achievementBookId);
+                if (achievementBook) {
+                    closeAchievementsModal();
+                    await selectBook(achievementBook);
+                }
+            });
+        }
 
         // Catalog book selection (may need import)
         elements.bookList.addEventListener('click', async (e) => {
@@ -5707,6 +6622,12 @@
 
         // Back to library
         elements.backToLibrary.addEventListener('click', backToLibrary);
+        if (elements.favoriteToggle) {
+            elements.favoriteToggle.addEventListener('click', () => {
+                if (!state.currentBook?.id) return;
+                toggleBookFavorite(state.currentBook.id, { rerenderLibrary: true, showToast: true });
+            });
+        }
 
         if (elements.annotationMenuToggle) {
             elements.annotationMenuToggle.addEventListener('click', (e) => {
@@ -5857,6 +6778,13 @@
             elements.mobileMenuBookmarks.addEventListener('click', () => {
                 closeMobileHeaderMenu();
                 showBookmarksOverlay();
+            });
+        }
+        if (elements.mobileMenuFavorite) {
+            elements.mobileMenuFavorite.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                if (!state.currentBook?.id) return;
+                toggleBookFavorite(state.currentBook.id, { rerenderLibrary: true, showToast: true });
             });
         }
         if (elements.mobileMenuRecapEnable) {
@@ -6371,6 +7299,14 @@
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     closeAuthModal();
+                }
+                return;
+            }
+
+            if (isAchievementsModalVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeAchievementsModal();
                 }
                 return;
             }

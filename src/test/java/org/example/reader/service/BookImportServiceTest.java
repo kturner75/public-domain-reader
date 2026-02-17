@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -58,6 +59,8 @@ class BookImportServiceTest {
         assertEquals(1, results.get(0).gutenbergId());
         assertEquals("Pride and Prejudice", results.get(0).title());
         assertEquals("Jane Austen", results.get(0).author());
+        assertEquals(List.of("Fiction"), results.get(0).subjects());
+        assertEquals(List.of("Classics Bookshelf"), results.get(0).bookshelves());
         assertFalse(results.get(0).alreadyImported());
     }
 
@@ -147,6 +150,28 @@ class BookImportServiceTest {
 
         assertEquals(1, results.size());
         verify(gutendexClient).getPopularBooks(2);
+    }
+
+    @Test
+    void searchGutenbergSanitizesSubjectAndBookshelfMetadata() {
+        GutendexBook book = new GutendexBook(
+            5,
+            "Metadata Test",
+            List.of(new GutendexBook.Author("Author", null, null)),
+            Arrays.asList("Adventure stories", " ", "Adventure stories", "Sea stories"),
+            Arrays.asList("Classics", null, "Classics", "Travel"),
+            List.of("en"),
+            Map.of("text/html", "http://example.com/book.html"),
+            100
+        );
+        when(gutendexClient.searchBooks("metadata")).thenReturn(new GutendexResponse(1, null, null, List.of(book)));
+        when(bookStorageService.existsBySource("gutenberg", "5")).thenReturn(false);
+
+        List<SearchResult> results = bookImportService.searchGutenberg("metadata");
+
+        assertEquals(1, results.size());
+        assertEquals(List.of("Adventure stories", "Sea stories"), results.get(0).subjects());
+        assertEquals(List.of("Classics", "Travel"), results.get(0).bookshelves());
     }
 
     @Test
@@ -269,7 +294,7 @@ class BookImportServiceTest {
         return new GutendexBook(
             id, title,
             List.of(new GutendexBook.Author(author, null, null)),
-            List.of("Fiction"), List.of(), List.of("en"),
+            List.of("Fiction"), List.of("Classics Bookshelf"), List.of("en"),
             Map.of("text/html", "http://gutenberg.org/files/" + id + "/" + id + "-h.htm"),
             1000
         );
