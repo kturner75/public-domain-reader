@@ -21,7 +21,25 @@
                     <path d="M21 21l-4.35-4.35"/>
                 </svg>
                 <input type="text" id="library-search" class="library-search" placeholder="Search by title or author..." autofocus />
+                <button id="library-search-submit" class="library-search-submit" type="button">Search</button>
             </div>
+            <div id="library-search-status" class="library-search-status hidden" role="status" aria-live="polite"></div>
+            <div id="library-search-error" class="inline-error hidden" role="status" aria-live="polite">
+                <span id="library-search-error-message"></span>
+                <button id="library-search-retry" class="inline-error-btn hidden" type="button">Retry</button>
+            </div>
+            <section id="classroom-banner" class="classroom-banner hidden">
+                <div id="classroom-label" class="classroom-label"></div>
+                <div id="classroom-feature-summary" class="classroom-feature-summary"></div>
+            </section>
+            <section id="classroom-assignments" class="library-section hidden">
+                <div class="section-title-row">
+                    <h2 class="section-title">Assignments</h2>
+                    <span id="classroom-assignments-label" class="classroom-assignments-label"></span>
+                </div>
+                <div id="classroom-assignments-list" class="book-list"></div>
+                <p id="classroom-assignments-empty" class="classroom-assignments-empty hidden">No active assignments.</p>
+            </section>
             <section id="achievements-shelf" class="library-section hidden">
                 <div class="section-title-row">
                     <h2 class="section-title">Achievements</h2>

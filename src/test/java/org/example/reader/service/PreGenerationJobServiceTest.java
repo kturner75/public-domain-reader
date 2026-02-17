@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -69,7 +70,7 @@ class PreGenerationJobServiceTest {
 
     @Test
     void cancelJob_runningJob_marksCancelled() throws Exception {
-        when(preGenerationService.preGenerateForBook("book-1")).thenAnswer(invocation -> {
+        lenient().when(preGenerationService.preGenerateForBook("book-1")).thenAnswer(invocation -> {
             try {
                 Thread.sleep(10_000L);
             } catch (InterruptedException e) {
