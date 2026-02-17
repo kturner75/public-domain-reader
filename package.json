@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Playwright tests for reader frontend retry flows",
   "scripts": {
+    "frontend:test": "node --test src/test/frontend/*.test.cjs",
     "e2e:test": "playwright test",
     "e2e:test:headed": "playwright test --headed",
     "e2e:install": "playwright install chromium"

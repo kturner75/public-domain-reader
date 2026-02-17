@@ -47,7 +47,7 @@ html, body {
 }
 
 .library-container {
-    max-width: 500px;
+    max-width: 760px;
     margin: 0 auto;
     width: 100%;
 }
@@ -58,6 +58,13 @@ html, body {
     margin-bottom: 1.5rem;
     letter-spacing: 0.02em;
     text-align: center;
+}
+
+.library-subtitle {
+    text-align: center;
+    color: var(--muted-color);
+    margin-bottom: 1.5rem;
+    font-size: 1.02rem;
 }
 
 .library-search-container {
@@ -105,8 +112,82 @@ html, body {
     margin-bottom: 0.75rem;
 }
 
-.recently-read {
+.section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.section-title-row .section-title {
+    margin-bottom: 0;
+}
+
+.library-section {
     margin-bottom: 2rem;
+}
+
+.achievements-summary {
+    color: var(--muted-color);
+    font-size: 0.9rem;
+    margin-bottom: 0.58rem;
+}
+
+.achievements-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.achievement-item {
+    border: 1px solid #d7c6a0;
+    border-radius: 10px;
+    background: #fbf4e4;
+    color: #57472b;
+    min-width: 0;
+    text-align: left;
+    padding: 0.42rem 0.56rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.achievement-item:hover {
+    border-color: #b89e62;
+    background: #f6edd9;
+}
+
+.achievements-view-all {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-color);
+    font-family: var(--font-serif);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.14rem 0.52rem;
+    cursor: pointer;
+}
+
+.achievements-view-all:hover {
+    color: var(--text-color);
+    background: var(--highlight-color);
+    border-color: var(--muted-color);
+}
+
+.achievement-title {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.achievement-meta {
+    display: block;
+    font-size: 0.72rem;
+    color: #7c6d52;
+    margin-top: 0.12rem;
 }
 
 .book-list {
@@ -121,6 +202,7 @@ html, body {
     border-radius: 4px;
     cursor: pointer;
     transition: background-color 0.2s, border-color 0.2s;
+    background: rgba(255, 255, 255, 0.46);
 }
 
 .book-item:hover {
@@ -134,10 +216,120 @@ html, body {
     margin-bottom: 0.2rem;
 }
 
+.book-item-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    justify-content: space-between;
+}
+
+.book-item-title-row .book-item-title {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 0;
+}
+
+.book-item-favorite-btn {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-color);
+    font-family: var(--font-serif);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.14rem 0.52rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.book-item-favorite-btn:hover {
+    border-color: #9a8a5c;
+    color: #5f5336;
+    background: #f8f1de;
+}
+
+.book-item-favorite-btn.active {
+    border-color: #b6a069;
+    color: #5c4e2f;
+    background: #f5ecd3;
+}
+
 .book-item-author {
     font-size: 0.95rem;
     color: var(--muted-color);
     font-style: italic;
+}
+
+.book-item-progress {
+    margin-top: 0.4rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.book-progress-chip {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.08rem 0.46rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted-color);
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.book-progress-chip-status.status-in-progress {
+    color: #5c4e2f;
+    border-color: #c6b185;
+    background: #f7eed9;
+}
+
+.book-progress-chip-status.status-completed {
+    color: #2f6f44;
+    border-color: #9cc3a8;
+    background: #eef7ef;
+}
+
+.book-progress-chip-status.status-not-started {
+    color: #5f6469;
+    border-color: #c7ccd1;
+    background: #f2f4f6;
+}
+
+.book-item-meta {
+    margin-top: 0.28rem;
+    font-size: 0.82rem;
+    color: var(--muted-color);
+}
+
+.book-item-discover-reason {
+    margin-top: 0.34rem;
+    font-size: 0.78rem;
+    color: #5f5336;
+    background: rgba(246, 238, 221, 0.82);
+    border: 1px solid #d6c7a1;
+    border-radius: 6px;
+    padding: 0.2rem 0.46rem;
+    display: inline-block;
+}
+
+.book-item-badge {
+    display: inline-block;
+    margin-left: 0.48rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    color: var(--text-color);
+}
+
+#continue-reading .book-item {
+    border-color: #c4b89f;
+    box-shadow: 0 5px 18px rgba(96, 80, 43, 0.08);
 }
 
 .no-results {
@@ -313,6 +505,21 @@ html, body {
     font-size: 0.74rem;
     letter-spacing: 0.02em;
     min-width: 5rem;
+}
+
+.favorite-toggle {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+    min-width: 7.2rem;
+}
+
+.favorite-toggle.saved {
+    color: #5c4e2f;
+    border-color: #b6a069;
+    background: #f5ecd3;
 }
 
 .auth-toggle.authenticated {
@@ -1356,6 +1563,54 @@ kbd {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+}
+
+.achievements-modal-card {
+    width: min(560px, 92vw);
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.achievements-modal-list {
+    margin-top: 0.3rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    max-height: 58vh;
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.45);
+}
+
+.achievements-modal-item {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    text-align: left;
+    padding: 0.62rem 0.72rem;
+    color: var(--text-color);
+    cursor: pointer;
+}
+
+.achievements-modal-item:last-child {
+    border-bottom: none;
+}
+
+.achievements-modal-item:hover {
+    background: var(--highlight-color);
+}
+
+.achievements-modal-item-title {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.achievements-modal-item-subtitle {
+    display: block;
+    margin-top: 0.16rem;
+    color: var(--muted-color);
+    font-size: 0.78rem;
 }
 
 /* Chapter list overlay */
@@ -2718,6 +2973,76 @@ kbd {
 }
 
 @media (max-width: 960px) {
+    #library-view {
+        padding: 1rem 0.9rem 1.3rem;
+    }
+
+    .library-container {
+        max-width: 100%;
+    }
+
+    .library-title {
+        font-size: 2.05rem;
+        margin-bottom: 0.65rem;
+    }
+
+    .library-subtitle {
+        font-size: 0.95rem;
+        margin-bottom: 1rem;
+    }
+
+    .library-search-container {
+        margin-bottom: 1.25rem;
+    }
+
+    .library-section {
+        margin-bottom: 1.25rem;
+    }
+
+    .book-item {
+        padding: 0.82rem 0.95rem;
+    }
+
+    .book-item-title {
+        font-size: 1.03rem;
+    }
+
+    .book-item-author {
+        font-size: 0.86rem;
+    }
+
+    .book-item-meta {
+        font-size: 0.76rem;
+    }
+
+    .book-progress-chip {
+        font-size: 0.6rem;
+        padding: 0.08rem 0.42rem;
+    }
+
+    .book-item-favorite-btn {
+        font-size: 0.62rem;
+        padding: 0.12rem 0.45rem;
+    }
+
+    .achievements-summary {
+        font-size: 0.82rem;
+        margin-bottom: 0.42rem;
+    }
+
+    .achievements-list {
+        gap: 0.35rem;
+    }
+
+    .achievement-item {
+        width: 100%;
+    }
+
+    .achievements-view-all {
+        font-size: 0.64rem;
+        padding: 0.12rem 0.44rem;
+    }
+
     #reader-view {
         padding: 0.9rem;
     }
