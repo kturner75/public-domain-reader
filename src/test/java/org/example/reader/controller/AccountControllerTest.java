@@ -3,6 +3,7 @@ package org.example.reader.controller;
 import org.example.reader.model.AccountStateSnapshot;
 import org.example.reader.service.AccountAuthService;
 import org.example.reader.service.AccountClaimSyncService;
+import org.example.reader.service.AccountMetricsService;
 import org.example.reader.service.ReaderProfileService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,9 @@ class AccountControllerTest {
 
     @MockitoBean
     private AccountClaimSyncService accountClaimSyncService;
+
+    @MockitoBean
+    private AccountMetricsService accountMetricsService;
 
     @Test
     void status_returnsUnauthenticatedWhenNoSession() throws Exception {
@@ -80,6 +84,26 @@ class AccountControllerTest {
                                 """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message", is("Email is already registered.")));
+    }
+
+    @Test
+    void register_rolloutRestricted_returnsForbidden() throws Exception {
+        when(accountAuthService.register(eq("reader@example.com"), eq("password123"), any()))
+                .thenReturn(new AccountAuthService.AuthResult(
+                        AccountAuthService.ResultStatus.ROLLOUT_RESTRICTED,
+                        true,
+                        false,
+                        null,
+                        "Account access is currently limited to internal rollout users."
+                ));
+
+        mockMvc.perform(post("/api/account/register")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"reader@example.com","password":"password123"}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message", is("Account access is currently limited to internal rollout users.")));
     }
 
     @Test

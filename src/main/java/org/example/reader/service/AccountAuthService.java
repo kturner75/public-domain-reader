@@ -7,6 +7,8 @@ import org.example.reader.entity.UserEntity;
 import org.example.reader.entity.UserSessionEntity;
 import org.example.reader.repository.UserRepository;
 import org.example.reader.repository.UserSessionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
@@ -21,19 +23,24 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 @Service
 public class AccountAuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AccountAuthService.class);
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
     private final boolean enabled;
+    private final RolloutMode rolloutMode;
+    private final Set<String> rolloutAllowedEmails;
     private final String cookieName;
     private final int sessionTtlMinutes;
     private final boolean secureCookie;
@@ -46,6 +53,8 @@ public class AccountAuthService {
             UserRepository userRepository,
             UserSessionRepository userSessionRepository,
             @Value("${account.auth.enabled:false}") boolean enabled,
+            @Value("${account.auth.rollout.mode:optional}") String rolloutModeRaw,
+            @Value("${account.auth.rollout.allowed-emails:}") String rolloutAllowedEmailsRaw,
             @Value("${account.auth.cookie-name:pdr_account_session}") String cookieName,
             @Value("${account.auth.session.ttl-minutes:43200}") int sessionTtlMinutes,
             @Value("${account.auth.secure-cookie:false}") boolean secureCookie,
@@ -54,16 +63,23 @@ public class AccountAuthService {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
         this.enabled = enabled;
+        this.rolloutMode = RolloutMode.fromConfig(rolloutModeRaw);
+        this.rolloutAllowedEmails = parseAllowedEmails(rolloutAllowedEmailsRaw);
         this.cookieName = (cookieName == null || cookieName.isBlank()) ? "pdr_account_session" : cookieName;
         this.sessionTtlMinutes = Math.max(15, sessionTtlMinutes);
         this.secureCookie = secureCookie;
         this.minPasswordLength = Math.max(8, minPasswordLength);
         this.bcryptStrength = Math.min(14, Math.max(10, bcryptStrength));
+        log.info(
+                "Reader account auth initialized: enabled={}, rolloutMode={}, allowListSize={}",
+                enabled,
+                this.rolloutMode.value(),
+                this.rolloutAllowedEmails.size());
     }
 
     @Transactional
     public AuthResult register(String email, String password, HttpServletResponse response) {
-        if (!enabled) {
+        if (!isRolloutEnabled()) {
             return disabledResult();
         }
 
@@ -76,6 +92,9 @@ public class AccountAuthService {
                     ResultStatus.INVALID_PASSWORD,
                     enabled,
                     "Password must be at least " + minPasswordLength + " characters.");
+        }
+        if (!isEmailAllowedForRollout(normalizedEmail)) {
+            return rolloutRestrictedResult();
         }
 
         if (userRepository.findByEmail(normalizedEmail).isPresent()) {
@@ -99,13 +118,16 @@ public class AccountAuthService {
 
     @Transactional
     public AuthResult login(String email, String password, HttpServletResponse response) {
-        if (!enabled) {
+        if (!isRolloutEnabled()) {
             return disabledResult();
         }
 
         String normalizedEmail = normalizeEmail(email);
         if (normalizedEmail == null || password == null || password.isBlank()) {
             return AuthResult.error(ResultStatus.INVALID_CREDENTIALS, enabled, "Invalid email or password.");
+        }
+        if (!isEmailAllowedForRollout(normalizedEmail)) {
+            return rolloutRestrictedResult();
         }
 
         Optional<UserEntity> userOptional = userRepository.findByEmail(normalizedEmail);
@@ -125,7 +147,7 @@ public class AccountAuthService {
 
     @Transactional
     public AuthResult logout(HttpServletRequest request, HttpServletResponse response) {
-        if (!enabled) {
+        if (!isRolloutEnabled()) {
             writeSessionCookie(response, "", 0);
             return new AuthResult(ResultStatus.DISABLED, false, false, null, "Account auth is disabled.");
         }
@@ -141,7 +163,7 @@ public class AccountAuthService {
 
     @Transactional
     public AuthResult status(HttpServletRequest request) {
-        if (!enabled) {
+        if (!isRolloutEnabled()) {
             return new AuthResult(ResultStatus.DISABLED, false, false, null, "Account auth is disabled.");
         }
 
@@ -156,7 +178,7 @@ public class AccountAuthService {
 
     @Transactional
     public Optional<AccountPrincipal> resolveAuthenticatedPrincipal(HttpServletRequest request) {
-        if (!enabled) {
+        if (!isRolloutEnabled()) {
             return Optional.empty();
         }
         return resolveAuthenticatedPrincipalInternal(request);
@@ -181,11 +203,22 @@ public class AccountAuthService {
         }
 
         UserEntity user = session.getUser();
+        if (!isEmailAllowedForRollout(user.getEmail())) {
+            userSessionRepository.deleteByTokenHash(tokenHash);
+            return Optional.empty();
+        }
         return Optional.of(new AccountPrincipal(user.getId(), user.getEmail()));
     }
 
     private AuthResult disabledResult() {
         return new AuthResult(ResultStatus.DISABLED, false, false, null, "Account auth is disabled.");
+    }
+
+    private AuthResult rolloutRestrictedResult() {
+        return AuthResult.error(
+                ResultStatus.ROLLOUT_RESTRICTED,
+                true,
+                "Account access is currently limited to internal rollout users.");
     }
 
     private void createSession(UserEntity user, HttpServletResponse response) {
@@ -236,6 +269,50 @@ public class AccountAuthService {
         return password != null && password.length() >= minPasswordLength;
     }
 
+    public boolean isAccountAuthEnabled() {
+        return isRolloutEnabled();
+    }
+
+    public String getRolloutMode() {
+        return rolloutMode.value();
+    }
+
+    public boolean isAccountRequired() {
+        return isRolloutEnabled() && rolloutMode == RolloutMode.REQUIRED;
+    }
+
+    private boolean isRolloutEnabled() {
+        return enabled && rolloutMode != RolloutMode.DISABLED;
+    }
+
+    private boolean isEmailAllowedForRollout(String normalizedEmail) {
+        if (rolloutMode != RolloutMode.INTERNAL) {
+            return true;
+        }
+        if (normalizedEmail == null || normalizedEmail.isBlank()) {
+            return false;
+        }
+        if (rolloutAllowedEmails.isEmpty()) {
+            return false;
+        }
+        return rolloutAllowedEmails.contains(normalizedEmail);
+    }
+
+    private Set<String> parseAllowedEmails(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Set.of();
+        }
+        Set<String> parsed = new LinkedHashSet<>();
+        String[] parts = raw.split(",");
+        for (String part : parts) {
+            String normalized = normalizeEmail(part);
+            if (normalized != null) {
+                parsed.add(normalized);
+            }
+        }
+        return Set.copyOf(parsed);
+    }
+
     private String normalizeEmail(String email) {
         if (email == null) {
             return null;
@@ -274,10 +351,42 @@ public class AccountAuthService {
     public enum ResultStatus {
         SUCCESS,
         DISABLED,
+        ROLLOUT_RESTRICTED,
         INVALID_EMAIL,
         INVALID_PASSWORD,
         INVALID_CREDENTIALS,
         EMAIL_ALREADY_EXISTS
+    }
+
+    enum RolloutMode {
+        DISABLED("disabled"),
+        INTERNAL("internal"),
+        OPTIONAL("optional"),
+        REQUIRED("required");
+
+        private final String value;
+
+        RolloutMode(String value) {
+            this.value = value;
+        }
+
+        String value() {
+            return value;
+        }
+
+        static RolloutMode fromConfig(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return OPTIONAL;
+            }
+            String normalized = raw.trim().toLowerCase(Locale.ROOT);
+            return switch (normalized) {
+                case "disabled" -> DISABLED;
+                case "internal" -> INTERNAL;
+                case "optional" -> OPTIONAL;
+                case "required" -> REQUIRED;
+                default -> OPTIONAL;
+            };
+        }
     }
 
     public record AuthResult(

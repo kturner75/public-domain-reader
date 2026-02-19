@@ -122,6 +122,8 @@
         accountAuthEnabled: false,
         accountAuthenticated: false,
         accountEmail: null,
+        accountRolloutMode: 'optional',
+        accountRequired: false,
         accountClaimSyncedFor: null,
         accountSyncInFlight: false,
         lastBookActivitySignature: '',
@@ -1288,9 +1290,17 @@
                 : 'Reader Account';
         }
         if (elements.accountLibraryStatus) {
-            const showStatus = showAccount && state.accountAuthenticated && !!state.accountEmail;
+            const requiredSignIn = showAccount && state.accountRequired && !state.accountAuthenticated;
+            const showStatus = showAccount && (
+                (state.accountAuthenticated && !!state.accountEmail)
+                || requiredSignIn
+            );
             elements.accountLibraryStatus.classList.toggle('hidden', !showStatus);
-            elements.accountLibraryStatus.textContent = showStatus ? `Signed in as ${state.accountEmail}` : '';
+            elements.accountLibraryStatus.textContent = showStatus
+                ? (state.accountAuthenticated
+                    ? `Signed in as ${state.accountEmail}`
+                    : 'Account sign-in is required for this rollout.')
+                : '';
         }
         updateMobileHeaderMenuState();
     }
@@ -1334,7 +1344,9 @@
 
         setAccountStatusMessage(message || (authenticated
             ? 'Your account is active in this browser.'
-            : 'Sign in or register to sync your reader data.'));
+            : (state.accountRequired
+                ? 'Sign in is required in this rollout.'
+                : 'Sign in or register to sync your reader data.')));
     }
 
     function closeAccountModal() {
@@ -1502,6 +1514,10 @@
             state.accountAuthEnabled = status.accountAuthEnabled === true;
             state.accountAuthenticated = status.authenticated === true;
             state.accountEmail = typeof status.email === 'string' ? status.email : null;
+            state.accountRolloutMode = typeof status.rolloutMode === 'string'
+                ? status.rolloutMode
+                : 'optional';
+            state.accountRequired = status.accountRequired === true;
 
             if (!state.accountAuthenticated) {
                 state.accountClaimSyncedFor = null;

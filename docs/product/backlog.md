@@ -6,9 +6,9 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-021.5 - Client Sign-In + One-Time Claim/Sync` (`Done`, delivered reader account auth UI, one-time claim-sync, and user-scoped reader data ownership).
+- Most recent completed slice: `BL-021.6 - Flagged Rollout + Verification` (`Done`, delivered staged account rollout flags, account migration telemetry, and E2E coverage for register/login/logout + anonymous->account claim-sync flow).
 - Most recent shipped hardening (2026-02-19): refined public-mode auth UX (prevent background generation calls from triggering collaborator prompts), fixed book-delete FK failures by explicitly cleaning dependent recap/quiz/illustration/attempt/trophy records before deleting a book, and streamlined reader header controls (compact desktop search + safer Escape behavior that no longer exits to landing).
-- Active priority work: `None currently in progress`; next BL-021 execution target is `BL-021.6 - Flagged Rollout + Verification` (`Proposed`) and next P1 candidate for additional scoping remains `BL-025` (`Discovery`).
+- Active priority work: `None currently in progress`; next P1 candidate for additional scoping remains `BL-025` (`Discovery`).
 
 ## Discovery Epics (Pending Product Discussion)
 
@@ -134,7 +134,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Feature
 - Priority: P1
 - Effort: XL
-- Status: In Progress
+- Status: Done
 - Problem: User-specific progress and personalization cannot reliably persist across devices without accounts.
 - Scope Buckets:
 - Authentication and session architecture.
@@ -177,7 +177,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 | BL-021.3 Identity Resolution Layer | Done | Add shared resolver that maps requests to authenticated `userId` or fallback anonymous `readerId` and wire into reader-scoped APIs | Reader-scoped endpoints consistently resolve identity with backward-compatible anonymous behavior |
 | BL-021.4 Data Model Migration for User Scope | Done | Add `user_id` ownership to annotations/progress/quiz/trophy persistence paths and update unique/index constraints + repositories/services | Per-user progress/annotations/trophies are isolated and queryable without regressions |
 | BL-021.5 Client Sign-In + One-Time Claim/Sync | Done | Add reader account UI flow and one-time local/cookie data claim-sync on first sign-in with deterministic conflict handling | First sign-in migrates user data predictably and preserves existing local experience |
-| BL-021.6 Flagged Rollout + Verification | Proposed | Add feature flags, migration telemetry, and E2E coverage for register/login/logout + anonymous->account migration | Internal rollout succeeds with passing test suite and no critical migration defects |
+| BL-021.6 Flagged Rollout + Verification | Done | Add feature flags, migration telemetry, and E2E coverage for register/login/logout + anonymous->account migration | Internal rollout succeeds with passing test suite and no critical migration defects |
 - Dependency Notes:
 - BL-025.2 onward depends on BL-021 foundations (account identity and enrollment-capable user model).
 - BL-021 must not regress existing `/api/auth` collaborator access used for public-mode sensitive endpoint control.
@@ -194,6 +194,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - 2026-02-19: Fixed reader header/account interaction issues by moving reader account modal visibility out of reader-only container scope, reducing redundant auth controls in desktop header, and introducing compact-expand desktop search behavior.
 - 2026-02-19: Fixed book deletion reliability by cleaning dependent chapter/book child data (`chapter_recaps`, `chapter_quizzes`, `illustrations`, `quiz_attempts`, `quiz_trophies`, plus other generation records) before deleting books, avoiding FK-blocked deletes for malformed imports.
 - 2026-02-19: Removed global `Escape` shortcut that forced back-to-library navigation to prevent accidental reader exits during search/navigation flows.
+- 2026-02-19: Completed BL-021.6 by adding staged account rollout controls (`account.auth.rollout.mode` with internal allow-list support), wiring migration/auth telemetry into `/health/details` (`accountMetrics`), extending account status payload with rollout metadata, and adding Playwright E2E coverage for register/login/logout plus anonymous-to-account claim-sync behavior.
 
 ### BL-022 - Reader Chapter Summary Feedback (AI Coach)
 - Type: Feature
@@ -462,6 +463,20 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - 2026-02-15: Added `/health/details` with provider availability, queue processor health, per-pipeline queue depths, global generation status snapshot, and recap/quiz metric snapshots.
 - 2026-02-15: Added quiz observability metrics (`generationRequested`, `generationCompleted`, `generationFallbackCompleted`, `generationFailed`, `generationAverageLatencyMs`, read failure counters) and exposed quiz queue depth/processor state in `/api/quizzes/status`.
 
+### BL-028 - Account auth endpoint hardening
+- Type: Tech Debt
+- Priority: P1
+- Effort: M
+- Status: Proposed
+- Problem: Reader account endpoints currently lack dedicated anti-abuse throttling and structured auth audit events required by the BL-021 security ADR.
+- Acceptance Criteria:
+- Add per-IP and per-email rate limiting for `/api/account/register` and `/api/account/login` with explicit `429` responses and `Retry-After` headers.
+- Add temporary lockout/backoff for repeated invalid account credentials to reduce brute-force risk.
+- Emit structured non-PII account auth audit events for register/login/logout/claim-sync outcomes, including rollout-restricted attempts.
+- Add controller/service tests that cover throttle/lockout behavior and audit event emission paths.
+- Notes/Dependencies:
+- Align implementation with `docs/product/bl-021-auth-architecture-adr.md` section `4. Enforce baseline account security controls`.
+
 ### BL-023 - Adaptive mobile reader experience
 - Type: Feature
 - Priority: P1
@@ -632,3 +647,27 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Support one additional source (EPUB or Standard Ebooks).
 - Normalize metadata/chapters into existing schema.
 - Preserve source attribution and de-dup behavior.
+
+### BL-026 - Site branding logo
+- Type: Improvement
+- Priority: P2
+- Effort: S
+- Status: Proposed
+- Problem: The site lacks clear visual branding in the primary header and landing context.
+- Acceptance Criteria:
+- Display a site logo in the header on landing and reader views without breaking responsive layout.
+- Support the provided logo image asset with appropriate alt text and loading behavior.
+- Keep existing navigation/search/account controls fully functional on desktop and mobile after logo integration.
+- Notes/Dependencies:
+- Use the provided image file from product/design for final asset integration.
+
+### BL-027 - Reader support CTA (Buy Me a Coffee)
+- Type: Feature
+- Priority: P2
+- Effort: S
+- Status: Proposed
+- Problem: Readers currently have no direct way to financially support the project from the UI.
+- Acceptance Criteria:
+- Add a visible `Buy Me a Coffee` CTA that opens the configured support URL in a new tab.
+- Ensure CTA placement is accessible and does not interfere with core reading/navigation actions on mobile or desktop.
+- Provide a configuration path for support URL/visibility so deployments can enable, disable, or change destination without code edits.

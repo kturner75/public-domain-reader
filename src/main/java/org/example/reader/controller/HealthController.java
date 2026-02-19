@@ -3,6 +3,8 @@ package org.example.reader.controller;
 import jakarta.servlet.http.HttpServletRequest;
 import org.example.reader.config.RequestCorrelation;
 import org.example.reader.model.GenerationJobStatusResponse;
+import org.example.reader.service.AccountAuthService;
+import org.example.reader.service.AccountMetricsService;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.ChapterRecapChatService;
 import org.example.reader.service.ChapterRecapService;
@@ -20,12 +22,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
 public class HealthController {
 
     private final GenerationJobStatusService generationJobStatusService;
+    private final AccountAuthService accountAuthService;
+    private final AccountMetricsService accountMetricsService;
     private final ChapterQuizService chapterQuizService;
     private final ChapterRecapService chapterRecapService;
     private final ChapterRecapChatService chapterRecapChatService;
@@ -41,6 +46,8 @@ public class HealthController {
 
     public HealthController(
             GenerationJobStatusService generationJobStatusService,
+            AccountAuthService accountAuthService,
+            AccountMetricsService accountMetricsService,
             ChapterQuizService chapterQuizService,
             ChapterRecapService chapterRecapService,
             ChapterRecapChatService chapterRecapChatService,
@@ -54,6 +61,8 @@ public class HealthController {
             QuizMetricsService quizMetricsService,
             RecapMetricsService recapMetricsService) {
         this.generationJobStatusService = generationJobStatusService;
+        this.accountAuthService = accountAuthService;
+        this.accountMetricsService = accountMetricsService;
         this.chapterQuizService = chapterQuizService;
         this.chapterRecapService = chapterRecapService;
         this.chapterRecapChatService = chapterRecapChatService;
@@ -103,6 +112,11 @@ public class HealthController {
                 && queues.recapQueueProcessorRunning()
                 && queues.quizQueueProcessorRunning();
 
+        Map<String, Object> accountMetrics = new LinkedHashMap<>(accountMetricsService.snapshot());
+        accountMetrics.put("accountAuthEnabled", accountAuthService.isAccountAuthEnabled());
+        accountMetrics.put("rolloutMode", accountAuthService.getRolloutMode());
+        accountMetrics.put("accountRequired", accountAuthService.isAccountRequired());
+
         return new HealthDetails(
                 queueProcessorsHealthy ? "ok" : "degraded",
                 queueProcessorsHealthy,
@@ -111,7 +125,8 @@ public class HealthController {
                 providers,
                 queues,
                 quizMetricsService.snapshot(),
-                recapMetricsService.snapshot()
+                recapMetricsService.snapshot(),
+                accountMetrics
         );
     }
 
@@ -125,7 +140,8 @@ public class HealthController {
             ProviderHealth providers,
             QueueHealth queues,
             Map<String, Object> quizMetrics,
-            Map<String, Object> recapMetrics
+            Map<String, Object> recapMetrics,
+            Map<String, Object> accountMetrics
     ) {
     }
 
