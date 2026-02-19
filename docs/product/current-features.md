@@ -47,6 +47,10 @@ This inventory reflects implemented behavior in backend controllers/services and
   - `POST /api/account/logout`
   - `GET /api/account/status`
   - `POST /api/account/claim-sync`
+- Reader account rollout is configurable by feature flags:
+  - `account.auth.rollout.mode=disabled|internal|optional|required`
+  - `account.auth.rollout.allowed-emails` (allow-list for `internal` mode)
+- Account status payload includes rollout metadata (`rolloutMode`, `accountRequired`) for staged client behavior.
 - Reader account UI is available in both library and reader flows, with one-time claim/sync to migrate anonymous/local state into the signed-in account.
 - Reader-scoped API behavior resolves identity by authenticated account `userId` when present and falls back to anonymous reader cookie identity when not authenticated.
 - User-scoped ownership is implemented for reader data paths used by annotations/bookmarks/progress/quiz attempts/trophies.
@@ -142,6 +146,7 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Aggregate generation job status APIs:
   - `GET /api/generation/status` (global)
   - `GET /api/generation/book/{bookId}/status` (book-scoped)
+- `/health/details` includes account rollout/migration telemetry under `accountMetrics` for rollout verification.
 - Asset key normalization for stable paths.
 - CLI utilities for asset migration and orphan cleanup.
 - Spaces/CDN sync script for audio/portraits/illustrations.
@@ -192,5 +197,8 @@ This inventory reflects implemented behavior in backend controllers/services and
   - Gutenberg content parser
 - Limited coverage for:
   - TTS, illustrations, characters, pre-generation workflows
-  - frontend reader logic
+  - frontend reader logic outside covered E2E slices
   - CLI utilities and operational scripts
+- E2E coverage includes:
+  - retry/recovery flows for recap + chat surfaces (`e2e/retry-flows.spec.js`)
+  - account register/login/logout and anonymous->account claim-sync flow (`e2e/account-auth.spec.js`)

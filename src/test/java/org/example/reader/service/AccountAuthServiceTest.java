@@ -46,6 +46,8 @@ class AccountAuthServiceTest {
                 userRepository,
                 userSessionRepository,
                 true,
+                "optional",
+                "",
                 "pdr_account_session",
                 60,
                 false,
@@ -154,6 +156,64 @@ class AccountAuthServiceTest {
         assertEquals(AccountAuthService.ResultStatus.SUCCESS, result.status());
         assertTrue(response.getHeader("Set-Cookie").contains("Max-Age=0"));
         verify(userSessionRepository).deleteByTokenHash(hash("token-abc"));
+    }
+
+    @Test
+    void register_internalRollout_rejectsEmailNotInAllowList() {
+        AccountAuthService internalRolloutService = new AccountAuthService(
+                userRepository,
+                userSessionRepository,
+                true,
+                "internal",
+                "tester@example.com",
+                "pdr_account_session",
+                60,
+                false,
+                10,
+                10
+        );
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AccountAuthService.AuthResult result = internalRolloutService.register(
+                "reader@example.com",
+                "password123",
+                response
+        );
+
+        assertEquals(AccountAuthService.ResultStatus.ROLLOUT_RESTRICTED, result.status());
+    }
+
+    @Test
+    void register_internalRollout_allowsEmailInAllowList() {
+        when(userRepository.findByEmail("tester@example.com")).thenReturn(Optional.empty());
+        when(userRepository.save(any(UserEntity.class))).thenAnswer(invocation -> {
+            UserEntity user = invocation.getArgument(0);
+            user.setId("user-1");
+            return user;
+        });
+        when(userSessionRepository.save(any(UserSessionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AccountAuthService internalRolloutService = new AccountAuthService(
+                userRepository,
+                userSessionRepository,
+                true,
+                "internal",
+                "tester@example.com",
+                "pdr_account_session",
+                60,
+                false,
+                10,
+                10
+        );
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AccountAuthService.AuthResult result = internalRolloutService.register(
+                "tester@example.com",
+                "password123",
+                response
+        );
+
+        assertEquals(AccountAuthService.ResultStatus.SUCCESS, result.status());
     }
 
     private String extractCookieValue(String setCookieHeader) {

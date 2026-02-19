@@ -2,6 +2,8 @@ package org.example.reader.controller;
 
 import org.example.reader.model.GenerationJobStatusResponse;
 import org.example.reader.model.GenerationPipelineStatus;
+import org.example.reader.service.AccountAuthService;
+import org.example.reader.service.AccountMetricsService;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.ChapterRecapChatService;
 import org.example.reader.service.ChapterRecapService;
@@ -39,6 +41,12 @@ class HealthControllerTest {
 
     @MockitoBean
     private GenerationJobStatusService generationJobStatusService;
+
+    @MockitoBean
+    private AccountAuthService accountAuthService;
+
+    @MockitoBean
+    private AccountMetricsService accountMetricsService;
 
     @MockitoBean
     private ChapterQuizService chapterQuizService;
@@ -104,6 +112,10 @@ class HealthControllerTest {
         when(chapterQuizService.getQueueDepth()).thenReturn(4);
         when(quizMetricsService.snapshot()).thenReturn(Map.of("readFailed", 0L, "statusReadFailed", 0L));
         when(recapMetricsService.snapshot()).thenReturn(Map.of("readFailed", 1L, "statusReadFailed", 2L));
+        when(accountMetricsService.snapshot()).thenReturn(Map.of("claimSyncSucceeded", 5L));
+        when(accountAuthService.isAccountAuthEnabled()).thenReturn(true);
+        when(accountAuthService.getRolloutMode()).thenReturn("internal");
+        when(accountAuthService.isAccountRequired()).thenReturn(false);
 
         mockMvc.perform(get("/health/details"))
                 .andExpect(status().isOk())
@@ -116,7 +128,9 @@ class HealthControllerTest {
                 .andExpect(jsonPath("$.queues.quizQueueDepth", is(4)))
                 .andExpect(jsonPath("$.queues.generation.scope", is("global")))
                 .andExpect(jsonPath("$.quizMetrics.readFailed", is(0)))
-                .andExpect(jsonPath("$.recapMetrics.statusReadFailed", is(2)));
+                .andExpect(jsonPath("$.recapMetrics.statusReadFailed", is(2)))
+                .andExpect(jsonPath("$.accountMetrics.claimSyncSucceeded", is(5)))
+                .andExpect(jsonPath("$.accountMetrics.rolloutMode", is("internal")));
     }
 
     @Test
@@ -140,6 +154,10 @@ class HealthControllerTest {
         when(chapterQuizService.getQueueDepth()).thenReturn(0);
         when(quizMetricsService.snapshot()).thenReturn(Map.of("readFailed", 0L, "statusReadFailed", 0L));
         when(recapMetricsService.snapshot()).thenReturn(Map.of("readFailed", 0L, "statusReadFailed", 0L));
+        when(accountMetricsService.snapshot()).thenReturn(Map.of());
+        when(accountAuthService.isAccountAuthEnabled()).thenReturn(true);
+        when(accountAuthService.getRolloutMode()).thenReturn("optional");
+        when(accountAuthService.isAccountRequired()).thenReturn(false);
 
         mockMvc.perform(get("/health/details"))
                 .andExpect(status().isOk())
