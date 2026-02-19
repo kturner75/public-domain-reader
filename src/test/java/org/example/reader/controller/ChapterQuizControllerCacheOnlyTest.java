@@ -3,6 +3,7 @@ package org.example.reader.controller;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.QuizMetricsService;
 import org.example.reader.service.QuizProgressService;
+import org.example.reader.service.ReaderIdentityService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -37,6 +38,9 @@ class ChapterQuizControllerCacheOnlyTest {
 
     @MockitoBean
     private QuizMetricsService quizMetricsService;
+
+    @MockitoBean
+    private ReaderIdentityService readerIdentityService;
 
     @Test
     void getStatus_cacheOnlyMode_marksQuizUnavailable() throws Exception {

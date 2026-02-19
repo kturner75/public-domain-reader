@@ -10,6 +10,22 @@ import java.util.Optional;
 @Repository
 public interface ParagraphAnnotationRepository extends JpaRepository<ParagraphAnnotationEntity, String> {
 
+    List<ParagraphAnnotationEntity> findByReaderIdAndUserIdIsNull(String readerId);
+
+    List<ParagraphAnnotationEntity> findByUserIdAndBook_Id(String userId, String bookId);
+
+    List<ParagraphAnnotationEntity> findByUserIdAndBook_IdAndBookmarkedTrueOrderByUpdatedAtDesc(
+            String userId,
+            String bookId
+    );
+
+    Optional<ParagraphAnnotationEntity> findByUserIdAndBook_IdAndChapter_IdAndParagraphIndex(
+            String userId,
+            String bookId,
+            String chapterId,
+            int paragraphIndex
+    );
+
     List<ParagraphAnnotationEntity> findByReaderIdAndBook_Id(String readerId, String bookId);
 
     List<ParagraphAnnotationEntity> findByReaderIdAndBook_IdAndBookmarkedTrueOrderByUpdatedAtDesc(

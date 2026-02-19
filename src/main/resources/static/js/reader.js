@@ -119,6 +119,11 @@
         authCanAccessSensitive: true,
         authAuthenticated: false,
         authPromptShown: false,
+        accountAuthEnabled: false,
+        accountAuthenticated: false,
+        accountEmail: null,
+        accountClaimSyncedFor: null,
+        accountSyncInFlight: false,
         lastBookActivitySignature: '',
         favoriteBookIds: new Set(),
         favoriteBookOrder: [],
@@ -202,6 +207,7 @@
         mobileMenuBookmarks: document.getElementById('mobile-menu-bookmarks'),
         mobileMenuFavorite: document.getElementById('mobile-menu-favorite'),
         mobileMenuRecapEnable: document.getElementById('mobile-menu-recap-enable'),
+        mobileMenuAccount: document.getElementById('mobile-menu-account'),
         mobileMenuAuth: document.getElementById('mobile-menu-auth'),
         pageIndicator: document.getElementById('page-indicator'),
         mobileLayoutHint: document.getElementById('mobile-layout-hint'),
@@ -210,6 +216,8 @@
         mobilePrevPage: document.getElementById('mobile-prev-page'),
         mobileNextPage: document.getElementById('mobile-next-page'),
         backToLibrary: document.getElementById('back-to-library'),
+        searchContainer: document.getElementById('search-container'),
+        searchToggle: document.getElementById('search-toggle'),
         searchInput: document.getElementById('search-input'),
         searchResults: document.getElementById('search-results'),
         searchResultsError: document.getElementById('search-results-error'),
@@ -331,6 +339,9 @@
         characterToggle: document.getElementById('character-toggle'),
         characterHint: document.getElementById('character-hint'),
         recapEnableBtn: document.getElementById('recap-enable-btn'),
+        accountToggle: document.getElementById('account-toggle'),
+        accountToggleLibrary: document.getElementById('account-toggle-library'),
+        accountLibraryStatus: document.getElementById('account-library-status'),
         characterToast: document.getElementById('character-toast'),
         characterToastImage: document.getElementById('character-toast-image'),
         characterToastName: document.getElementById('character-toast-name'),
@@ -359,6 +370,16 @@
         chatMessages: document.getElementById('chat-messages'),
         chatInput: document.getElementById('chat-input'),
         chatSendBtn: document.getElementById('chat-send-btn'),
+        accountModal: document.getElementById('account-modal'),
+        accountModalBackdrop: document.getElementById('account-modal-backdrop'),
+        accountModalClose: document.getElementById('account-modal-close'),
+        accountModalStatus: document.getElementById('account-modal-status'),
+        accountModalEmail: document.getElementById('account-modal-email'),
+        accountEmail: document.getElementById('account-email'),
+        accountPassword: document.getElementById('account-password'),
+        accountSignIn: document.getElementById('account-signin'),
+        accountRegister: document.getElementById('account-register'),
+        accountSignOut: document.getElementById('account-signout'),
         authToggle: document.getElementById('auth-toggle'),
         authModal: document.getElementById('auth-modal'),
         authModalBackdrop: document.getElementById('auth-modal-backdrop'),
@@ -389,6 +410,7 @@
         SPEED_READING_WPM: 'reader_speedReadingWpm',
         ILLUSTRATION_MODE: 'reader_illustrationMode',
         READER_PREFERENCES: 'reader_readerPreferences',
+        READER_PREFERENCES_UPDATED_AT: 'reader_readerPreferencesUpdatedAt',
         RECAP_OPTOUT_PREFIX: 'reader_recapOptOut_',
         RECAP_CHAT_PREFIX: 'reader_recapChat_',
         CHARACTER_CHAT_PREFIX: 'reader_characterChat_',
@@ -1032,6 +1054,16 @@
             elements.mobileMenuRecapEnable.classList.toggle('hidden', !recapEnableAvailable);
         }
 
+        if (elements.mobileMenuAccount) {
+            const showAccount = state.accountAuthEnabled;
+            elements.mobileMenuAccount.classList.toggle('hidden', !showAccount);
+            if (showAccount) {
+                elements.mobileMenuAccount.textContent = state.accountAuthenticated
+                    ? 'Reader Account (Signed In)'
+                    : 'Reader Account (Sign In)';
+            }
+        }
+
         if (elements.mobileMenuAuth) {
             const showAuth = state.authPublicMode;
             elements.mobileMenuAuth.classList.toggle('hidden', !showAuth);
@@ -1102,6 +1134,13 @@
                 ? SEARCH_PLACEHOLDER_MOBILE
                 : SEARCH_PLACEHOLDER_DESKTOP;
         }
+        if (mobileLayout) {
+            setDesktopSearchExpanded(false);
+        } else {
+            const hasQuery = !!(elements.searchInput && elements.searchInput.value.trim().length > 0);
+            const focused = document.activeElement === elements.searchInput;
+            setDesktopSearchExpanded(hasQuery || focused);
+        }
         if (elements.chapterListHint) {
             elements.chapterListHint.textContent = mobileLayout
                 ? CHAPTER_LIST_HINT_MOBILE
@@ -1148,7 +1187,8 @@
             if (response.status === 401
                 && state.authPublicMode
                 && path.startsWith('/api/')
-                && !path.startsWith('/api/auth')) {
+                && !path.startsWith('/api/auth')
+                && !path.startsWith('/api/account')) {
                 handleSensitiveUnauthorized();
             }
             return response;
@@ -1214,10 +1254,344 @@
         }
     }
 
+    function isAccountModalVisible() {
+        return !!elements.accountModal && !elements.accountModal.classList.contains('hidden');
+    }
+
+    function setAccountStatusMessage(message, tone = 'neutral') {
+        if (!elements.accountModalStatus) return;
+        elements.accountModalStatus.textContent = message || '';
+        elements.accountModalStatus.classList.remove('error', 'success');
+        if (tone === 'error') {
+            elements.accountModalStatus.classList.add('error');
+        } else if (tone === 'success') {
+            elements.accountModalStatus.classList.add('success');
+        }
+    }
+
+    function updateAccountUi() {
+        const showAccount = state.accountAuthEnabled;
+        const accountLabel = state.accountAuthenticated ? 'Account' : 'Reader Account';
+
+        if (elements.accountToggle) {
+            elements.accountToggle.classList.toggle('hidden', !showAccount);
+            elements.accountToggle.classList.toggle('authenticated', state.accountAuthenticated);
+            elements.accountToggle.textContent = accountLabel;
+            elements.accountToggle.title = state.accountAuthenticated && state.accountEmail
+                ? `Reader account (${state.accountEmail})`
+                : 'Reader account';
+        }
+        if (elements.accountToggleLibrary) {
+            elements.accountToggleLibrary.classList.toggle('hidden', !showAccount);
+            elements.accountToggleLibrary.textContent = state.accountAuthenticated
+                ? `Account: ${state.accountEmail || 'Signed In'}`
+                : 'Reader Account';
+        }
+        if (elements.accountLibraryStatus) {
+            const showStatus = showAccount && state.accountAuthenticated && !!state.accountEmail;
+            elements.accountLibraryStatus.classList.toggle('hidden', !showStatus);
+            elements.accountLibraryStatus.textContent = showStatus ? `Signed in as ${state.accountEmail}` : '';
+        }
+        updateMobileHeaderMenuState();
+    }
+
+    function openAccountModal(message = '') {
+        if (!elements.accountModal) return;
+        closeMobileHeaderMenu();
+        elements.accountModal.classList.remove('hidden');
+
+        const authenticated = state.accountAuthenticated;
+        if (elements.accountModalEmail) {
+            elements.accountModalEmail.classList.toggle('hidden', !authenticated);
+            elements.accountModalEmail.textContent = authenticated
+                ? `Signed in as ${state.accountEmail || 'your account'}.`
+                : '';
+        }
+        if (elements.accountSignOut) {
+            elements.accountSignOut.classList.toggle('hidden', !authenticated);
+        }
+        if (elements.accountSignIn) {
+            elements.accountSignIn.classList.toggle('hidden', authenticated);
+            elements.accountSignIn.disabled = false;
+            elements.accountSignIn.textContent = 'Sign In';
+        }
+        if (elements.accountRegister) {
+            elements.accountRegister.classList.toggle('hidden', authenticated);
+            elements.accountRegister.disabled = false;
+            elements.accountRegister.textContent = 'Register';
+        }
+        if (elements.accountEmail) {
+            elements.accountEmail.disabled = authenticated;
+            elements.accountEmail.value = authenticated ? (state.accountEmail || '') : '';
+        }
+        if (elements.accountPassword) {
+            elements.accountPassword.disabled = authenticated;
+            elements.accountPassword.value = '';
+            if (!authenticated) {
+                elements.accountPassword.focus();
+            }
+        }
+
+        setAccountStatusMessage(message || (authenticated
+            ? 'Your account is active in this browser.'
+            : 'Sign in or register to sync your reader data.'));
+    }
+
+    function closeAccountModal() {
+        if (!elements.accountModal) return;
+        elements.accountModal.classList.add('hidden');
+        setAccountStatusMessage('');
+    }
+
+    function collectRecapOptOutSnapshot() {
+        const snapshot = {};
+        for (let i = 0; i < localStorage.length; i += 1) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(STORAGE_KEYS.RECAP_OPTOUT_PREFIX)) {
+                continue;
+            }
+            const bookId = key.slice(STORAGE_KEYS.RECAP_OPTOUT_PREFIX.length);
+            if (!bookId) continue;
+            snapshot[bookId] = localStorage.getItem(key) === 'true';
+        }
+        return snapshot;
+    }
+
+    function collectLocalAccountStateSnapshot() {
+        const readerPreferences = normalizeReaderPreferences(state.readerPreferences || loadStoredReaderPreferences());
+        const readerPreferencesUpdatedAt = localStorage.getItem(STORAGE_KEYS.READER_PREFERENCES_UPDATED_AT);
+        return {
+            favoriteBookIds: readFavoriteBookIdsFromStorage(),
+            bookActivity: readBookActivityStore(),
+            readerPreferences: {
+                ...readerPreferences,
+                updatedAt: readerPreferencesUpdatedAt || null
+            },
+            recapOptOut: collectRecapOptOutSnapshot()
+        };
+    }
+
+    function applyAccountStateSnapshot(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') {
+            return;
+        }
+
+        if (Array.isArray(snapshot.favoriteBookIds)) {
+            localStorage.setItem(STORAGE_KEYS.FAVORITE_BOOKS, JSON.stringify(snapshot.favoriteBookIds));
+        }
+        if (snapshot.bookActivity && typeof snapshot.bookActivity === 'object') {
+            localStorage.setItem(STORAGE_KEYS.BOOK_ACTIVITY, JSON.stringify(snapshot.bookActivity));
+        }
+        if (snapshot.readerPreferences && typeof snapshot.readerPreferences === 'object') {
+            const normalized = normalizeReaderPreferences(snapshot.readerPreferences);
+            localStorage.setItem(STORAGE_KEYS.READER_PREFERENCES, JSON.stringify(normalized));
+            const updatedAt = typeof snapshot.readerPreferences.updatedAt === 'string'
+                ? snapshot.readerPreferences.updatedAt
+                : new Date().toISOString();
+            localStorage.setItem(STORAGE_KEYS.READER_PREFERENCES_UPDATED_AT, updatedAt);
+            state.readerPreferences = normalized;
+            applyReaderPreferences();
+            syncReaderPreferencesControls();
+        }
+        if (snapshot.recapOptOut && typeof snapshot.recapOptOut === 'object') {
+            const keysToClear = [];
+            for (let i = 0; i < localStorage.length; i += 1) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(STORAGE_KEYS.RECAP_OPTOUT_PREFIX)) {
+                    keysToClear.push(key);
+                }
+            }
+            keysToClear.forEach(key => localStorage.removeItem(key));
+            Object.entries(snapshot.recapOptOut).forEach(([bookId, value]) => {
+                if (typeof bookId !== 'string' || !bookId.trim()) {
+                    return;
+                }
+                localStorage.setItem(
+                    `${STORAGE_KEYS.RECAP_OPTOUT_PREFIX}${bookId.trim()}`,
+                    value === true ? 'true' : 'false'
+                );
+            });
+            if (state.currentBook?.id) {
+                state.recapOptOut = getRecapOptOut(state.currentBook.id);
+                updateRecapOptOutControl();
+            }
+        }
+
+        syncFavoriteBooksWithLocalBooks();
+        syncBookActivityWithLocalBooks();
+        updateFavoriteUi();
+    }
+
+    async function runAccountClaimSync(force = false) {
+        if (!state.accountAuthEnabled || !state.accountAuthenticated) {
+            return;
+        }
+        const syncKey = state.accountEmail || 'signed-in-account';
+        if (!force && state.accountClaimSyncedFor === syncKey) {
+            return;
+        }
+        if (state.accountSyncInFlight) {
+            return;
+        }
+
+        state.accountSyncInFlight = true;
+        if (isAccountModalVisible()) {
+            setAccountStatusMessage('Syncing your reader data...');
+        }
+
+        try {
+            const response = await nativeFetch('/api/account/claim-sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state: collectLocalAccountStateSnapshot() })
+            });
+            const payload = await readErrorPayload(response);
+            if (!response.ok) {
+                const message = firstMessageFromPayload(payload) || 'Unable to sync account data.';
+                if (isAccountModalVisible()) {
+                    setAccountStatusMessage(message, 'error');
+                }
+                return;
+            }
+
+            if (payload && typeof payload === 'object' && payload.state) {
+                applyAccountStateSnapshot(payload.state);
+            }
+            state.accountClaimSyncedFor = syncKey;
+
+            if (payload?.claimApplied) {
+                showAppToast({
+                    title: 'Account data synced',
+                    message: 'Anonymous reader data has been moved into your account.',
+                    autoDismissMs: 3200
+                });
+            }
+
+            if (elements.libraryView && !elements.libraryView.classList.contains('hidden')) {
+                renderLibrary(state.librarySearchQuery || '');
+            }
+            if (state.currentBook?.id) {
+                void loadAnnotationsForCurrentBook();
+                void refreshBookmarksForCurrentBook();
+            }
+            if (state.quizAvailable) {
+                state.achievementsLoaded = false;
+                void loadAchievementsShelf(true);
+            }
+            if (isAccountModalVisible()) {
+                setAccountStatusMessage('Account data is up to date.', 'success');
+            }
+        } catch (error) {
+            console.debug('Account claim sync failed:', error);
+            if (isAccountModalVisible()) {
+                setAccountStatusMessage('Unable to sync account data right now.', 'error');
+            }
+        } finally {
+            state.accountSyncInFlight = false;
+        }
+    }
+
+    async function accountCheckStatus(options = {}) {
+        const { triggerSync = true } = options;
+        try {
+            const response = await nativeFetch('/api/account/status', { cache: 'no-store' });
+            if (!response.ok) {
+                return;
+            }
+            const status = await response.json();
+            state.accountAuthEnabled = status.accountAuthEnabled === true;
+            state.accountAuthenticated = status.authenticated === true;
+            state.accountEmail = typeof status.email === 'string' ? status.email : null;
+
+            if (!state.accountAuthenticated) {
+                state.accountClaimSyncedFor = null;
+            }
+            updateAccountUi();
+
+            if (triggerSync && state.accountAuthenticated) {
+                await runAccountClaimSync();
+            }
+        } catch (error) {
+            console.debug('Account status check failed:', error);
+        }
+    }
+
+    async function submitAccountAuth(mode) {
+        if (!elements.accountEmail || !elements.accountPassword) return;
+        const email = (elements.accountEmail.value || '').trim();
+        const password = elements.accountPassword.value || '';
+        if (!email || !password) {
+            setAccountStatusMessage('Email and password are required.', 'error');
+            return;
+        }
+
+        if (elements.accountSignIn) {
+            elements.accountSignIn.disabled = true;
+            elements.accountSignIn.textContent = mode === 'login' ? 'Signing In...' : 'Sign In';
+        }
+        if (elements.accountRegister) {
+            elements.accountRegister.disabled = true;
+            elements.accountRegister.textContent = mode === 'register' ? 'Registering...' : 'Register';
+        }
+
+        try {
+            const response = await nativeFetch(`/api/account/${mode}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const payload = await readErrorPayload(response);
+            if (!response.ok) {
+                setAccountStatusMessage(firstMessageFromPayload(payload) || 'Account sign-in failed.', 'error');
+                return;
+            }
+
+            state.accountClaimSyncedFor = null;
+            await accountCheckStatus({ triggerSync: true });
+            setAccountStatusMessage(firstMessageFromPayload(payload) || 'Signed in.', 'success');
+            closeAccountModal();
+        } catch (error) {
+            console.debug('Account auth request failed:', error);
+            setAccountStatusMessage('Unable to complete account request.', 'error');
+        } finally {
+            if (elements.accountSignIn) {
+                elements.accountSignIn.disabled = false;
+                elements.accountSignIn.textContent = 'Sign In';
+            }
+            if (elements.accountRegister) {
+                elements.accountRegister.disabled = false;
+                elements.accountRegister.textContent = 'Register';
+            }
+        }
+    }
+
+    async function submitAccountLogin() {
+        await submitAccountAuth('login');
+    }
+
+    async function submitAccountRegister() {
+        await submitAccountAuth('register');
+    }
+
+    async function submitAccountLogout() {
+        try {
+            await nativeFetch('/api/account/logout', { method: 'POST' });
+            state.accountClaimSyncedFor = null;
+            await accountCheckStatus({ triggerSync: false });
+            setAccountStatusMessage('Signed out.', 'success');
+            closeAccountModal();
+        } catch (error) {
+            console.debug('Account logout failed:', error);
+            setAccountStatusMessage('Unable to sign out.', 'error');
+        }
+    }
+
     function updateAuthUi() {
         if (!elements.authToggle) return;
 
-        if (!state.authPublicMode) {
+        const showDesktopAuthToggle = state.authPublicMode
+            && (!state.accountAuthEnabled || state.authAuthenticated);
+        if (!showDesktopAuthToggle) {
             elements.authToggle.classList.add('hidden');
             updateMobileHeaderMenuState();
             return;
@@ -1225,7 +1599,7 @@
 
         elements.authToggle.classList.remove('hidden');
         elements.authToggle.classList.toggle('authenticated', state.authAuthenticated);
-        elements.authToggle.textContent = state.authAuthenticated ? 'Signed In' : 'Sign In';
+        elements.authToggle.textContent = state.authAuthenticated ? 'Collaborator' : 'Sign In';
         updateMobileHeaderMenuState();
     }
 
@@ -1387,6 +1761,7 @@
 
     function saveReaderPreferences() {
         localStorage.setItem(STORAGE_KEYS.READER_PREFERENCES, JSON.stringify(state.readerPreferences));
+        localStorage.setItem(STORAGE_KEYS.READER_PREFERENCES_UPDATED_AT, new Date().toISOString());
     }
 
     function applyReaderPreferences() {
@@ -1490,8 +1865,10 @@
         applyReaderPreferences();
         syncReaderPreferencesControls();
         setupEventListeners();
+        setDesktopSearchExpanded(false);
         await loadClassroomContext();
         await loadLibrary();
+        await accountCheckStatus();
         await authCheckStatus();
         await speedReadingCheckAvailability();
         applyLayoutCapabilities();
@@ -2947,7 +3324,10 @@
 
         // Prefetch main characters for the book (async, don't block)
         if (state.characterAvailable) {
-            fetch(`/api/characters/book/${book.id}/prefetch`, { method: 'POST' });
+            nativeFetch(`/api/characters/book/${book.id}/prefetch`, { method: 'POST' })
+                .catch(error => {
+                    console.debug('Book character prefetch request failed:', error);
+                });
         }
     }
 
@@ -4365,6 +4745,21 @@
     // Search
     let searchTimeout = null;
 
+    function setDesktopSearchExpanded(expanded, options = {}) {
+        if (!elements.searchContainer || !elements.searchInput || !elements.searchToggle) return;
+
+        const shouldExpand = expanded === true;
+        elements.searchContainer.classList.toggle('expanded', shouldExpand);
+        elements.searchToggle.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+        elements.searchInput.tabIndex = shouldExpand ? 0 : -1;
+
+        if (shouldExpand && options.focus === true) {
+            requestAnimationFrame(() => {
+                elements.searchInput.focus();
+            });
+        }
+    }
+
     function setSearchInputValues(value, options = {}) {
         const nextValue = typeof value === 'string' ? value : '';
         const skipDesktop = options.skipDesktop === true;
@@ -4374,6 +4769,11 @@
         }
         if (!skipMobile && elements.mobileMenuSearchInput && elements.mobileMenuSearchInput.value !== nextValue) {
             elements.mobileMenuSearchInput.value = nextValue;
+        }
+        if (!skipDesktop && elements.searchInput && !state.isMobileLayout) {
+            const hasQuery = nextValue.trim().length > 0;
+            const focused = document.activeElement === elements.searchInput;
+            setDesktopSearchExpanded(hasQuery || focused);
         }
     }
 
@@ -5784,7 +6184,7 @@
             } else {
                 // Always call request first - backend handles duplicates gracefully
                 // and will re-queue stuck PENDING illustrations older than 5 minutes
-                const requestResponse = await fetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
+                const requestResponse = await nativeFetch(`/api/illustrations/chapter/${chapter.id}/request`, { method: 'POST' });
                 if (!requestResponse.ok) {
                     const payload = await readErrorPayload(requestResponse);
                     const mapped = mapGenerationError({
@@ -5803,7 +6203,7 @@
 
             // Pre-fetch next chapter
             if (!state.illustrationCacheOnly) {
-                fetch(`/api/illustrations/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+                nativeFetch(`/api/illustrations/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
             }
 
         } catch (error) {
@@ -6452,10 +6852,13 @@
         console.log('Requesting character analysis for chapter:', chapter.id);
         try {
             // Request character analysis for current chapter
-            await fetch(`/api/characters/chapter/${chapter.id}/analyze`, { method: 'POST' });
+            await nativeFetch(`/api/characters/chapter/${chapter.id}/analyze`, { method: 'POST' });
 
             // Prefetch next chapter analysis
-            fetch(`/api/characters/chapter/${chapter.id}/prefetch-next`, { method: 'POST' });
+            nativeFetch(`/api/characters/chapter/${chapter.id}/prefetch-next`, { method: 'POST' })
+                .catch(error => {
+                    console.debug('Next chapter character prefetch request failed:', error);
+                });
 
             // Start polling for new characters
             startCharacterPolling();
@@ -6467,7 +6870,7 @@
     async function requestChapterRecapGeneration(chapterId) {
         if (!chapterId || !state.recapGenerationAvailable || state.cacheOnly || state.recapCacheOnly) return;
         try {
-            await fetch(`/api/recaps/chapter/${chapterId}/generate`, { method: 'POST' });
+            await nativeFetch(`/api/recaps/chapter/${chapterId}/generate`, { method: 'POST' });
         } catch (error) {
             console.debug('Failed to request chapter recap generation:', error);
         }
@@ -6476,7 +6879,7 @@
     async function requestChapterQuizGeneration(chapterId) {
         if (!chapterId || !state.quizGenerationAvailable || state.cacheOnly || state.quizCacheOnly) return;
         try {
-            await fetch(`/api/quizzes/chapter/${chapterId}/generate`, { method: 'POST' });
+            await nativeFetch(`/api/quizzes/chapter/${chapterId}/generate`, { method: 'POST' });
         } catch (error) {
             console.debug('Failed to request chapter quiz generation:', error);
         }
@@ -7280,6 +7683,12 @@
                 }
             });
         }
+        if (elements.mobileMenuAccount) {
+            elements.mobileMenuAccount.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                openAccountModal();
+            });
+        }
         if (elements.mobileMenuAuth) {
             elements.mobileMenuAuth.addEventListener('click', () => {
                 closeMobileHeaderMenu();
@@ -7370,6 +7779,39 @@
                     openAuthModal('You are signed in. You can sign out here.');
                 } else {
                     openAuthModal();
+                }
+            });
+        }
+        if (elements.accountToggle) {
+            elements.accountToggle.addEventListener('click', () => {
+                openAccountModal();
+            });
+        }
+        if (elements.accountToggleLibrary) {
+            elements.accountToggleLibrary.addEventListener('click', () => {
+                openAccountModal();
+            });
+        }
+        if (elements.accountModalClose) {
+            elements.accountModalClose.addEventListener('click', closeAccountModal);
+        }
+        if (elements.accountModalBackdrop) {
+            elements.accountModalBackdrop.addEventListener('click', closeAccountModal);
+        }
+        if (elements.accountSignIn) {
+            elements.accountSignIn.addEventListener('click', submitAccountLogin);
+        }
+        if (elements.accountRegister) {
+            elements.accountRegister.addEventListener('click', submitAccountRegister);
+        }
+        if (elements.accountSignOut) {
+            elements.accountSignOut.addEventListener('click', submitAccountLogout);
+        }
+        if (elements.accountPassword) {
+            elements.accountPassword.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !state.accountAuthenticated) {
+                    e.preventDefault();
+                    submitAccountLogin();
                 }
             });
         }
@@ -7620,6 +8062,22 @@
         }
 
         // Search input
+        if (elements.searchToggle) {
+            elements.searchToggle.addEventListener('click', () => {
+                const expanded = !!elements.searchContainer?.classList.contains('expanded');
+                const hasQuery = !!(elements.searchInput?.value || '').trim();
+                if (!expanded) {
+                    setDesktopSearchExpanded(true, { focus: true });
+                    return;
+                }
+                if (!hasQuery) {
+                    elements.searchResults.classList.add('hidden');
+                    setDesktopSearchExpanded(false);
+                    return;
+                }
+                elements.searchInput?.focus();
+            });
+        }
         elements.searchInput.addEventListener('input', (e) => {
             const value = e.target.value || '';
             setSearchInputValues(value, { skipDesktop: true });
@@ -7651,6 +8109,7 @@
         }
 
         elements.searchInput.addEventListener('focus', () => {
+            setDesktopSearchExpanded(true);
             ttsPauseForModal();
             if (elements.searchInput.value.trim().length >= 2) {
                 performSearch(elements.searchInput.value);
@@ -7664,6 +8123,9 @@
 
         elements.searchInput.addEventListener('blur', () => {
             ttsResumeAfterModal();
+            if (elements.searchInput.value.trim().length === 0) {
+                setDesktopSearchExpanded(false);
+            }
         });
         if (elements.mobileMenuSearchInput) {
             elements.mobileMenuSearchInput.addEventListener('blur', () => {
@@ -7675,6 +8137,9 @@
             if (e.key === 'Escape') {
                 e.stopPropagation();
                 elements.searchResults.classList.add('hidden');
+                if (elements.searchInput.value.trim().length === 0) {
+                    setDesktopSearchExpanded(false);
+                }
                 elements.searchInput.blur();
             }
         });
@@ -7777,6 +8242,14 @@
 
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
+            if (isAccountModalVisible()) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeAccountModal();
+                }
+                return;
+            }
+
             if (isAuthModalVisible()) {
                 if (e.key === 'Escape') {
                     e.preventDefault();
@@ -7994,7 +8467,7 @@
                         openMobileHeaderMenu();
                         elements.mobileMenuSearchInput.focus();
                     } else {
-                        elements.searchInput.focus();
+                        setDesktopSearchExpanded(true, { focus: true });
                     }
                     break;
                 case 'c':
@@ -8069,9 +8542,6 @@
                     console.log('M key pressed');
                     e.preventDefault();
                     characterBrowserToggle();
-                    break;
-                case 'Escape':
-                    backToLibrary();
                     break;
             }
         });

@@ -39,11 +39,18 @@ public class ParagraphAnnotationService {
 
     @Transactional(readOnly = true)
     public Optional<List<ParagraphAnnotation>> getBookAnnotations(String readerId, String bookId) {
+        return getBookAnnotations(readerId, null, bookId);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<List<ParagraphAnnotation>> getBookAnnotations(String readerId, String userId, String bookId) {
         if (!bookRepository.existsById(bookId)) {
             return Optional.empty();
         }
-        List<ParagraphAnnotation> annotations = paragraphAnnotationRepository
-                .findByReaderIdAndBook_Id(readerId, bookId)
+        List<ParagraphAnnotationEntity> entities = userId == null
+                ? paragraphAnnotationRepository.findByReaderIdAndBook_Id(readerId, bookId)
+                : paragraphAnnotationRepository.findByUserIdAndBook_Id(userId, bookId);
+        List<ParagraphAnnotation> annotations = entities
                 .stream()
                 .map(this::toParagraphAnnotation)
                 .toList();
@@ -52,12 +59,20 @@ public class ParagraphAnnotationService {
 
     @Transactional(readOnly = true)
     public Optional<List<BookmarkedParagraph>> getBookmarkedParagraphs(String readerId, String bookId) {
+        return getBookmarkedParagraphs(readerId, null, bookId);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<List<BookmarkedParagraph>> getBookmarkedParagraphs(String readerId, String userId, String bookId) {
         if (!bookRepository.existsById(bookId)) {
             return Optional.empty();
         }
 
-        List<BookmarkedParagraph> bookmarks = paragraphAnnotationRepository
-                .findByReaderIdAndBook_IdAndBookmarkedTrueOrderByUpdatedAtDesc(readerId, bookId)
+        List<ParagraphAnnotationEntity> entities = userId == null
+                ? paragraphAnnotationRepository.findByReaderIdAndBook_IdAndBookmarkedTrueOrderByUpdatedAtDesc(readerId, bookId)
+                : paragraphAnnotationRepository.findByUserIdAndBook_IdAndBookmarkedTrueOrderByUpdatedAtDesc(userId, bookId);
+
+        List<BookmarkedParagraph> bookmarks = entities
                 .stream()
                 .map(annotation -> {
                     String chapterId = annotation.getChapter().getId();
@@ -83,6 +98,7 @@ public class ParagraphAnnotationService {
     @Transactional
     public SaveOutcome saveAnnotation(
             String readerId,
+            String userId,
             String bookId,
             String chapterId,
             int paragraphIndex,
@@ -101,8 +117,11 @@ public class ParagraphAnnotationService {
         String sanitizedNote = sanitizeNote(noteText);
         boolean hasData = highlighted || bookmarked || sanitizedNote != null;
 
-        Optional<ParagraphAnnotationEntity> existingOpt = paragraphAnnotationRepository
-                .findByReaderIdAndBook_IdAndChapter_IdAndParagraphIndex(readerId, bookId, chapterId, paragraphIndex);
+        Optional<ParagraphAnnotationEntity> existingOpt = userId == null
+                ? paragraphAnnotationRepository
+                        .findByReaderIdAndBook_IdAndChapter_IdAndParagraphIndex(readerId, bookId, chapterId, paragraphIndex)
+                : paragraphAnnotationRepository
+                        .findByUserIdAndBook_IdAndChapter_IdAndParagraphIndex(userId, bookId, chapterId, paragraphIndex);
 
         if (!hasData) {
             existingOpt.ifPresent(paragraphAnnotationRepository::delete);
@@ -111,6 +130,7 @@ public class ParagraphAnnotationService {
 
         ParagraphAnnotationEntity entity = existingOpt.orElseGet(ParagraphAnnotationEntity::new);
         entity.setReaderId(readerId);
+        entity.setUserId(userId);
         entity.setBook(chapterOpt.get().getBook());
         entity.setChapter(chapterOpt.get());
         entity.setParagraphIndex(paragraphIndex);
@@ -123,7 +143,19 @@ public class ParagraphAnnotationService {
     }
 
     @Transactional
-    public DeleteStatus deleteAnnotation(String readerId, String bookId, String chapterId, int paragraphIndex) {
+    public SaveOutcome saveAnnotation(
+            String readerId,
+            String bookId,
+            String chapterId,
+            int paragraphIndex,
+            boolean highlighted,
+            String noteText,
+            boolean bookmarked) {
+        return saveAnnotation(readerId, null, bookId, chapterId, paragraphIndex, highlighted, noteText, bookmarked);
+    }
+
+    @Transactional
+    public DeleteStatus deleteAnnotation(String readerId, String userId, String bookId, String chapterId, int paragraphIndex) {
         Optional<ChapterEntity> chapterOpt = chapterRepository.findByIdWithBook(chapterId)
                 .filter(chapter -> chapter.getBook().getId().equals(bookId));
         if (chapterOpt.isEmpty()) {
@@ -133,11 +165,22 @@ public class ParagraphAnnotationService {
             return DeleteStatus.NOT_FOUND;
         }
 
-        paragraphAnnotationRepository
-                .findByReaderIdAndBook_IdAndChapter_IdAndParagraphIndex(readerId, bookId, chapterId, paragraphIndex)
-                .ifPresent(paragraphAnnotationRepository::delete);
+        if (userId == null) {
+            paragraphAnnotationRepository
+                    .findByReaderIdAndBook_IdAndChapter_IdAndParagraphIndex(readerId, bookId, chapterId, paragraphIndex)
+                    .ifPresent(paragraphAnnotationRepository::delete);
+        } else {
+            paragraphAnnotationRepository
+                    .findByUserIdAndBook_IdAndChapter_IdAndParagraphIndex(userId, bookId, chapterId, paragraphIndex)
+                    .ifPresent(paragraphAnnotationRepository::delete);
+        }
 
         return DeleteStatus.DELETED;
+    }
+
+    @Transactional
+    public DeleteStatus deleteAnnotation(String readerId, String bookId, String chapterId, int paragraphIndex) {
+        return deleteAnnotation(readerId, null, bookId, chapterId, paragraphIndex);
     }
 
     private ParagraphAnnotation toParagraphAnnotation(ParagraphAnnotationEntity entity) {

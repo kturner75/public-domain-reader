@@ -98,6 +98,83 @@ class QuizProgressServiceTest {
         assertFalse(trophies.get(0).title().isBlank());
     }
 
+    @Test
+    void recordAttemptAndEvaluate_accountUser_scopesAttemptsAndTrophiesByUserId() {
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1);
+        when(quizAttemptRepository.save(any(QuizAttemptEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(quizAttemptRepository.countByChapterBookIdAndUserId("book-1", "user-1")).thenReturn(1L);
+        when(quizAttemptRepository.countByChapterBookIdAndUserIdAndPerfectTrue("book-1", "user-1")).thenReturn(1L);
+        when(quizAttemptRepository.findByChapterBookIdAndUserIdOrderByCreatedAtDesc("book-1", "user-1"))
+                .thenReturn(List.of());
+        when(quizTrophyRepository.findByBookIdAndUserIdAndCode("book-1", "user-1", "quiz_first_attempt"))
+                .thenReturn(Optional.empty());
+        when(quizTrophyRepository.findByBookIdAndUserIdAndCode("book-1", "user-1", "quiz_first_perfect"))
+                .thenReturn(Optional.empty());
+        when(quizTrophyRepository.save(any(QuizTrophyEntity.class))).thenAnswer(invocation -> {
+            QuizTrophyEntity entity = invocation.getArgument(0);
+            if (entity.getUnlockedAt() == null) {
+                entity.setUnlockedAt(LocalDateTime.now());
+            }
+            return entity;
+        });
+
+        QuizProgressService.ProgressUpdate update = quizProgressService.recordAttemptAndEvaluate(
+                chapter,
+                "user-1",
+                100,
+                3,
+                3,
+                1
+        );
+
+        assertEquals(2, update.newlyUnlocked().size());
+        ArgumentCaptor<QuizAttemptEntity> attemptCaptor = ArgumentCaptor.forClass(QuizAttemptEntity.class);
+        verify(quizAttemptRepository).save(attemptCaptor.capture());
+        assertEquals("user-1", attemptCaptor.getValue().getUserId());
+        verify(quizTrophyRepository).findByBookIdAndUserIdAndCode("book-1", "user-1", "quiz_first_attempt");
+        verify(quizTrophyRepository).findByBookIdAndUserIdAndCode("book-1", "user-1", "quiz_first_perfect");
+    }
+
+    @Test
+    void recordAttemptAndEvaluate_anonymousReader_scopesAttemptsAndTrophiesByReaderId() {
+        ChapterEntity chapter = createChapter("book-1", "chapter-1", 1);
+        when(quizAttemptRepository.save(any(QuizAttemptEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(quizAttemptRepository.countByChapterBookIdAndReaderId("book-1", "reader-cookie-1")).thenReturn(1L);
+        when(quizAttemptRepository.countByChapterBookIdAndReaderIdAndPerfectTrue("book-1", "reader-cookie-1"))
+                .thenReturn(1L);
+        when(quizAttemptRepository.findByChapterBookIdAndReaderIdOrderByCreatedAtDesc("book-1", "reader-cookie-1"))
+                .thenReturn(List.of());
+        when(quizTrophyRepository.findByBookIdAndReaderIdAndCode("book-1", "reader-cookie-1", "quiz_first_attempt"))
+                .thenReturn(Optional.empty());
+        when(quizTrophyRepository.findByBookIdAndReaderIdAndCode("book-1", "reader-cookie-1", "quiz_first_perfect"))
+                .thenReturn(Optional.empty());
+        when(quizTrophyRepository.save(any(QuizTrophyEntity.class))).thenAnswer(invocation -> {
+            QuizTrophyEntity entity = invocation.getArgument(0);
+            if (entity.getUnlockedAt() == null) {
+                entity.setUnlockedAt(LocalDateTime.now());
+            }
+            return entity;
+        });
+
+        QuizProgressService.ProgressUpdate update = quizProgressService.recordAttemptAndEvaluate(
+                chapter,
+                "reader-cookie-1",
+                null,
+                100,
+                3,
+                3,
+                1
+        );
+
+        assertEquals(2, update.newlyUnlocked().size());
+        ArgumentCaptor<QuizAttemptEntity> attemptCaptor = ArgumentCaptor.forClass(QuizAttemptEntity.class);
+        verify(quizAttemptRepository).save(attemptCaptor.capture());
+        assertEquals("reader-cookie-1", attemptCaptor.getValue().getReaderId());
+        assertEquals(null, attemptCaptor.getValue().getUserId());
+        verify(quizTrophyRepository).findByBookIdAndReaderIdAndCode("book-1", "reader-cookie-1", "quiz_first_attempt");
+        verify(quizTrophyRepository).findByBookIdAndReaderIdAndCode("book-1", "reader-cookie-1", "quiz_first_perfect");
+    }
+
     private ChapterEntity createChapter(String bookId, String chapterId, int chapterIndex) {
         BookEntity book = new BookEntity("Title", "Author", "gutenberg");
         book.setId(bookId);

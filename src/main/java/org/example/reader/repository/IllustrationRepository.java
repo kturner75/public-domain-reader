@@ -79,4 +79,8 @@ public interface IllustrationRepository extends JpaRepository<IllustrationEntity
             @Param("leaseOwner") String leaseOwner,
             @Param("pendingStatus") IllustrationStatus pendingStatus,
             @Param("generatingStatus") IllustrationStatus generatingStatus);
+
+    @Modifying
+    @Query("DELETE FROM IllustrationEntity i WHERE i.chapter.book.id = :bookId")
+    void deleteByBookId(@Param("bookId") String bookId);
 }

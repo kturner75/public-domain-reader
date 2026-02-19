@@ -163,6 +163,34 @@ class ParagraphAnnotationServiceTest {
         assertEquals("Hello world.", result.get().get(0).snippet());
     }
 
+    @Test
+    void saveAnnotation_withUserId_usesUserScopedLookupAndPersistsUserOwnership() {
+        ChapterEntity chapter = chapter("book-1", "ch-9");
+        when(chapterRepository.findByIdWithBook("ch-9")).thenReturn(Optional.of(chapter));
+        when(paragraphRepository.existsByChapterIdAndParagraphIndex("ch-9", 1)).thenReturn(true);
+        when(paragraphAnnotationRepository.findByUserIdAndBook_IdAndChapter_IdAndParagraphIndex(
+                "user-1", "book-1", "ch-9", 1
+        )).thenReturn(Optional.empty());
+        when(paragraphAnnotationRepository.save(any(ParagraphAnnotationEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ParagraphAnnotationService.SaveOutcome outcome = paragraphAnnotationService.saveAnnotation(
+                "user:user-1",
+                "user-1",
+                "book-1",
+                "ch-9",
+                1,
+                true,
+                "Account-owned note",
+                false
+        );
+
+        assertEquals(ParagraphAnnotationService.SaveStatus.SAVED, outcome.status());
+        ArgumentCaptor<ParagraphAnnotationEntity> captor = ArgumentCaptor.forClass(ParagraphAnnotationEntity.class);
+        verify(paragraphAnnotationRepository).save(captor.capture());
+        assertEquals("user-1", captor.getValue().getUserId());
+        assertEquals("user:user-1", captor.getValue().getReaderId());
+    }
+
     private ChapterEntity chapter(String bookId, String chapterId) {
         BookEntity book = new BookEntity("Title", "Author", "gutenberg");
         book.setId(bookId);

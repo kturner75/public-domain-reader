@@ -15,6 +15,12 @@
         <div class="library-container">
             <h1 class="library-title">Library</h1>
             <p class="library-subtitle">Pick up where you left off, or discover your next read.</p>
+            <div class="library-account-row">
+                <button id="account-toggle-library" class="chapter-recap-btn chapter-recap-btn-secondary hidden" type="button">
+                    Reader Account
+                </button>
+                <span id="account-library-status" class="library-account-status hidden"></span>
+            </div>
             <div class="library-search-container">
                 <svg class="library-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="11" cy="11" r="8"/>
@@ -117,6 +123,7 @@
                     <button id="mobile-menu-bookmarks" class="mobile-header-menu-item" type="button">Bookmarks</button>
                     <button id="mobile-menu-favorite" class="mobile-header-menu-item" type="button">Add to My List</button>
                     <button id="mobile-menu-recap-enable" class="mobile-header-menu-item hidden" type="button">Re-enable Recaps</button>
+                    <button id="mobile-menu-account" class="mobile-header-menu-item hidden" type="button">Reader Account (Sign In)</button>
                     <button id="mobile-menu-auth" class="mobile-header-menu-item hidden" type="button">Sign In</button>
                     <button id="mobile-menu-speed-reading-toggle" class="mobile-header-menu-item" type="button">Speed Reading</button>
                 </div>
@@ -194,16 +201,21 @@
             <button id="recap-enable-btn" class="header-btn recap-enable-btn header-mobile-action hidden" title="Re-enable chapter recap popups">
                 Re-enable Recaps
             </button>
+            <button id="account-toggle" class="header-btn auth-toggle header-mobile-action hidden" title="Reader account">
+                Reader Account
+            </button>
             <button id="auth-toggle" class="header-btn auth-toggle header-mobile-action hidden" title="Collaborator access">
                 Sign In
             </button>
             <div class="header-right-controls">
-                <div class="search-container">
+                <div id="search-container" class="search-container">
+                    <button id="search-toggle" class="search-toggle" type="button" aria-label="Search" aria-expanded="false">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="M21 21l-4.35-4.35"/>
+                        </svg>
+                    </button>
                     <input type="text" id="search-input" class="search-input" placeholder="Search... (press /)" />
-                    <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"/>
-                        <path d="M21 21l-4.35-4.35"/>
-                    </svg>
                 </div>
                 <div class="reader-settings-menu header-mobile-action">
                     <button id="reader-settings-toggle" class="header-btn" type="button" title="Reader preferences" aria-label="Reader preferences">
@@ -683,6 +695,29 @@
                 </div>
                 <p id="achievements-modal-summary" class="auth-modal-help"></p>
                 <div id="achievements-modal-list" class="achievements-modal-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reader Account Modal -->
+    <div id="account-modal" class="auth-modal hidden">
+        <div id="account-modal-backdrop" class="auth-modal-backdrop"></div>
+        <div class="auth-modal-card">
+            <div class="auth-modal-header">
+                <h3>Reader Account</h3>
+                <button id="account-modal-close" class="auth-modal-close" title="Close (Esc)">&times;</button>
+            </div>
+            <p class="auth-modal-help">Sign in or register to sync progress and keep data across devices.</p>
+            <p id="account-modal-status" class="auth-modal-status"></p>
+            <p id="account-modal-email" class="auth-modal-help hidden"></p>
+            <label for="account-email" class="auth-modal-label">Email</label>
+            <input id="account-email" class="auth-modal-input" type="email" autocomplete="email" />
+            <label for="account-password" class="auth-modal-label">Password</label>
+            <input id="account-password" class="auth-modal-input" type="password" autocomplete="current-password" />
+            <div class="auth-modal-actions">
+                <button id="account-signout" class="chapter-recap-btn chapter-recap-btn-secondary hidden">Sign Out</button>
+                <button id="account-register" class="chapter-recap-btn chapter-recap-btn-secondary">Register</button>
+                <button id="account-signin" class="chapter-recap-btn chapter-recap-btn-primary">Sign In</button>
             </div>
         </div>
     </div>

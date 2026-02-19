@@ -1,6 +1,7 @@
 package org.example.reader.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.example.reader.config.RequestCorrelation;
 import org.example.reader.model.ChapterQuizGradeResponse;
 import org.example.reader.model.ChapterQuizResponse;
@@ -9,6 +10,7 @@ import org.example.reader.model.QuizTrophy;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.QuizMetricsService;
 import org.example.reader.service.QuizProgressService;
+import org.example.reader.service.ReaderIdentityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,14 +53,17 @@ public class ChapterQuizController {
     private final ChapterQuizService chapterQuizService;
     private final QuizProgressService quizProgressService;
     private final QuizMetricsService quizMetricsService;
+    private final ReaderIdentityService readerIdentityService;
 
     public ChapterQuizController(
             ChapterQuizService chapterQuizService,
             QuizProgressService quizProgressService,
-            QuizMetricsService quizMetricsService) {
+            QuizMetricsService quizMetricsService,
+            ReaderIdentityService readerIdentityService) {
         this.chapterQuizService = chapterQuizService;
         this.quizProgressService = quizProgressService;
         this.quizMetricsService = quizMetricsService;
+        this.readerIdentityService = readerIdentityService;
     }
 
     @GetMapping("/status")
@@ -80,8 +85,13 @@ public class ChapterQuizController {
     }
 
     @GetMapping("/book/{bookId}/status")
-    public Map<String, Object> getBookStatus(@PathVariable String bookId) {
+    public Map<String, Object> getBookStatus(
+            @PathVariable String bookId,
+            HttpServletRequest request,
+            HttpServletResponse response) {
         Map<String, Object> status = new HashMap<>();
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(request, response);
+        String readerId = identity.accountAuthenticated() ? null : identity.readerKey();
         status.put("bookId", bookId);
         status.put("enabled", quizEnabled);
         status.put("reasoningEnabled", reasoningEnabled);
@@ -94,17 +104,22 @@ public class ChapterQuizController {
         status.put("difficultyRampEnabled", difficultyRampEnabled);
         status.put("difficultyRampChapterStep", difficultyRampChapterStep);
         status.put("difficultyRampMaxLevel", difficultyRampMaxLevel);
-        status.put("trophiesUnlocked", quizProgressService.getBookTrophies(bookId).size());
+        status.put("trophiesUnlocked", quizProgressService.getBookTrophies(bookId, readerId, identity.userId()).size());
         status.put("metrics", quizMetricsService.snapshot());
         return status;
     }
 
     @GetMapping("/book/{bookId}/trophies")
-    public ResponseEntity<List<QuizTrophy>> getBookTrophies(@PathVariable String bookId) {
+    public ResponseEntity<List<QuizTrophy>> getBookTrophies(
+            @PathVariable String bookId,
+            HttpServletRequest request,
+            HttpServletResponse response) {
         if (!isQuizFeatureEnabled()) {
             return ResponseEntity.status(403).build();
         }
-        return ResponseEntity.ok(quizProgressService.getBookTrophies(bookId));
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(request, response);
+        String readerId = identity.accountAuthenticated() ? null : identity.readerKey();
+        return ResponseEntity.ok(quizProgressService.getBookTrophies(bookId, readerId, identity.userId()));
     }
 
     @GetMapping("/chapter/{chapterId}")
@@ -207,7 +222,9 @@ public class ChapterQuizController {
     @PostMapping("/chapter/{chapterId}/grade")
     public ResponseEntity<ChapterQuizGradeResponse> gradeQuiz(
             @PathVariable String chapterId,
-            @RequestBody QuizSubmissionRequest request) {
+            @RequestBody QuizSubmissionRequest request,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse) {
         if (!quizEnabled) {
             return ResponseEntity.status(403).build();
         }
@@ -222,8 +239,15 @@ public class ChapterQuizController {
             return ResponseEntity.badRequest().build();
         }
 
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(httpRequest, httpResponse);
+        String readerId = identity.accountAuthenticated() ? null : identity.readerKey();
         try {
-            return chapterQuizService.gradeQuiz(chapterId, request.selectedOptionIndexes())
+            return chapterQuizService.gradeQuiz(
+                            chapterId,
+                            request.selectedOptionIndexes(),
+                            readerId,
+                            identity.userId()
+                    )
                     .map(ResponseEntity::ok)
                     .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (IllegalStateException e) {

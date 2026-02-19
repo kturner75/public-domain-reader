@@ -17,7 +17,10 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "quiz_trophies",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"book_id", "code"})
+        uniqueConstraints = {
+                @UniqueConstraint(columnNames = {"user_id", "book_id", "code"}),
+                @UniqueConstraint(columnNames = {"reader_id", "book_id", "code"})
+        }
 )
 public class QuizTrophyEntity {
 
@@ -28,6 +31,12 @@ public class QuizTrophyEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "book_id", nullable = false)
     private BookEntity book;
+
+    @Column(name = "reader_id", length = 120)
+    private String readerId;
+
+    @Column(name = "user_id", length = 255)
+    private String userId;
 
     @Column(nullable = false, length = 64)
     private String code;
@@ -58,6 +67,22 @@ public class QuizTrophyEntity {
 
     public void setBook(BookEntity book) {
         this.book = book;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getReaderId() {
+        return readerId;
+    }
+
+    public void setReaderId(String readerId) {
+        this.readerId = readerId;
     }
 
     public String getCode() {

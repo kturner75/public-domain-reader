@@ -120,3 +120,31 @@ Notes:
 - Current coverage includes retry UX for recap overlay load errors, recap chat send failures, and character chat send failures (`e2e/retry-flows.spec.js`).
 - CI runs this suite via GitHub Actions workflow `/Users/kevinturner/IdeaProjects/public-domain-reader/.github/workflows/playwright-e2e.yml`.
 - Backend CI test coverage runs via `/Users/kevinturner/IdeaProjects/public-domain-reader/.github/workflows/maven-test.yml` (`mvn test` on Java 21).
+
+## PostgreSQL Roles (Flyway + Runtime)
+
+For PostgreSQL environments, use separate DB roles:
+- `pdr_migrator`: Flyway migration user (must own tables/sequences Flyway alters).
+- `pdr_app`: runtime application user (DML only).
+
+Why:
+- Prevents startup failures like `ERROR: must be owner of table ...` during Flyway migrations.
+- Keeps runtime permissions minimal while migrations remain reliable.
+
+Application properties (recommended in local-dev/prod profile overrides):
+
+```properties
+spring.datasource.username=${DB_APP_USER:pdr_app}
+spring.datasource.password=${DB_APP_PASSWORD:CHANGE_ME_APP}
+
+spring.flyway.user=${DB_MIGRATOR_USER:pdr_migrator}
+spring.flyway.password=${DB_MIGRATOR_PASSWORD:CHANGE_ME_MIGRATOR}
+
+# For shared/prod DBs, avoid runtime schema mutation
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+Operational notes:
+- Ensure `pdr_migrator` owns existing objects in `public` before running new migrations.
+- Grant `pdr_app` CRUD on tables and sequence usage/select/update.
+- Set default privileges from `pdr_migrator` so future tables/sequences are automatically usable by `pdr_app`.

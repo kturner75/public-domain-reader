@@ -7,6 +7,7 @@ This folder is the source of truth for product scope and planning.
 - `current-features.md`: implemented capabilities verified against code.
 - `backlog.md`: prioritized work queue (features, improvements, tech debt).
 - `bl-023-qa-checklist.md`: mobile QA + desktop regression checklist for adaptive reader behavior.
+- `bl-021-auth-architecture-adr.md`: auth and security decision record for user registration/account rollout.
 - `landing-ranking.md`: deterministic ranking rules for personalized landing queues.
 - `discover-affinity.md`: deterministic recommendation model for the `Discover` rail.
 - `classroom-landing-usage.md`: setup and usage guide for classroom-aware landing mode (`BL-018.6`).

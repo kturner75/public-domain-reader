@@ -227,6 +227,23 @@ public class ChapterQuizService {
 
     @Transactional
     public Optional<ChapterQuizGradeResponse> gradeQuiz(String chapterId, List<Integer> selectedOptionIndexes) {
+        return gradeQuiz(chapterId, selectedOptionIndexes, null, null);
+    }
+
+    @Transactional
+    public Optional<ChapterQuizGradeResponse> gradeQuiz(
+            String chapterId,
+            List<Integer> selectedOptionIndexes,
+            String userId) {
+        return gradeQuiz(chapterId, selectedOptionIndexes, null, userId);
+    }
+
+    @Transactional
+    public Optional<ChapterQuizGradeResponse> gradeQuiz(
+            String chapterId,
+            List<Integer> selectedOptionIndexes,
+            String readerId,
+            String userId) {
         Optional<ChapterQuizEntity> quizOpt = chapterQuizRepository.findByChapterIdWithChapterAndBook(chapterId);
         if (quizOpt.isEmpty()) {
             return Optional.empty();
@@ -279,6 +296,8 @@ public class ChapterQuizService {
         int difficultyLevel = resolveDifficultyLevel(quiz.getChapter());
         QuizProgressService.ProgressUpdate progressUpdate = quizProgressService.recordAttemptAndEvaluate(
                 quiz.getChapter(),
+                readerId,
+                userId,
                 scorePercent,
                 correctAnswers,
                 totalQuestions,

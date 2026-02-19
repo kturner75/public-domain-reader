@@ -100,6 +100,12 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Password hashing for account auth -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+
     <!-- Netty native DNS resolver for macOS (prevents startup warning) -->
     <dependency>
       <groupId>io.netty</groupId>

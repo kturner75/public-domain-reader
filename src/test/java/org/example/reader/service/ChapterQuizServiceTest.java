@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -275,7 +276,14 @@ class ChapterQuizServiceTest {
         ))));
 
         when(chapterQuizRepository.findByChapterIdWithChapterAndBook("chapter-1")).thenReturn(Optional.of(entity));
-        when(quizProgressService.recordAttemptAndEvaluate(any(), anyInt(), anyInt(), anyInt(), anyInt()))
+        when(quizProgressService.recordAttemptAndEvaluate(
+                any(),
+                isNull(),
+                isNull(),
+                anyInt(),
+                anyInt(),
+                anyInt(),
+                anyInt()))
                 .thenReturn(new QuizProgressService.ProgressUpdate(
                         List.of(),
                         new org.example.reader.model.QuizProgress(2, 1, 0)
