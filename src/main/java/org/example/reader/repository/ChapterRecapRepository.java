@@ -91,4 +91,8 @@ public interface ChapterRecapRepository extends JpaRepository<ChapterRecapEntity
 
     @Query("SELECT cr FROM ChapterRecapEntity cr JOIN FETCH cr.chapter c JOIN FETCH c.book WHERE c.id = :chapterId")
     Optional<ChapterRecapEntity> findByChapterIdWithChapterAndBook(@Param("chapterId") String chapterId);
+
+    @Modifying
+    @Query("DELETE FROM ChapterRecapEntity cr WHERE cr.chapter.book.id = :bookId")
+    void deleteByBookId(@Param("bookId") String bookId);
 }

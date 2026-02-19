@@ -7,7 +7,7 @@ import org.example.reader.model.ParagraphAnnotation;
 import org.example.reader.model.Paragraph;
 import org.example.reader.service.BookStorageService;
 import org.example.reader.service.ParagraphAnnotationService;
-import org.example.reader.service.ReaderProfileService;
+import org.example.reader.service.ReaderIdentityService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -39,7 +39,7 @@ class LibraryControllerTest {
     private ParagraphAnnotationService paragraphAnnotationService;
 
     @MockitoBean
-    private ReaderProfileService readerProfileService;
+    private ReaderIdentityService readerIdentityService;
 
     @Test
     void listBooks_returnsAllBooks() throws Exception {
@@ -193,8 +193,9 @@ class LibraryControllerTest {
         List<ParagraphAnnotation> annotations = List.of(
                 new ParagraphAnnotation("ch-1", 2, true, "Important line", false, null)
         );
-        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
-        when(paragraphAnnotationService.getBookAnnotations("reader-1", "book-1"))
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(paragraphAnnotationService.getBookAnnotations("reader-1", null, "book-1"))
                 .thenReturn(Optional.of(annotations));
 
         mockMvc.perform(get("/api/library/book-1/annotations"))
@@ -208,12 +209,28 @@ class LibraryControllerTest {
     }
 
     @Test
+    void getAnnotations_withAccountIdentity_usesUserScopedReaderKey() throws Exception {
+        List<ParagraphAnnotation> annotations = List.of(
+                new ParagraphAnnotation("ch-1", 1, false, null, true, null)
+        );
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("user:user-42", true, "user-42"));
+        when(paragraphAnnotationService.getBookAnnotations("user:user-42", "user-42", "book-1"))
+                .thenReturn(Optional.of(annotations));
+
+        mockMvc.perform(get("/api/library/book-1/annotations"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].bookmarked", is(true)));
+    }
+
+    @Test
     void getBookmarks_returnsReaderBookmarks() throws Exception {
         List<BookmarkedParagraph> bookmarks = List.of(
                 new BookmarkedParagraph("ch-3", "Chapter 3", 7, "A short snippet.", null)
         );
-        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
-        when(paragraphAnnotationService.getBookmarkedParagraphs("reader-1", "book-1"))
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(paragraphAnnotationService.getBookmarkedParagraphs("reader-1", null, "book-1"))
                 .thenReturn(Optional.of(bookmarks));
 
         mockMvc.perform(get("/api/library/book-1/bookmarks"))
@@ -228,8 +245,9 @@ class LibraryControllerTest {
     @Test
     void upsertAnnotation_returnsSavedAnnotation() throws Exception {
         ParagraphAnnotation saved = new ParagraphAnnotation("ch-1", 4, true, "Saved note", true, null);
-        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
-        when(paragraphAnnotationService.saveAnnotation("reader-1", "book-1", "ch-1", 4, true, "Saved note", true))
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(paragraphAnnotationService.saveAnnotation("reader-1", null, "book-1", "ch-1", 4, true, "Saved note", true))
                 .thenReturn(new ParagraphAnnotationService.SaveOutcome(
                         ParagraphAnnotationService.SaveStatus.SAVED,
                         saved
@@ -248,8 +266,9 @@ class LibraryControllerTest {
 
     @Test
     void upsertAnnotation_whenCleared_returnsNoContent() throws Exception {
-        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
-        when(paragraphAnnotationService.saveAnnotation("reader-1", "book-1", "ch-1", 4, false, "", false))
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(paragraphAnnotationService.saveAnnotation("reader-1", null, "book-1", "ch-1", 4, false, "", false))
                 .thenReturn(new ParagraphAnnotationService.SaveOutcome(
                         ParagraphAnnotationService.SaveStatus.CLEARED,
                         null
@@ -263,8 +282,9 @@ class LibraryControllerTest {
 
     @Test
     void deleteAnnotation_returnsNoContent() throws Exception {
-        when(readerProfileService.resolveReaderId(any(), any())).thenReturn("reader-1");
-        when(paragraphAnnotationService.deleteAnnotation("reader-1", "book-1", "ch-1", 2))
+        when(readerIdentityService.resolve(any(), any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(paragraphAnnotationService.deleteAnnotation("reader-1", null, "book-1", "ch-1", 2))
                 .thenReturn(ParagraphAnnotationService.DeleteStatus.DELETED);
 
         mockMvc.perform(delete("/api/library/book-1/annotations/ch-1/2"))

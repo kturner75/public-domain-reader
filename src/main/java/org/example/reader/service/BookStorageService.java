@@ -7,7 +7,14 @@ import org.example.reader.model.Book;
 import org.example.reader.model.ChapterContent;
 import org.example.reader.model.Paragraph;
 import org.example.reader.repository.BookRepository;
+import org.example.reader.repository.ChapterAnalysisRepository;
+import org.example.reader.repository.ChapterQuizRepository;
+import org.example.reader.repository.ChapterRecapRepository;
 import org.example.reader.repository.ChapterRepository;
+import org.example.reader.repository.CharacterRepository;
+import org.example.reader.repository.IllustrationRepository;
+import org.example.reader.repository.QuizAttemptRepository;
+import org.example.reader.repository.QuizTrophyRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,13 +26,34 @@ public class BookStorageService {
 
     private final BookRepository bookRepository;
     private final ChapterRepository chapterRepository;
+    private final ChapterAnalysisRepository chapterAnalysisRepository;
+    private final ChapterRecapRepository chapterRecapRepository;
+    private final ChapterQuizRepository chapterQuizRepository;
+    private final IllustrationRepository illustrationRepository;
+    private final CharacterRepository characterRepository;
+    private final QuizAttemptRepository quizAttemptRepository;
+    private final QuizTrophyRepository quizTrophyRepository;
     private final SearchService searchService;
 
     public BookStorageService(BookRepository bookRepository,
                               ChapterRepository chapterRepository,
+                              ChapterAnalysisRepository chapterAnalysisRepository,
+                              ChapterRecapRepository chapterRecapRepository,
+                              ChapterQuizRepository chapterQuizRepository,
+                              IllustrationRepository illustrationRepository,
+                              CharacterRepository characterRepository,
+                              QuizAttemptRepository quizAttemptRepository,
+                              QuizTrophyRepository quizTrophyRepository,
                               SearchService searchService) {
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
+        this.chapterAnalysisRepository = chapterAnalysisRepository;
+        this.chapterRecapRepository = chapterRecapRepository;
+        this.chapterQuizRepository = chapterQuizRepository;
+        this.illustrationRepository = illustrationRepository;
+        this.characterRepository = characterRepository;
+        this.quizAttemptRepository = quizAttemptRepository;
+        this.quizTrophyRepository = quizTrophyRepository;
         this.searchService = searchService;
     }
 
@@ -88,6 +116,7 @@ public class BookStorageService {
         if (!bookRepository.existsById(bookId)) {
             return false;
         }
+        deleteBookDependents(bookId);
         bookRepository.deleteById(bookId);
         try {
             searchService.deleteByBookId(bookId);
@@ -102,13 +131,14 @@ public class BookStorageService {
         List<BookEntity> books = bookRepository.findAll();
         int count = books.size();
         for (BookEntity book : books) {
+            deleteBookDependents(book.getId());
             try {
                 searchService.deleteByBookId(book.getId());
             } catch (Exception e) {
                 System.err.println("Failed to remove book from search index: " + e.getMessage());
             }
+            bookRepository.deleteById(book.getId());
         }
-        bookRepository.deleteAll();
         return count;
     }
 
@@ -147,6 +177,16 @@ public class BookStorageService {
     @Transactional(readOnly = true)
     public void reindexAll() {
         bookRepository.findAll().forEach(this::indexBook);
+    }
+
+    private void deleteBookDependents(String bookId) {
+        quizAttemptRepository.deleteByBookId(bookId);
+        chapterQuizRepository.deleteByBookId(bookId);
+        chapterRecapRepository.deleteByBookId(bookId);
+        chapterAnalysisRepository.deleteByBookId(bookId);
+        illustrationRepository.deleteByBookId(bookId);
+        characterRepository.deleteByBookId(bookId);
+        quizTrophyRepository.deleteByBookId(bookId);
     }
 
     // Convert entity to DTO

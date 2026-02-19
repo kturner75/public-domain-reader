@@ -9,6 +9,7 @@ import org.example.reader.model.QuizTrophy;
 import org.example.reader.service.QuizProgressService;
 import org.example.reader.service.ChapterQuizService;
 import org.example.reader.service.QuizMetricsService;
+import org.example.reader.service.ReaderIdentityService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -46,6 +47,9 @@ class ChapterQuizControllerTest {
 
     @MockitoBean
     private QuizMetricsService quizMetricsService;
+
+    @MockitoBean
+    private ReaderIdentityService readerIdentityService;
 
     @Test
     void getStatus_returnsFeatureState() throws Exception {
@@ -186,7 +190,10 @@ class ChapterQuizControllerTest {
                 )
         );
         when(chapterQuizService.findBookIdForChapter("chapter-1")).thenReturn(Optional.of("book-1"));
-        when(chapterQuizService.gradeQuiz("chapter-1", List.of(1, 0, 2))).thenReturn(Optional.of(graded));
+        when(readerIdentityService.resolve(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(chapterQuizService.gradeQuiz("chapter-1", List.of(1, 0, 2), "reader-1", null))
+                .thenReturn(Optional.of(graded));
 
         mockMvc.perform(post("/api/quizzes/chapter/chapter-1/grade")
                         .contentType("application/json")
@@ -202,7 +209,9 @@ class ChapterQuizControllerTest {
 
     @Test
     void getBookTrophies_returnsUnlockedTrophies() throws Exception {
-        when(quizProgressService.getBookTrophies("book-1")).thenReturn(List.of(
+        when(readerIdentityService.resolve(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("reader-1", false, null));
+        when(quizProgressService.getBookTrophies("book-1", "reader-1", null)).thenReturn(List.of(
                 new QuizTrophy(
                         "quiz_first_attempt",
                         "First Checkpoint",
@@ -215,5 +224,23 @@ class ChapterQuizControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].code", is("quiz_first_attempt")))
                 .andExpect(jsonPath("$[0].title", is("First Checkpoint")));
+    }
+
+    @Test
+    void getBookTrophies_authenticatedUser_usesUserScopedTrophies() throws Exception {
+        when(readerIdentityService.resolve(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new ReaderIdentityService.ReaderIdentity("user:user-99", true, "user-99"));
+        when(quizProgressService.getBookTrophies("book-1", null, "user-99")).thenReturn(List.of(
+                new QuizTrophy(
+                        "quiz_first_attempt",
+                        "First Checkpoint",
+                        "Complete your first chapter quiz.",
+                        LocalDateTime.of(2026, 2, 11, 12, 0)
+                )
+        ));
+
+        mockMvc.perform(get("/api/quizzes/book/book-1/trophies"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].code", is("quiz_first_attempt")));
     }
 }

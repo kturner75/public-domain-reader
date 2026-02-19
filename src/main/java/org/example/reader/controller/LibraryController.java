@@ -8,7 +8,7 @@ import org.example.reader.model.ChapterContent;
 import org.example.reader.model.ParagraphAnnotation;
 import org.example.reader.service.BookStorageService;
 import org.example.reader.service.ParagraphAnnotationService;
-import org.example.reader.service.ReaderProfileService;
+import org.example.reader.service.ReaderIdentityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,15 +27,15 @@ public class LibraryController {
 
     private final BookStorageService bookStorageService;
     private final ParagraphAnnotationService paragraphAnnotationService;
-    private final ReaderProfileService readerProfileService;
+    private final ReaderIdentityService readerIdentityService;
 
     public LibraryController(
             BookStorageService bookStorageService,
             ParagraphAnnotationService paragraphAnnotationService,
-            ReaderProfileService readerProfileService) {
+            ReaderIdentityService readerIdentityService) {
         this.bookStorageService = bookStorageService;
         this.paragraphAnnotationService = paragraphAnnotationService;
-        this.readerProfileService = readerProfileService;
+        this.readerIdentityService = readerIdentityService;
     }
 
     @GetMapping
@@ -81,8 +81,8 @@ public class LibraryController {
             @PathVariable String bookId,
             HttpServletRequest request,
             HttpServletResponse response) {
-        String readerId = readerProfileService.resolveReaderId(request, response);
-        return paragraphAnnotationService.getBookAnnotations(readerId, bookId)
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(request, response);
+        return paragraphAnnotationService.getBookAnnotations(identity.readerKey(), identity.userId(), bookId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -92,8 +92,8 @@ public class LibraryController {
             @PathVariable String bookId,
             HttpServletRequest request,
             HttpServletResponse response) {
-        String readerId = readerProfileService.resolveReaderId(request, response);
-        return paragraphAnnotationService.getBookmarkedParagraphs(readerId, bookId)
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(request, response);
+        return paragraphAnnotationService.getBookmarkedParagraphs(identity.readerKey(), identity.userId(), bookId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -112,9 +112,10 @@ public class LibraryController {
 
         boolean highlighted = Boolean.TRUE.equals(request.highlighted());
         boolean bookmarked = Boolean.TRUE.equals(request.bookmarked());
-        String readerId = readerProfileService.resolveReaderId(httpRequest, httpResponse);
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(httpRequest, httpResponse);
         ParagraphAnnotationService.SaveOutcome outcome = paragraphAnnotationService.saveAnnotation(
-                readerId,
+                identity.readerKey(),
+                identity.userId(),
                 bookId,
                 chapterId,
                 paragraphIndex,
@@ -139,9 +140,10 @@ public class LibraryController {
             @PathVariable int paragraphIndex,
             HttpServletRequest request,
             HttpServletResponse response) {
-        String readerId = readerProfileService.resolveReaderId(request, response);
+        ReaderIdentityService.ReaderIdentity identity = readerIdentityService.resolve(request, response);
         ParagraphAnnotationService.DeleteStatus status = paragraphAnnotationService.deleteAnnotation(
-                readerId,
+                identity.readerKey(),
+                identity.userId(),
                 bookId,
                 chapterId,
                 paragraphIndex

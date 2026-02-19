@@ -25,6 +25,12 @@ public class QuizAttemptEntity {
     @JoinColumn(name = "chapter_id", nullable = false)
     private ChapterEntity chapter;
 
+    @Column(name = "reader_id", length = 120)
+    private String readerId;
+
+    @Column(name = "user_id", length = 255)
+    private String userId;
+
     @Column(nullable = false)
     private int scorePercent;
 
@@ -60,6 +66,22 @@ public class QuizAttemptEntity {
 
     public void setChapter(ChapterEntity chapter) {
         this.chapter = chapter;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getReaderId() {
+        return readerId;
+    }
+
+    public void setReaderId(String readerId) {
+        this.readerId = readerId;
     }
 
     public int getScorePercent() {

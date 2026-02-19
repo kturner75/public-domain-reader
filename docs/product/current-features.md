@@ -1,6 +1,6 @@
 # Current Feature Inventory
 
-Last audited: 2026-02-17
+Last audited: 2026-02-19
 
 This inventory reflects implemented behavior in backend controllers/services and `static/js/reader.js`.
 
@@ -15,6 +15,7 @@ This inventory reflects implemented behavior in backend controllers/services and
   - chapter list: `c`
 - Chapter list overlay with keyboard selection.
 - Reader search (`/`) with in-book result navigation.
+- Desktop reader header search can run in a compact icon-only state and expand on click or `/`.
 - Resume state persisted in `localStorage` (book/chapter/page/paragraph).
 - Recently-read list in library.
 - In-reader paragraph annotations:
@@ -23,6 +24,7 @@ This inventory reflects implemented behavior in backend controllers/services and
   - bookmark toggle (`b`)
   - bookmark jump overlay (`B`)
 - Annotation data persisted server-side per reader profile cookie.
+- `Escape` closes active overlays/modals/search focus; it does not force navigation back to library from normal reading state.
 
 ## Library and Import
 
@@ -31,10 +33,23 @@ This inventory reflects implemented behavior in backend controllers/services and
 - Import book by Gutenberg ID.
 - Detect and mark already-imported catalog books.
 - Library APIs for list/get/delete/delete-all books.
+- Book deletion cleans dependent generation/quiz/trophy records before deleting the parent book to avoid FK-blocked deletes.
 - Per-book feature flags for:
   - `ttsEnabled`
   - `illustrationEnabled`
   - `characterEnabled`
+
+## Reader Accounts and Identity (BL-021)
+
+- Reader account auth endpoints are available under `/api/account`:
+  - `POST /api/account/register`
+  - `POST /api/account/login`
+  - `POST /api/account/logout`
+  - `GET /api/account/status`
+  - `POST /api/account/claim-sync`
+- Reader account UI is available in both library and reader flows, with one-time claim/sync to migrate anonymous/local state into the signed-in account.
+- Reader-scoped API behavior resolves identity by authenticated account `userId` when present and falls back to anonymous reader cookie identity when not authenticated.
+- User-scoped ownership is implemented for reader data paths used by annotations/bookmarks/progress/quiz attempts/trophies.
 
 ## Landing Personalization (BL-018)
 
@@ -150,6 +165,7 @@ This inventory reflects implemented behavior in backend controllers/services and
   - API key auth via `X-API-Key` + `security.public.api-key` (`PUBLIC_API_KEY` env supported).
   - Collaborator session auth via `/api/auth/login` + HttpOnly cookie (`security.public.collaborator.password`).
 - Browser UI support for collaborator sign-in/out via header auth toggle and modal.
+- In public mode, collaborator prompts are tied to protected actions; passive background prefetch/generation calls do not force collaborator auth modal display.
 - Fixed-window rate limits for sensitive endpoints with explicit `429` payloads and `Retry-After`:
   - generation routes (`tts`, `illustrations`, `characters`, `recaps`, `quizzes`, `pregen`)
   - chat routes (`character chat`, `recap chat`)

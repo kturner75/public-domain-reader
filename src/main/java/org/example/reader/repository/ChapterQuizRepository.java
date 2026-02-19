@@ -3,6 +3,7 @@ package org.example.reader.repository;
 import org.example.reader.entity.ChapterQuizEntity;
 import org.example.reader.entity.ChapterQuizStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -21,4 +22,8 @@ public interface ChapterQuizRepository extends JpaRepository<ChapterQuizEntity, 
 
     @Query("SELECT cq FROM ChapterQuizEntity cq JOIN FETCH cq.chapter c JOIN FETCH c.book WHERE c.id = :chapterId")
     Optional<ChapterQuizEntity> findByChapterIdWithChapterAndBook(@Param("chapterId") String chapterId);
+
+    @Modifying
+    @Query("DELETE FROM ChapterQuizEntity cq WHERE cq.chapter.book.id = :bookId")
+    void deleteByBookId(@Param("bookId") String bookId);
 }

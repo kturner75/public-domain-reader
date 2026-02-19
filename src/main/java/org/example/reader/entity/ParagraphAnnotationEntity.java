@@ -34,6 +34,9 @@ public class ParagraphAnnotationEntity {
     @Column(name = "reader_id", nullable = false, length = 120)
     private String readerId;
 
+    @Column(name = "user_id", length = 255)
+    private String userId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "book_id", nullable = false)
     private BookEntity book;
@@ -86,6 +89,14 @@ public class ParagraphAnnotationEntity {
 
     public void setReaderId(String readerId) {
         this.readerId = readerId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     public BookEntity getBook() {

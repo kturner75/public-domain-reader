@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class QuizProgressService {
@@ -59,8 +60,34 @@ public class QuizProgressService {
             int correctAnswers,
             int totalQuestions,
             int difficultyLevel) {
+        return recordAttemptAndEvaluate(chapter, null, null, scorePercent, correctAnswers, totalQuestions, difficultyLevel);
+    }
+
+    @Transactional
+    public ProgressUpdate recordAttemptAndEvaluate(
+            ChapterEntity chapter,
+            String userId,
+            int scorePercent,
+            int correctAnswers,
+            int totalQuestions,
+            int difficultyLevel) {
+        return recordAttemptAndEvaluate(chapter, null, userId, scorePercent, correctAnswers, totalQuestions, difficultyLevel);
+    }
+
+    @Transactional
+    public ProgressUpdate recordAttemptAndEvaluate(
+            ChapterEntity chapter,
+            String readerId,
+            String userId,
+            int scorePercent,
+            int correctAnswers,
+            int totalQuestions,
+            int difficultyLevel) {
+        String scopedReaderId = normalizeReaderId(readerId, userId);
         QuizAttemptEntity attempt = new QuizAttemptEntity();
         attempt.setChapter(chapter);
+        attempt.setReaderId(scopedReaderId);
+        attempt.setUserId(userId);
         attempt.setScorePercent(scorePercent);
         attempt.setCorrectAnswers(correctAnswers);
         attempt.setTotalQuestions(totalQuestions);
@@ -69,15 +96,15 @@ public class QuizProgressService {
         quizAttemptRepository.save(attempt);
 
         String bookId = chapter.getBook().getId();
-        long totalAttempts = quizAttemptRepository.countByChapterBookId(bookId);
-        long perfectAttempts = quizAttemptRepository.countByChapterBookIdAndPerfectTrue(bookId);
-        int currentPerfectStreak = calculateCurrentPerfectStreak(bookId);
+        long totalAttempts = resolveTotalAttempts(bookId, scopedReaderId, userId);
+        long perfectAttempts = resolvePerfectAttempts(bookId, scopedReaderId, userId);
+        int currentPerfectStreak = calculateCurrentPerfectStreak(bookId, scopedReaderId, userId);
 
         List<QuizTrophy> unlocked = new ArrayList<>();
-        unlockIfEligible(chapter.getBook(), FIRST_ATTEMPT, totalAttempts >= 1, unlocked);
-        unlockIfEligible(chapter.getBook(), FIRST_PERFECT, scorePercent == 100, unlocked);
-        unlockIfEligible(chapter.getBook(), PERFECT_STREAK_THREE, currentPerfectStreak >= 3, unlocked);
-        unlockIfEligible(chapter.getBook(), HARD_MODE_PERFECT, scorePercent == 100 && difficultyLevel >= 2, unlocked);
+        unlockIfEligible(chapter.getBook(), scopedReaderId, userId, FIRST_ATTEMPT, totalAttempts >= 1, unlocked);
+        unlockIfEligible(chapter.getBook(), scopedReaderId, userId, FIRST_PERFECT, scorePercent == 100, unlocked);
+        unlockIfEligible(chapter.getBook(), scopedReaderId, userId, PERFECT_STREAK_THREE, currentPerfectStreak >= 3, unlocked);
+        unlockIfEligible(chapter.getBook(), scopedReaderId, userId, HARD_MODE_PERFECT, scorePercent == 100 && difficultyLevel >= 2, unlocked);
 
         return new ProgressUpdate(
                 unlocked,
@@ -87,13 +114,32 @@ public class QuizProgressService {
 
     @Transactional(readOnly = true)
     public List<QuizTrophy> getBookTrophies(String bookId) {
-        return quizTrophyRepository.findByBookIdOrderByUnlockedAtDesc(bookId).stream()
+        return getBookTrophies(bookId, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<QuizTrophy> getBookTrophies(String bookId, String userId) {
+        return getBookTrophies(bookId, null, userId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<QuizTrophy> getBookTrophies(String bookId, String readerId, String userId) {
+        String scopedReaderId = normalizeReaderId(readerId, userId);
+        List<QuizTrophyEntity> trophies = resolveTrophies(bookId, scopedReaderId, userId);
+        return trophies.stream()
                 .map(this::toModel)
                 .toList();
     }
 
-    private int calculateCurrentPerfectStreak(String bookId) {
-        List<QuizAttemptEntity> recentAttempts = quizAttemptRepository.findByChapterBookIdOrderByCreatedAtDesc(bookId);
+    private int calculateCurrentPerfectStreak(String bookId, String readerId, String userId) {
+        List<QuizAttemptEntity> recentAttempts;
+        if (userId != null) {
+            recentAttempts = quizAttemptRepository.findByChapterBookIdAndUserIdOrderByCreatedAtDesc(bookId, userId);
+        } else if (readerId != null) {
+            recentAttempts = quizAttemptRepository.findByChapterBookIdAndReaderIdOrderByCreatedAtDesc(bookId, readerId);
+        } else {
+            recentAttempts = quizAttemptRepository.findByChapterBookIdOrderByCreatedAtDesc(bookId);
+        }
         int streak = 0;
         for (QuizAttemptEntity attempt : recentAttempts) {
             if (attempt.isPerfect()) {
@@ -107,6 +153,8 @@ public class QuizProgressService {
 
     private void unlockIfEligible(
             BookEntity book,
+            String readerId,
+            String userId,
             TrophyDefinition trophy,
             boolean eligible,
             List<QuizTrophy> unlocked) {
@@ -114,12 +162,22 @@ public class QuizProgressService {
             return;
         }
         String bookId = book.getId();
-        if (quizTrophyRepository.findByBookIdAndCode(bookId, trophy.code()).isPresent()) {
+        Optional<QuizTrophyEntity> existing;
+        if (userId != null) {
+            existing = quizTrophyRepository.findByBookIdAndUserIdAndCode(bookId, userId, trophy.code());
+        } else if (readerId != null) {
+            existing = quizTrophyRepository.findByBookIdAndReaderIdAndCode(bookId, readerId, trophy.code());
+        } else {
+            existing = quizTrophyRepository.findByBookIdAndCode(bookId, trophy.code());
+        }
+        if (existing.isPresent()) {
             return;
         }
 
         QuizTrophyEntity entity = new QuizTrophyEntity();
         entity.setBook(book);
+        entity.setReaderId(readerId);
+        entity.setUserId(userId);
         entity.setCode(trophy.code());
         entity.setTitle(trophy.title());
         entity.setDescription(trophy.description());
@@ -130,6 +188,50 @@ public class QuizProgressService {
         } catch (DataIntegrityViolationException ignored) {
             // Duplicate unlock race; safe to ignore.
         }
+    }
+
+    private long resolveTotalAttempts(String bookId, String readerId, String userId) {
+        if (userId != null) {
+            return quizAttemptRepository.countByChapterBookIdAndUserId(bookId, userId);
+        }
+        if (readerId != null) {
+            return quizAttemptRepository.countByChapterBookIdAndReaderId(bookId, readerId);
+        }
+        return quizAttemptRepository.countByChapterBookId(bookId);
+    }
+
+    private long resolvePerfectAttempts(String bookId, String readerId, String userId) {
+        if (userId != null) {
+            return quizAttemptRepository.countByChapterBookIdAndUserIdAndPerfectTrue(bookId, userId);
+        }
+        if (readerId != null) {
+            return quizAttemptRepository.countByChapterBookIdAndReaderIdAndPerfectTrue(bookId, readerId);
+        }
+        return quizAttemptRepository.countByChapterBookIdAndPerfectTrue(bookId);
+    }
+
+    private List<QuizTrophyEntity> resolveTrophies(String bookId, String readerId, String userId) {
+        if (userId != null) {
+            return quizTrophyRepository.findByBookIdAndUserIdOrderByUnlockedAtDesc(bookId, userId);
+        }
+        if (readerId != null) {
+            return quizTrophyRepository.findByBookIdAndReaderIdOrderByUnlockedAtDesc(bookId, readerId);
+        }
+        return quizTrophyRepository.findByBookIdOrderByUnlockedAtDesc(bookId);
+    }
+
+    private String normalizeReaderId(String readerId, String userId) {
+        if (userId != null) {
+            return null;
+        }
+        if (readerId == null) {
+            return null;
+        }
+        String normalized = readerId.trim();
+        if (normalized.isEmpty() || normalized.startsWith("user:")) {
+            return null;
+        }
+        return normalized;
     }
 
     private QuizTrophy toModel(QuizTrophyEntity entity) {

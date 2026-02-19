@@ -8,7 +8,7 @@ import org.example.reader.model.Book;
 import org.example.reader.service.BookStorageService;
 import org.example.reader.service.ParagraphAnnotationService;
 import org.example.reader.service.PublicSessionAuthService;
-import org.example.reader.service.ReaderProfileService;
+import org.example.reader.service.ReaderIdentityService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -56,7 +56,7 @@ class PublicApiGuardInterceptorAdminOnlyTest {
     private ParagraphAnnotationService paragraphAnnotationService;
 
     @MockitoBean
-    private ReaderProfileService readerProfileService;
+    private ReaderIdentityService readerIdentityService;
 
     @Test
     void adminEndpoint_withoutApiKey_returnsUnauthorized() throws Exception {
