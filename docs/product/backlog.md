@@ -1,13 +1,13 @@
 # Product Backlog
 
-Last updated: 2026-02-19
+Last updated: 2026-02-24
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-021.6 - Flagged Rollout + Verification` (`Done`, delivered staged account rollout flags, account migration telemetry, and E2E coverage for register/login/logout + anonymous->account claim-sync flow).
-- Most recent shipped hardening (2026-02-19): refined public-mode auth UX (prevent background generation calls from triggering collaborator prompts), fixed book-delete FK failures by explicitly cleaning dependent recap/quiz/illustration/attempt/trophy records before deleting a book, and streamlined reader header controls (compact desktop search + safer Escape behavior that no longer exits to landing).
+- Most recent completed slice: `BL-028 - Account auth endpoint hardening` (`Done`, delivered account auth rate limiting with `429` + `Retry-After`, login lockout/backoff persistence, and structured non-PII auth audit events with regression test coverage).
+- Most recent shipped hardening (2026-02-24): completed BL-028 account endpoint safeguards, tightened public-mode TTS behavior so cached paragraph audio remains available without collaborator auth while uncached generation remains protected, and finalized compact reader header/menu interactions (logo back-link, desktop shortcuts, keyboard-driven menu navigation).
 - Active priority work: `None currently in progress`; next P1 candidate for additional scoping remains `BL-025` (`Discovery`).
 
 ## Discovery Epics (Pending Product Discussion)
