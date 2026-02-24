@@ -1,13 +1,13 @@
 # Product Backlog
 
-Last updated: 2026-02-19
+Last updated: 2026-02-24
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
 ## Current Delivery State
 
-- Most recent completed slice: `BL-021.6 - Flagged Rollout + Verification` (`Done`, delivered staged account rollout flags, account migration telemetry, and E2E coverage for register/login/logout + anonymous->account claim-sync flow).
-- Most recent shipped hardening (2026-02-19): refined public-mode auth UX (prevent background generation calls from triggering collaborator prompts), fixed book-delete FK failures by explicitly cleaning dependent recap/quiz/illustration/attempt/trophy records before deleting a book, and streamlined reader header controls (compact desktop search + safer Escape behavior that no longer exits to landing).
+- Most recent completed slice: `BL-028 - Account auth endpoint hardening` (`Done`, delivered account auth rate limiting with `429` + `Retry-After`, login lockout/backoff persistence, and structured non-PII auth audit events with regression test coverage).
+- Most recent shipped hardening (2026-02-24): completed BL-028 account endpoint safeguards, tightened public-mode TTS behavior so cached paragraph audio remains available without collaborator auth while uncached generation remains protected, and finalized compact reader header/menu interactions (logo back-link, desktop shortcuts, keyboard-driven menu navigation).
 - Active priority work: `None currently in progress`; next P1 candidate for additional scoping remains `BL-025` (`Discovery`).
 
 ## Discovery Epics (Pending Product Discussion)
@@ -467,7 +467,7 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Type: Tech Debt
 - Priority: P1
 - Effort: M
-- Status: Proposed
+- Status: Done
 - Problem: Reader account endpoints currently lack dedicated anti-abuse throttling and structured auth audit events required by the BL-021 security ADR.
 - Acceptance Criteria:
 - Add per-IP and per-email rate limiting for `/api/account/register` and `/api/account/login` with explicit `429` responses and `Retry-After` headers.
@@ -476,6 +476,8 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Add controller/service tests that cover throttle/lockout behavior and audit event emission paths.
 - Notes/Dependencies:
 - Align implementation with `docs/product/bl-021-auth-architecture-adr.md` section `4. Enforce baseline account security controls`.
+- Session Log:
+- 2026-02-19: Completed BL-028 by adding in-memory per-IP/per-email throttling for `/api/account/register` and `/api/account/login` with explicit `429` + `Retry-After`, persistent login lockout/backoff state on `users` (`failed_login_attempts`, `login_locked_until`) with exponential delay controls, and structured non-PII account auth audit events for register/login/logout/claim-sync outcomes (including rollout-restricted/rate-limited/unauthorized paths); validated with targeted controller/service tests and full `mvn test`.
 
 ### BL-023 - Adaptive mobile reader experience
 - Type: Feature

@@ -20,7 +20,6 @@ class SensitiveApiRequestMatcherTest {
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("DELETE", "/api/pregen/jobs/job-1"));
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/illustrations/chapter/ch-1/request"));
         assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("POST", "/api/quizzes/chapter/ch-1/generate"));
-        assertEquals(GENERATION, SensitiveApiRequestMatcher.classify("GET", "/api/tts/speak/book-1/chapter-2/3"));
     }
 
     @Test
@@ -41,6 +40,7 @@ class SensitiveApiRequestMatcherTest {
         assertEquals(NONE, SensitiveApiRequestMatcher.classify("GET", "/api/import/popular"));
         assertEquals(NONE, SensitiveApiRequestMatcher.classify("POST", "/api/recaps/analytics"));
         assertEquals(NONE, SensitiveApiRequestMatcher.classify("GET", "/api/library/book-1"));
+        assertEquals(NONE, SensitiveApiRequestMatcher.classify("GET", "/api/tts/speak/book-1/chapter-2/3"));
         assertEquals(NONE, SensitiveApiRequestMatcher.classify(null, "/api/pregen/book/book-1"));
     }
 }

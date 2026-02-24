@@ -137,24 +137,10 @@ public class TtsService {
 
     public byte[] generateSpeechForParagraph(String bookKey, int chapterIndex, int paragraphIndex,
                                               String text, VoiceSettings settings) {
-        String voice = settings.voice() != null ? settings.voice() : defaultVoice;
+        String voice = resolveVoice(settings.voice());
         double speed = settings.speed() > 0 ? settings.speed() : 1.0;
         String instructions = settings.instructions();
-
-        // Use stable cache path INCLUDING voice so changing voice regenerates audio
-        Path bookCachePath = cachePath.resolve(bookKey)
-                .resolve("audio")
-                .resolve(voice)
-                .resolve("chapters")
-                .resolve(String.valueOf(chapterIndex));
-        try {
-            Files.createDirectories(bookCachePath);
-        } catch (IOException e) {
-            log.warn("Failed to create book cache directory", e);
-        }
-
-        // Check cache
-        Path cachedFile = bookCachePath.resolve(paragraphIndex + ".mp3");
+        Path cachedFile = resolveParagraphCacheFile(bookKey, chapterIndex, paragraphIndex, voice);
         String textPreview = truncateForLog(text);
         if (Files.exists(cachedFile)) {
             log.info("TTS cache HIT: book={}, chapter={}, paragraph={}, text=\"{}\"",
@@ -170,6 +156,12 @@ public class TtsService {
             log.info("TTS cache-only mode enabled, skipping generation for cache miss: book={}, chapter={}, paragraph={}",
                      bookKey, chapterIndex, paragraphIndex);
             return null;
+        }
+
+        try {
+            Files.createDirectories(cachedFile.getParent());
+        } catch (IOException e) {
+            log.warn("Failed to create book cache directory", e);
         }
 
         // Generate - this means we're calling OpenAI API
@@ -207,6 +199,20 @@ public class TtsService {
         return audio;
     }
 
+    public byte[] getCachedSpeechForParagraph(String bookKey, int chapterIndex, int paragraphIndex, String requestedVoice) {
+        String voice = resolveVoice(requestedVoice);
+        Path cachedFile = resolveParagraphCacheFile(bookKey, chapterIndex, paragraphIndex, voice);
+        if (!Files.exists(cachedFile)) {
+            return null;
+        }
+        try {
+            return Files.readAllBytes(cachedFile);
+        } catch (IOException e) {
+            log.warn("Failed to read cached paragraph audio", e);
+            return null;
+        }
+    }
+
     public int estimateCost(int characterCount) {
         // $15 per 1M characters = $0.000015 per character
         // Return cost in cents for easier display
@@ -237,5 +243,14 @@ public class TtsService {
             preview.append(words[i]);
         }
         return preview + "...";
+    }
+
+    private Path resolveParagraphCacheFile(String bookKey, int chapterIndex, int paragraphIndex, String voice) {
+        return cachePath.resolve(bookKey)
+                .resolve("audio")
+                .resolve(voice)
+                .resolve("chapters")
+                .resolve(String.valueOf(chapterIndex))
+                .resolve(paragraphIndex + ".mp3");
     }
 }

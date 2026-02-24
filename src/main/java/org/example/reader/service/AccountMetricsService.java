@@ -15,11 +15,13 @@ public class AccountMetricsService {
     private final LongAdder registerSucceeded = new LongAdder();
     private final LongAdder registerFailed = new LongAdder();
     private final LongAdder registerRolloutBlocked = new LongAdder();
+    private final LongAdder registerRateLimited = new LongAdder();
 
     private final LongAdder loginRequests = new LongAdder();
     private final LongAdder loginSucceeded = new LongAdder();
     private final LongAdder loginFailed = new LongAdder();
     private final LongAdder loginRolloutBlocked = new LongAdder();
+    private final LongAdder loginRateLimited = new LongAdder();
 
     private final LongAdder logoutRequests = new LongAdder();
     private final LongAdder logoutSucceeded = new LongAdder();
@@ -48,6 +50,11 @@ public class AccountMetricsService {
         registerFailed.increment();
     }
 
+    public void recordRegisterRateLimited() {
+        registerRequests.increment();
+        registerRateLimited.increment();
+    }
+
     public void recordLoginResult(AccountAuthService.ResultStatus status) {
         loginRequests.increment();
         if (status == AccountAuthService.ResultStatus.SUCCESS) {
@@ -59,6 +66,11 @@ public class AccountMetricsService {
             return;
         }
         loginFailed.increment();
+    }
+
+    public void recordLoginRateLimited() {
+        loginRequests.increment();
+        loginRateLimited.increment();
     }
 
     public void recordLogoutResult(AccountAuthService.ResultStatus status) {
@@ -95,10 +107,12 @@ public class AccountMetricsService {
         metrics.put("registerSucceeded", registerSucceeded.sum());
         metrics.put("registerFailed", registerFailed.sum());
         metrics.put("registerRolloutBlocked", registerRolloutBlocked.sum());
+        metrics.put("registerRateLimited", registerRateLimited.sum());
         metrics.put("loginRequests", loginRequests.sum());
         metrics.put("loginSucceeded", loginSucceeded.sum());
         metrics.put("loginFailed", loginFailed.sum());
         metrics.put("loginRolloutBlocked", loginRolloutBlocked.sum());
+        metrics.put("loginRateLimited", loginRateLimited.sum());
         metrics.put("logoutRequests", logoutRequests.sum());
         metrics.put("logoutSucceeded", logoutSucceeded.sum());
         metrics.put("claimSyncRequests", claimSyncRequests.sum());

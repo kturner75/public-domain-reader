@@ -113,6 +113,7 @@
         chatHistory: [],                  // Loaded from localStorage
         chatLoading: false,
         isMobileLayout: false,
+        mobileHeaderMenuFocusIndex: -1,
         cacheOnly: false,
         authPublicMode: false,
         authRequired: false,
@@ -943,10 +944,80 @@
             && !elements.mobileHeaderMenuPanel.classList.contains('hidden');
     }
 
-    function closeMobileHeaderMenu() {
+    function getMobileHeaderMenuActionElements() {
+        if (!elements.mobileHeaderMenuPanel) return [];
+        return Array.from(elements.mobileHeaderMenuPanel.querySelectorAll('button'))
+            .filter((button) => {
+                if (!(button instanceof HTMLButtonElement)) return false;
+                if (button.disabled) return false;
+                if (button.classList.contains('hidden')) return false;
+                return button.offsetParent !== null;
+            });
+    }
+
+    function syncMobileHeaderMenuFocus({ reset = false, focus = false } = {}) {
+        const actions = getMobileHeaderMenuActionElements();
+        if (actions.length === 0) {
+            state.mobileHeaderMenuFocusIndex = -1;
+            return;
+        }
+
+        if (reset
+            || !Number.isInteger(state.mobileHeaderMenuFocusIndex)
+            || state.mobileHeaderMenuFocusIndex < 0
+            || state.mobileHeaderMenuFocusIndex >= actions.length) {
+            state.mobileHeaderMenuFocusIndex = 0;
+        }
+
+        if (focus) {
+            actions[state.mobileHeaderMenuFocusIndex].focus();
+        }
+    }
+
+    function moveMobileHeaderMenuFocus(direction) {
+        const actions = getMobileHeaderMenuActionElements();
+        if (actions.length === 0) return;
+
+        const activeIndex = actions.indexOf(document.activeElement);
+        if (activeIndex >= 0) {
+            state.mobileHeaderMenuFocusIndex = activeIndex;
+        }
+        if (!Number.isInteger(state.mobileHeaderMenuFocusIndex) || state.mobileHeaderMenuFocusIndex < 0) {
+            state.mobileHeaderMenuFocusIndex = 0;
+        } else {
+            const total = actions.length;
+            state.mobileHeaderMenuFocusIndex = (state.mobileHeaderMenuFocusIndex + direction + total) % total;
+        }
+
+        actions[state.mobileHeaderMenuFocusIndex].focus();
+    }
+
+    function activateMobileHeaderMenuFocusedAction() {
+        const actions = getMobileHeaderMenuActionElements();
+        if (actions.length === 0) return;
+
+        let index = actions.indexOf(document.activeElement);
+        if (index < 0) {
+            index = Number.isInteger(state.mobileHeaderMenuFocusIndex)
+                ? state.mobileHeaderMenuFocusIndex
+                : 0;
+        }
+        if (index < 0 || index >= actions.length) {
+            index = 0;
+        }
+
+        state.mobileHeaderMenuFocusIndex = index;
+        actions[index].click();
+    }
+
+    function closeMobileHeaderMenu({ restoreToggleFocus = false } = {}) {
         if (!elements.mobileHeaderMenuPanel || !elements.mobileHeaderMenuToggle) return;
         elements.mobileHeaderMenuPanel.classList.add('hidden');
         elements.mobileHeaderMenuToggle.classList.remove('active');
+        state.mobileHeaderMenuFocusIndex = -1;
+        if (restoreToggleFocus) {
+            elements.mobileHeaderMenuToggle.focus();
+        }
     }
 
     function openMobileHeaderMenu() {
@@ -956,6 +1027,7 @@
         updateMobileHeaderMenuState();
         elements.mobileHeaderMenuPanel.classList.remove('hidden');
         elements.mobileHeaderMenuToggle.classList.add('active');
+        syncMobileHeaderMenuFocus({ reset: true, focus: !state.isMobileLayout });
     }
 
     function toggleMobileHeaderMenu() {
@@ -988,8 +1060,7 @@
     function updateMobileHeaderMenuState() {
         if (!elements.mobileHeaderMenu) return;
 
-        const showMenuHost = state.isMobileLayout
-            && !elements.readerView.classList.contains('hidden');
+        const showMenuHost = !elements.readerView.classList.contains('hidden');
         elements.mobileHeaderMenu.classList.toggle('hidden', !showMenuHost);
         updateFavoriteUi();
 
@@ -1074,6 +1145,18 @@
                     ? 'Collaborator Access (Signed In)'
                     : 'Collaborator Access (Sign In)';
             }
+        }
+
+        if (elements.mobileHeaderMenuToggle) {
+            const label = state.isMobileLayout
+                ? 'Reader actions'
+                : 'Reader actions (O)';
+            elements.mobileHeaderMenuToggle.title = label;
+            elements.mobileHeaderMenuToggle.setAttribute('aria-label', label);
+        }
+
+        if (isMobileHeaderMenuVisible()) {
+            syncMobileHeaderMenuFocus();
         }
 
     }
@@ -1630,6 +1713,9 @@
             state.authRequired = status.authRequired === true;
             state.authAuthenticated = status.authenticated === true;
             state.authCanAccessSensitive = status.canAccessSensitive !== false;
+            if (state.authAuthenticated || !state.authPublicMode) {
+                state.authPromptShown = false;
+            }
             updateAuthUi();
         } catch (error) {
             console.debug('Auth status check failed:', error);
@@ -1717,7 +1803,7 @@
         state.authCanAccessSensitive = false;
         state.authAuthenticated = false;
         updateAuthUi();
-        if (isAuthModalVisible()) return;
+        if (isAuthModalVisible() || state.authPromptShown) return;
         openAuthModal('Sign in is required for this action.');
     }
 
@@ -5020,7 +5106,10 @@
     }
 
     // Back to library
-    function backToLibrary() {
+    function backToLibrary(event) {
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
         persistCurrentBookActivity();
         state.lastBookActivitySignature = '';
         ttsStop();
@@ -5302,6 +5391,16 @@
             return;
         }
 
+        // In public mode, skip sensitive server TTS when collaborator auth is unavailable.
+        if (state.authPublicMode && !state.authCanAccessSensitive) {
+            if (state.ttsBrowserAvailable) {
+                ttsSpeakBrowser(text);
+            } else {
+                ttsStop();
+            }
+            return;
+        }
+
         // If OpenAI is not available, use browser TTS directly
         if (!state.ttsOpenAIAvailable) {
             ttsSpeakBrowser(text);
@@ -5377,6 +5476,11 @@
             try {
                 const response = await fetch(url, { signal: controller.signal });
                 if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        state.authCanAccessSensitive = false;
+                        updateAuthUi();
+                        throw new Error(`TTS auth required: ${response.status}`);
+                    }
                     throw new Error(`TTS request failed: ${response.status}`);
                 }
                 const blob = await response.blob();
@@ -5387,7 +5491,11 @@
                     console.log('TTS request aborted for paragraph', state.currentParagraphIndex);
                     return;  // Request was cancelled, don't continue
                 }
-                console.error('OpenAI TTS fetch error, falling back to browser:', error);
+                if (typeof error?.message === 'string' && error.message.startsWith('TTS auth required')) {
+                    console.warn('Sensitive TTS requires collaborator sign-in in public mode; using browser speech.');
+                } else {
+                    console.error('OpenAI TTS fetch error, falling back to browser:', error);
+                }
                 if (state.ttsEnabled && state.ttsBrowserAvailable) {
                     ttsSpeakBrowser(text);
                 }
@@ -5481,6 +5589,7 @@
         // Don't prefetch if OpenAI TTS is not available (browser TTS doesn't benefit from prefetch)
         if (!state.ttsOpenAIAvailable || !state.ttsEnabled) return;
         if (state.ttsCachedAvailable && !state.ttsOpenAIConfigured) return;
+        if (state.authPublicMode && !state.authCanAccessSensitive) return;
 
         const nextIndex = state.currentParagraphIndex + 1;
         const chapter = state.chapters[state.currentChapterIndex];
@@ -5537,6 +5646,11 @@
         try {
             const response = await fetch(url, { signal: controller.signal });
             if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    state.authCanAccessSensitive = false;
+                    updateAuthUi();
+                    return;
+                }
                 throw new Error(`Prefetch request failed: ${response.status}`);
             }
             const blob = await response.blob();
@@ -8283,9 +8397,34 @@
             }
 
             if (isMobileHeaderMenuVisible()) {
-                if (e.key === 'Escape') {
+                const activeElement = document.activeElement;
+                const typingInMenuInput = !!elements.mobileHeaderMenuPanel
+                    && elements.mobileHeaderMenuPanel.contains(activeElement)
+                    && (activeElement instanceof HTMLInputElement
+                        || activeElement instanceof HTMLTextAreaElement);
+
+                if (e.key === 'Escape' || (!state.isMobileLayout && e.key.toLowerCase() === 'o')) {
                     e.preventDefault();
-                    closeMobileHeaderMenu();
+                    closeMobileHeaderMenu({ restoreToggleFocus: true });
+                    return;
+                }
+
+                if (!typingInMenuInput) {
+                    if (e.key === 'ArrowDown' || e.key === 'j') {
+                        e.preventDefault();
+                        moveMobileHeaderMenuFocus(1);
+                        return;
+                    }
+                    if (e.key === 'ArrowUp' || e.key === 'k') {
+                        e.preventDefault();
+                        moveMobileHeaderMenuFocus(-1);
+                        return;
+                    }
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        activateMobileHeaderMenuFocusedAction();
+                        return;
+                    }
                 }
                 return;
             }
@@ -8558,6 +8697,12 @@
                     console.log('M key pressed');
                     e.preventDefault();
                     characterBrowserToggle();
+                    break;
+                case 'o':
+                    if (!state.isMobileLayout) {
+                        e.preventDefault();
+                        toggleMobileHeaderMenu();
+                    }
                     break;
             }
         });

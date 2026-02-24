@@ -9,6 +9,7 @@ import org.example.reader.repository.UserRepository;
 import org.example.reader.repository.UserSessionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
@@ -46,9 +47,41 @@ public class AccountAuthService {
     private final boolean secureCookie;
     private final int minPasswordLength;
     private final int bcryptStrength;
+    private final int loginLockoutThreshold;
+    private final int loginLockoutBaseDelaySeconds;
+    private final int loginLockoutMaxDelaySeconds;
     private final SecureRandom secureRandom = new SecureRandom();
     private final AtomicInteger cleanupTicker = new AtomicInteger();
 
+    public AccountAuthService(
+            UserRepository userRepository,
+            UserSessionRepository userSessionRepository,
+            boolean enabled,
+            String rolloutModeRaw,
+            String rolloutAllowedEmailsRaw,
+            String cookieName,
+            int sessionTtlMinutes,
+            boolean secureCookie,
+            int minPasswordLength,
+            int bcryptStrength) {
+        this(
+                userRepository,
+                userSessionRepository,
+                enabled,
+                rolloutModeRaw,
+                rolloutAllowedEmailsRaw,
+                cookieName,
+                sessionTtlMinutes,
+                secureCookie,
+                minPasswordLength,
+                bcryptStrength,
+                5,
+                30,
+                900
+        );
+    }
+
+    @Autowired
     public AccountAuthService(
             UserRepository userRepository,
             UserSessionRepository userSessionRepository,
@@ -59,7 +92,10 @@ public class AccountAuthService {
             @Value("${account.auth.session.ttl-minutes:43200}") int sessionTtlMinutes,
             @Value("${account.auth.secure-cookie:false}") boolean secureCookie,
             @Value("${account.auth.password.min-length:10}") int minPasswordLength,
-            @Value("${account.auth.password.bcrypt-strength:12}") int bcryptStrength) {
+            @Value("${account.auth.password.bcrypt-strength:12}") int bcryptStrength,
+            @Value("${account.auth.login.lockout.threshold:5}") int loginLockoutThreshold,
+            @Value("${account.auth.login.lockout.base-delay-seconds:30}") int loginLockoutBaseDelaySeconds,
+            @Value("${account.auth.login.lockout.max-delay-seconds:900}") int loginLockoutMaxDelaySeconds) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
         this.enabled = enabled;
@@ -70,11 +106,17 @@ public class AccountAuthService {
         this.secureCookie = secureCookie;
         this.minPasswordLength = Math.max(8, minPasswordLength);
         this.bcryptStrength = Math.min(14, Math.max(10, bcryptStrength));
+        this.loginLockoutThreshold = Math.max(1, loginLockoutThreshold);
+        this.loginLockoutBaseDelaySeconds = Math.max(1, loginLockoutBaseDelaySeconds);
+        this.loginLockoutMaxDelaySeconds = Math.max(this.loginLockoutBaseDelaySeconds, loginLockoutMaxDelaySeconds);
         log.info(
-                "Reader account auth initialized: enabled={}, rolloutMode={}, allowListSize={}",
+                "Reader account auth initialized: enabled={}, rolloutMode={}, allowListSize={}, lockoutThreshold={}, lockoutBaseDelaySeconds={}, lockoutMaxDelaySeconds={}",
                 enabled,
                 this.rolloutMode.value(),
-                this.rolloutAllowedEmails.size());
+                this.rolloutAllowedEmails.size(),
+                this.loginLockoutThreshold,
+                this.loginLockoutBaseDelaySeconds,
+                this.loginLockoutMaxDelaySeconds);
     }
 
     @Transactional
@@ -136,10 +178,17 @@ public class AccountAuthService {
         }
 
         UserEntity user = userOptional.get();
-        if (!BCrypt.checkpw(password, user.getPasswordHash())) {
-            return AuthResult.error(ResultStatus.INVALID_CREDENTIALS, enabled, "Invalid email or password.");
+        LocalDateTime now = LocalDateTime.now();
+        AuthResult lockedResult = lockoutResultIfLocked(user, now);
+        if (lockedResult != null) {
+            return lockedResult;
         }
 
+        if (!BCrypt.checkpw(password, user.getPasswordHash())) {
+            return recordInvalidCredentials(user, now);
+        }
+
+        clearLockoutStateIfNeeded(user);
         createSession(user, response);
         cleanupIfNeeded();
         return AuthResult.success(enabled, user.getEmail(), "Signed in.");
@@ -219,6 +268,76 @@ public class AccountAuthService {
                 ResultStatus.ROLLOUT_RESTRICTED,
                 true,
                 "Account access is currently limited to internal rollout users.");
+    }
+
+    private AuthResult lockoutResultIfLocked(UserEntity user, LocalDateTime now) {
+        LocalDateTime lockedUntil = user.getLoginLockedUntil();
+        if (lockedUntil == null) {
+            return null;
+        }
+        if (!lockedUntil.isAfter(now)) {
+            user.setLoginLockedUntil(null);
+            userRepository.save(user);
+            return null;
+        }
+        int retryAfterSeconds = retryAfterSeconds(now, lockedUntil);
+        return AuthResult.error(
+                ResultStatus.ACCOUNT_LOCKED,
+                enabled,
+                "Too many failed sign-in attempts. Please try again later.",
+                retryAfterSeconds
+        );
+    }
+
+    private AuthResult recordInvalidCredentials(UserEntity user, LocalDateTime now) {
+        int attempts = Math.max(0, user.getFailedLoginAttempts()) + 1;
+        user.setFailedLoginAttempts(attempts);
+
+        if (attempts >= loginLockoutThreshold) {
+            int lockoutSeconds = calculateLockoutSeconds(attempts);
+            user.setLoginLockedUntil(now.plusSeconds(lockoutSeconds));
+            userRepository.save(user);
+            return AuthResult.error(
+                    ResultStatus.ACCOUNT_LOCKED,
+                    enabled,
+                    "Too many failed sign-in attempts. Please try again later.",
+                    lockoutSeconds
+            );
+        }
+
+        user.setLoginLockedUntil(null);
+        userRepository.save(user);
+        return AuthResult.error(ResultStatus.INVALID_CREDENTIALS, enabled, "Invalid email or password.");
+    }
+
+    private void clearLockoutStateIfNeeded(UserEntity user) {
+        if (user.getFailedLoginAttempts() == 0 && user.getLoginLockedUntil() == null) {
+            return;
+        }
+        user.setFailedLoginAttempts(0);
+        user.setLoginLockedUntil(null);
+        userRepository.save(user);
+    }
+
+    private int calculateLockoutSeconds(int failedAttempts) {
+        int exponent = Math.max(0, failedAttempts - loginLockoutThreshold);
+        long multiplier = 1L << Math.min(20, exponent);
+        long seconds = loginLockoutBaseDelaySeconds * multiplier;
+        if (seconds > loginLockoutMaxDelaySeconds) {
+            seconds = loginLockoutMaxDelaySeconds;
+        }
+        return Math.toIntExact(seconds);
+    }
+
+    private int retryAfterSeconds(LocalDateTime now, LocalDateTime lockedUntil) {
+        long seconds = Duration.between(now, lockedUntil).getSeconds();
+        if (seconds <= 0) {
+            return 1;
+        }
+        if (seconds > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) seconds;
     }
 
     private void createSession(UserEntity user, HttpServletResponse response) {
@@ -355,6 +474,7 @@ public class AccountAuthService {
         INVALID_EMAIL,
         INVALID_PASSWORD,
         INVALID_CREDENTIALS,
+        ACCOUNT_LOCKED,
         EMAIL_ALREADY_EXISTS
     }
 
@@ -394,14 +514,32 @@ public class AccountAuthService {
             boolean accountAuthEnabled,
             boolean authenticated,
             String email,
-            String message
+            String message,
+            Integer retryAfterSeconds
     ) {
+        public AuthResult(
+                ResultStatus status,
+                boolean accountAuthEnabled,
+                boolean authenticated,
+                String email,
+                String message) {
+            this(status, accountAuthEnabled, authenticated, email, message, null);
+        }
+
         public static AuthResult success(boolean accountAuthEnabled, String email, String message) {
-            return new AuthResult(ResultStatus.SUCCESS, accountAuthEnabled, true, email, message);
+            return new AuthResult(ResultStatus.SUCCESS, accountAuthEnabled, true, email, message, null);
         }
 
         public static AuthResult error(ResultStatus status, boolean accountAuthEnabled, String message) {
-            return new AuthResult(status, accountAuthEnabled, false, null, message);
+            return new AuthResult(status, accountAuthEnabled, false, null, message, null);
+        }
+
+        public static AuthResult error(
+                ResultStatus status,
+                boolean accountAuthEnabled,
+                String message,
+                Integer retryAfterSeconds) {
+            return new AuthResult(status, accountAuthEnabled, false, null, message, retryAfterSeconds);
         }
     }
 
