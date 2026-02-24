@@ -8,6 +8,7 @@ import org.example.reader.repository.ChapterRepository;
 import org.example.reader.repository.ParagraphRepository;
 import org.example.reader.service.AssetKeyService;
 import org.example.reader.service.CdnAssetService;
+import org.example.reader.service.PublicSessionAuthService;
 import org.example.reader.service.TtsService;
 import org.example.reader.service.VoiceAnalysisService;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,9 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.is;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,7 +34,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(TtsController.class)
+@WebMvcTest(
+        value = TtsController.class,
+        properties = {
+                "deployment.mode=public",
+                "security.public.api-key=test-api-key"
+        })
 class TtsControllerTest {
 
     @Autowired
@@ -56,6 +65,9 @@ class TtsControllerTest {
 
     @MockitoBean
     private CdnAssetService cdnAssetService;
+
+    @MockitoBean
+    private PublicSessionAuthService sessionAuthService;
 
     @Test
     void getStatus_cacheOnlyWithCdn_setsCachedAvailable() throws Exception {
@@ -86,7 +98,8 @@ class TtsControllerTest {
         when(bookRepository.findById("book-1")).thenReturn(Optional.of(book));
         when(ttsService.isCacheOnly()).thenReturn(false);
 
-        mockMvc.perform(post("/api/tts/analyze/book-1"))
+        mockMvc.perform(post("/api/tts/analyze/book-1")
+                        .header("X-API-Key", "test-api-key"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.voice", is("fable")))
                 .andExpect(jsonPath("$.speed", is(1.15)))
@@ -105,6 +118,7 @@ class TtsControllerTest {
         when(ttsService.isConfigured()).thenReturn(false);
 
         mockMvc.perform(post("/api/tts/speak")
+                        .header("X-API-Key", "test-api-key")
                         .contentType("application/json")
                         .content("""
                                 {
@@ -152,5 +166,94 @@ class TtsControllerTest {
                 org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void speakParagraph_publicMode_cacheHitWithoutAuth_returnsCachedAudio() throws Exception {
+        BookEntity book = createTtsEnabledBook();
+        ChapterEntity chapter = createChapter(book);
+        ParagraphEntity paragraph = createParagraph("<p>Hello from paragraph.</p>");
+        byte[] cachedAudio = "cached-audio".getBytes();
+
+        stubSpeakParagraphLookup(book, chapter, paragraph);
+        when(ttsService.resolveVoice("fable")).thenReturn("fable");
+        when(ttsService.isCacheOnly()).thenReturn(false);
+        when(ttsService.getCachedSpeechForParagraph("book-one", 2, 0, "fable")).thenReturn(cachedAudio);
+
+        mockMvc.perform(get("/api/tts/speak/book-1/chapter-1/0").param("voice", "fable"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "audio/mpeg"))
+                .andExpect(content().bytes(cachedAudio));
+
+        verify(ttsService, never()).generateSpeechForParagraph(anyString(), anyInt(), anyInt(), anyString(), any());
+    }
+
+    @Test
+    void speakParagraph_publicMode_cacheMissWithoutAuth_returnsUnauthorized() throws Exception {
+        BookEntity book = createTtsEnabledBook();
+        ChapterEntity chapter = createChapter(book);
+        ParagraphEntity paragraph = createParagraph("<p>Hello from paragraph.</p>");
+
+        stubSpeakParagraphLookup(book, chapter, paragraph);
+        when(ttsService.resolveVoice("fable")).thenReturn("fable");
+        when(ttsService.isCacheOnly()).thenReturn(false);
+        when(ttsService.getCachedSpeechForParagraph("book-one", 2, 0, "fable")).thenReturn(null);
+        when(sessionAuthService.isAuthenticated(any())).thenReturn(false);
+
+        mockMvc.perform(get("/api/tts/speak/book-1/chapter-1/0").param("voice", "fable"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("Authentication required for uncached TTS generation"));
+
+        verify(ttsService, never()).generateSpeechForParagraph(anyString(), anyInt(), anyInt(), anyString(), any());
+    }
+
+    @Test
+    void speakParagraph_publicMode_cacheMissWithApiKey_generatesAudio() throws Exception {
+        BookEntity book = createTtsEnabledBook();
+        ChapterEntity chapter = createChapter(book);
+        ParagraphEntity paragraph = createParagraph("<p>Hello from paragraph.</p>");
+        byte[] generatedAudio = "generated-audio".getBytes();
+
+        stubSpeakParagraphLookup(book, chapter, paragraph);
+        when(ttsService.resolveVoice("fable")).thenReturn("fable");
+        when(ttsService.isCacheOnly()).thenReturn(false);
+        when(ttsService.getCachedSpeechForParagraph("book-one", 2, 0, "fable")).thenReturn(null);
+        when(ttsService.isConfigured()).thenReturn(true);
+        when(ttsService.generateSpeechForParagraph(anyString(), anyInt(), anyInt(), anyString(), any()))
+                .thenReturn(generatedAudio);
+
+        mockMvc.perform(get("/api/tts/speak/book-1/chapter-1/0")
+                        .param("voice", "fable")
+                        .header("X-API-Key", "test-api-key"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "audio/mpeg"))
+                .andExpect(content().bytes(generatedAudio));
+    }
+
+    private BookEntity createTtsEnabledBook() {
+        BookEntity book = new BookEntity("Book One", "Author One", "gutenberg");
+        book.setId("book-1");
+        book.setTtsEnabled(true);
+        return book;
+    }
+
+    private ChapterEntity createChapter(BookEntity book) {
+        ChapterEntity chapter = new ChapterEntity(2, "Chapter Three");
+        chapter.setId("chapter-1");
+        chapter.setBook(book);
+        return chapter;
+    }
+
+    private ParagraphEntity createParagraph(String content) {
+        ParagraphEntity paragraph = new ParagraphEntity();
+        paragraph.setContent(content);
+        return paragraph;
+    }
+
+    private void stubSpeakParagraphLookup(BookEntity book, ChapterEntity chapter, ParagraphEntity paragraph) {
+        when(bookRepository.findById("book-1")).thenReturn(Optional.of(book));
+        when(chapterRepository.findById("chapter-1")).thenReturn(Optional.of(chapter));
+        when(paragraphRepository.findByChapterIdOrderByParagraphIndex("chapter-1")).thenReturn(List.of(paragraph));
+        when(assetKeyService.buildBookKey(book)).thenReturn("book-one");
     }
 }

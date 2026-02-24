@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Public Domain Reader</title>
+    <title>ClassicChatReader</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
@@ -13,6 +13,16 @@
     <!-- Library View -->
     <div id="library-view" class="view">
         <div class="library-container">
+            <div class="site-brand library-brand">
+                <img
+                    class="site-logo library-site-logo"
+                    src="/images/site-logo-mark.png?v=2"
+                    alt="ClassicChatReader logo"
+                    loading="eager"
+                    decoding="async"
+                />
+                <span class="site-wordmark library-wordmark">ClassicChatReader.com</span>
+            </div>
             <h1 class="library-title">Library</h1>
             <p class="library-subtitle">Pick up where you left off, or discover your next read.</p>
             <div class="library-account-row">
@@ -86,11 +96,16 @@
     <div id="reader-view" class="view hidden">
         <!-- Header -->
         <header class="reader-header">
-            <button id="back-to-library" class="header-btn" title="Back to Library">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M19 12H5M12 19l-7-7 7-7"/>
-                </svg>
-            </button>
+            <a id="back-to-library" class="site-brand reader-brand back-to-library-link" href="/" title="Back to Library" aria-label="Back to Library">
+                <img
+                    class="site-logo reader-site-logo"
+                    src="/images/site-logo-mark.png?v=2"
+                    alt="ClassicChatReader logo"
+                    loading="lazy"
+                    decoding="async"
+                />
+                <span class="site-wordmark reader-wordmark">ClassicChatReader.com</span>
+            </a>
             <div id="mobile-header-menu" class="mobile-header-menu hidden">
                 <button id="mobile-header-menu-toggle" class="header-btn mobile-header-menu-toggle" type="button" title="Reader actions" aria-label="Reader actions">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -105,7 +120,7 @@
                         <button id="mobile-menu-search-submit" class="mobile-header-menu-search-btn" type="button">Search</button>
                     </div>
                     <div class="mobile-header-menu-row">
-                        <button id="mobile-menu-tts-toggle" class="mobile-header-menu-item mobile-header-menu-item-primary" type="button">Read Aloud</button>
+                        <button id="mobile-menu-tts-toggle" class="mobile-header-menu-item mobile-header-menu-item-primary" type="button" data-shortcut="P">Read Aloud</button>
                         <button id="mobile-menu-tts-speed" class="mobile-header-menu-speed-btn" type="button" title="Cycle audio speed" aria-label="Cycle audio speed">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M5 12h10"/>
@@ -114,18 +129,18 @@
                             <span id="mobile-menu-tts-speed-value">1.0x</span>
                         </button>
                     </div>
-                    <button id="mobile-menu-illustration-toggle" class="mobile-header-menu-item" type="button">Illustration Mode</button>
-                    <button id="mobile-menu-character-toggle" class="mobile-header-menu-item" type="button">Characters</button>
+                    <button id="mobile-menu-illustration-toggle" class="mobile-header-menu-item" type="button" data-shortcut="I">Illustration Mode</button>
+                    <button id="mobile-menu-character-toggle" class="mobile-header-menu-item" type="button" data-shortcut="M">Characters</button>
                     <button id="mobile-menu-reader-settings" class="mobile-header-menu-item" type="button">Reader Preferences</button>
-                    <button id="mobile-menu-highlight" class="mobile-header-menu-item" type="button">Toggle Highlight</button>
-                    <button id="mobile-menu-note" class="mobile-header-menu-item" type="button">Add/Edit Note</button>
-                    <button id="mobile-menu-bookmark" class="mobile-header-menu-item" type="button">Toggle Bookmark</button>
-                    <button id="mobile-menu-bookmarks" class="mobile-header-menu-item" type="button">Bookmarks</button>
+                    <button id="mobile-menu-highlight" class="mobile-header-menu-item" type="button" data-shortcut="U">Toggle Highlight</button>
+                    <button id="mobile-menu-note" class="mobile-header-menu-item" type="button" data-shortcut="N">Add/Edit Note</button>
+                    <button id="mobile-menu-bookmark" class="mobile-header-menu-item" type="button" data-shortcut="B">Toggle Bookmark</button>
+                    <button id="mobile-menu-bookmarks" class="mobile-header-menu-item" type="button" data-shortcut="Shift+B">Bookmarks</button>
                     <button id="mobile-menu-favorite" class="mobile-header-menu-item" type="button">Add to My List</button>
                     <button id="mobile-menu-recap-enable" class="mobile-header-menu-item hidden" type="button">Re-enable Recaps</button>
                     <button id="mobile-menu-account" class="mobile-header-menu-item hidden" type="button">Reader Account (Sign In)</button>
                     <button id="mobile-menu-auth" class="mobile-header-menu-item hidden" type="button">Sign In</button>
-                    <button id="mobile-menu-speed-reading-toggle" class="mobile-header-menu-item" type="button">Speed Reading</button>
+                    <button id="mobile-menu-speed-reading-toggle" class="mobile-header-menu-item" type="button" data-shortcut="R">Speed Reading</button>
                 </div>
             </div>
             <div class="tts-container header-mobile-action">
@@ -456,6 +471,10 @@
                     <div class="shortcut-row">
                         <span><kbd>c</kbd></span>
                         <span>Open chapter list</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <span><kbd>o</kbd></span>
+                        <span>Toggle reader actions menu (desktop)</span>
                     </div>
                     <div class="shortcut-row">
                         <span><kbd>u</kbd></span>

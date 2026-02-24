@@ -17,11 +17,13 @@ import org.springframework.security.crypto.bcrypt.BCrypt;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -143,6 +145,66 @@ class AccountAuthServiceTest {
 
         assertEquals(AccountAuthService.ResultStatus.INVALID_CREDENTIALS, result.status());
         assertTrue(response.getHeaders("Set-Cookie").isEmpty());
+    }
+
+    @Test
+    void login_repeatedInvalidCredentials_triggersLockoutWithRetryAfter() {
+        UserEntity user = new UserEntity();
+        user.setId("user-1");
+        user.setEmail("reader@example.com");
+        user.setPasswordHash(BCrypt.hashpw("password123", BCrypt.gensalt(10)));
+        when(userRepository.findByEmail("reader@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.save(any(UserEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        for (int i = 0; i < 4; i++) {
+            AccountAuthService.AuthResult attempt = accountAuthService.login(
+                    "reader@example.com",
+                    "wrong-password",
+                    response
+            );
+            assertEquals(AccountAuthService.ResultStatus.INVALID_CREDENTIALS, attempt.status());
+        }
+
+        AccountAuthService.AuthResult locked = accountAuthService.login(
+                "reader@example.com",
+                "wrong-password",
+                response
+        );
+
+        assertEquals(AccountAuthService.ResultStatus.ACCOUNT_LOCKED, locked.status());
+        assertEquals(30, locked.retryAfterSeconds());
+    }
+
+    @Test
+    void login_successClearsPreviousLockoutState() {
+        UserEntity user = new UserEntity();
+        user.setId("user-1");
+        user.setEmail("reader@example.com");
+        user.setPasswordHash(BCrypt.hashpw("password123", BCrypt.gensalt(10)));
+        user.setFailedLoginAttempts(6);
+        user.setLoginLockedUntil(LocalDateTime.now().minusSeconds(5));
+
+        AtomicReference<UserSessionEntity> storedSession = new AtomicReference<>();
+        when(userRepository.findByEmail("reader@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.save(any(UserEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userSessionRepository.save(any(UserSessionEntity.class))).thenAnswer(invocation -> {
+            UserSessionEntity session = invocation.getArgument(0);
+            storedSession.set(session);
+            return session;
+        });
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AccountAuthService.AuthResult result = accountAuthService.login(
+                "reader@example.com",
+                "password123",
+                response
+        );
+
+        assertEquals(AccountAuthService.ResultStatus.SUCCESS, result.status());
+        assertEquals(0, user.getFailedLoginAttempts());
+        assertNull(user.getLoginLockedUntil());
+        assertNotNull(storedSession.get());
     }
 
     @Test

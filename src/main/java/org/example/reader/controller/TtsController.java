@@ -1,5 +1,6 @@
 package org.example.reader.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.example.reader.entity.BookEntity;
 import org.example.reader.entity.ChapterEntity;
 import org.example.reader.entity.ParagraphEntity;
@@ -9,6 +10,7 @@ import org.example.reader.repository.ChapterRepository;
 import org.example.reader.repository.ParagraphRepository;
 import org.example.reader.service.AssetKeyService;
 import org.example.reader.service.CdnAssetService;
+import org.example.reader.service.PublicSessionAuthService;
 import org.example.reader.service.TtsService;
 import org.example.reader.service.VoiceAnalysisService;
 import org.jsoup.Jsoup;
@@ -17,8 +19,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,12 +42,18 @@ public class TtsController {
   private final ParagraphRepository paragraphRepository;
   private final AssetKeyService assetKeyService;
   private final CdnAssetService cdnAssetService;
+  private final PublicSessionAuthService sessionAuthService;
+  private final String deploymentMode;
+  private final String publicApiKey;
 
   public TtsController(TtsService ttsService, VoiceAnalysisService voiceAnalysisService,
                        BookRepository bookRepository, ChapterRepository chapterRepository,
                        ParagraphRepository paragraphRepository,
                        AssetKeyService assetKeyService,
-                       CdnAssetService cdnAssetService) {
+                       CdnAssetService cdnAssetService,
+                       PublicSessionAuthService sessionAuthService,
+                       @Value("${deployment.mode:local}") String deploymentMode,
+                       @Value("${security.public.api-key:}") String publicApiKey) {
     this.ttsService = ttsService;
     this.voiceAnalysisService = voiceAnalysisService;
     this.bookRepository = bookRepository;
@@ -50,6 +61,9 @@ public class TtsController {
     this.paragraphRepository = paragraphRepository;
     this.assetKeyService = assetKeyService;
     this.cdnAssetService = cdnAssetService;
+    this.sessionAuthService = sessionAuthService;
+    this.deploymentMode = deploymentMode == null ? "local" : deploymentMode;
+    this.publicApiKey = publicApiKey == null ? "" : publicApiKey;
   }
 
   @GetMapping("/status")
@@ -188,6 +202,8 @@ public class TtsController {
       @PathVariable String bookId,
       @PathVariable String chapterId,
       @PathVariable int paragraphIndex,
+      HttpServletRequest request,
+      @RequestHeader(value = "X-API-Key", required = false) String providedApiKey,
       @RequestParam(required = false) String voice,
       @RequestParam(required = false, defaultValue = "1.0") double speed,
       @RequestParam(required = false) String instructions) {
@@ -223,9 +239,9 @@ public class TtsController {
           .body(new byte[0]);
     }
 
+    String resolvedVoice = ttsService.resolveVoice(voice);
     boolean cacheOnly = ttsService.isCacheOnly();
     if (cacheOnly && cdnAssetService.isEnabled()) {
-      String resolvedVoice = ttsService.resolveVoice(voice);
       String audioKey = assetKeyService.buildAudioKey(bookOpt.get(), resolvedVoice,
           chapter.getChapterIndex(), paragraphIndex);
       return cdnAssetService.buildAssetUrl("audio", audioKey)
@@ -235,12 +251,26 @@ public class TtsController {
           .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    byte[] cachedAudio = ttsService.getCachedSpeechForParagraph(
+        bookKey, chapter.getChapterIndex(), paragraphIndex, resolvedVoice);
+    if (cachedAudio != null && cachedAudio.length > 0) {
+      return ResponseEntity.ok()
+          .header(HttpHeaders.CONTENT_TYPE, "audio/mpeg")
+          .header(HttpHeaders.CACHE_CONTROL, "max-age=604800")
+          .body(cachedAudio);
+    }
+
+    if (isPublicMode() && !isSensitiveTtsAuthorized(request, providedApiKey)) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+          .body("Authentication required for uncached TTS generation".getBytes(StandardCharsets.UTF_8));
+    }
+
     if (!ttsService.isConfigured()) {
       return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
           .body("OpenAI API key not configured".getBytes());
     }
 
-    VoiceSettings settings = new VoiceSettings(voice, speed, instructions, null);
+    VoiceSettings settings = new VoiceSettings(resolvedVoice, speed, instructions, null);
     byte[] audio = ttsService.generateSpeechForParagraph(
         bookKey, chapter.getChapterIndex(), paragraphIndex, text, settings);
     if (audio == null) {
@@ -297,6 +327,26 @@ public class TtsController {
 
   private boolean isTtsEnabled(BookEntity book) {
     return Boolean.TRUE.equals(book.getTtsEnabled());
+  }
+
+  private boolean isPublicMode() {
+    return "public".equalsIgnoreCase(deploymentMode);
+  }
+
+  private boolean isSensitiveTtsAuthorized(HttpServletRequest request, String providedApiKey) {
+    boolean apiKeyAuthenticated = constantTimeEquals(publicApiKey, providedApiKey);
+    boolean sessionAuthenticated = sessionAuthService != null && sessionAuthService.isAuthenticated(request);
+    return apiKeyAuthenticated || sessionAuthenticated;
+  }
+
+  private boolean constantTimeEquals(String expected, String provided) {
+    if (expected == null || expected.isBlank() || provided == null) {
+      return false;
+    }
+    return MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.UTF_8),
+        provided.getBytes(StandardCharsets.UTF_8)
+    );
   }
 
   public record SpeakRequest(

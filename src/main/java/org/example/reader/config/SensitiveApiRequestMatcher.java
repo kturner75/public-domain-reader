@@ -7,7 +7,6 @@ import java.util.regex.Pattern;
  */
 public final class SensitiveApiRequestMatcher {
 
-    private static final Pattern TTS_SPEAK_PATH = Pattern.compile("^/api/tts/speak/[^/]+/[^/]+/\\d+$");
     private static final Pattern TTS_ANALYZE_PATH = Pattern.compile("^/api/tts/analyze/[^/]+$");
 
     private static final Pattern ILLUSTRATION_ANALYZE_PATH = Pattern.compile("^/api/illustrations/analyze/[^/]+$");
@@ -75,8 +74,7 @@ public final class SensitiveApiRequestMatcher {
         }
 
         if ("GET".equals(method)) {
-            if (TTS_SPEAK_PATH.matcher(path).matches()
-                    || PREGEN_JOB_STATUS_PATH.matcher(path).matches()) {
+            if (PREGEN_JOB_STATUS_PATH.matcher(path).matches()) {
                 return EndpointType.GENERATION;
             }
         }
