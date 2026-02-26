@@ -136,6 +136,7 @@
                     <button id="mobile-menu-note" class="mobile-header-menu-item" type="button" data-shortcut="N">Add/Edit Note</button>
                     <button id="mobile-menu-bookmark" class="mobile-header-menu-item" type="button" data-shortcut="B">Toggle Bookmark</button>
                     <button id="mobile-menu-bookmarks" class="mobile-header-menu-item" type="button" data-shortcut="Shift+B">Bookmarks</button>
+                    <button id="mobile-menu-citation" class="mobile-header-menu-item" type="button" data-shortcut="X">Copy MLA Citation</button>
                     <button id="mobile-menu-favorite" class="mobile-header-menu-item" type="button">Add to My List</button>
                     <button id="mobile-menu-recap-enable" class="mobile-header-menu-item hidden" type="button">Re-enable Recaps</button>
                     <button id="mobile-menu-account" class="mobile-header-menu-item hidden" type="button">Reader Account (Sign In)</button>
@@ -492,6 +493,10 @@
                         <span><kbd>B</kbd></span>
                         <span>Open bookmarks</span>
                     </div>
+                    <div class="shortcut-row">
+                        <span><kbd>x</kbd></span>
+                        <span>Copy MLA citation</span>
+                    </div>
                     <div id="tts-hint" class="shortcut-row">
                         <span><kbd>p</kbd></span>
                         <span>Toggle read aloud</span>
@@ -745,6 +750,7 @@
     <script src="/js/library-progress.js"></script>
     <script src="/js/library-ranking.js"></script>
     <script src="/js/library-discover.js"></script>
+    <script src="/js/citation-utils.js"></script>
     <script src="/js/reader.js"></script>
 </body>
 </html>

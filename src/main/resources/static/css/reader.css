@@ -2144,6 +2144,16 @@ kbd {
     color: var(--text-color);
 }
 
+.app-toast-detail {
+    margin-top: 0.42rem;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 0.4rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--muted-color);
+    overflow-wrap: anywhere;
+}
+
 .app-toast-actions {
     margin-top: 0.5rem;
 }

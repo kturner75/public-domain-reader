@@ -34,6 +34,7 @@ public class BookStorageService {
     private final QuizAttemptRepository quizAttemptRepository;
     private final QuizTrophyRepository quizTrophyRepository;
     private final SearchService searchService;
+    private final MlaCitationFormatter mlaCitationFormatter;
 
     public BookStorageService(BookRepository bookRepository,
                               ChapterRepository chapterRepository,
@@ -44,7 +45,8 @@ public class BookStorageService {
                               CharacterRepository characterRepository,
                               QuizAttemptRepository quizAttemptRepository,
                               QuizTrophyRepository quizTrophyRepository,
-                              SearchService searchService) {
+                              SearchService searchService,
+                              MlaCitationFormatter mlaCitationFormatter) {
         this.bookRepository = bookRepository;
         this.chapterRepository = chapterRepository;
         this.chapterAnalysisRepository = chapterAnalysisRepository;
@@ -55,6 +57,7 @@ public class BookStorageService {
         this.quizAttemptRepository = quizAttemptRepository;
         this.quizTrophyRepository = quizTrophyRepository;
         this.searchService = searchService;
+        this.mlaCitationFormatter = mlaCitationFormatter;
     }
 
     public List<Book> getAllBooks() {
@@ -152,6 +155,19 @@ public class BookStorageService {
             .map(this::toBookDto);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<String> getMlaCitation(String bookId) {
+        return bookRepository.findById(bookId)
+                .map(book -> mlaCitationFormatter.format(new MlaCitationFormatter.Metadata(
+                        book.getAuthor(),
+                        book.getTitle(),
+                        null,
+                        null,
+                        toSourceUrl(book),
+                        null
+                )));
+    }
+
     // Index a book and its content in the search index
     private void indexBook(BookEntity book) {
         try {
@@ -219,5 +235,22 @@ public class BookStorageService {
             entity.getTitle(),
             paragraphs
         );
+    }
+
+    private String toSourceUrl(BookEntity book) {
+        if (book == null) {
+            return "";
+        }
+        String sourceId = book.getSourceId() == null ? "" : book.getSourceId().trim();
+        if (sourceId.isBlank()) {
+            return "";
+        }
+        if (sourceId.startsWith("http://") || sourceId.startsWith("https://")) {
+            return sourceId;
+        }
+        if ("gutenberg".equalsIgnoreCase(book.getSource())) {
+            return "https://www.gutenberg.org/ebooks/" + sourceId;
+        }
+        return "";
     }
 }

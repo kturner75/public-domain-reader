@@ -6,6 +6,9 @@
         catalogBooks: [],      // Books from Gutenberg catalog
         localBooks: [],        // Books imported locally
         currentBook: null,
+        currentBookMlaCitation: '',
+        currentBookCitationBookId: null,
+        currentBookCitationPromise: null,
         currentChapterIndex: 0,
         chapterLoadRequestId: 0,
         chapters: [],
@@ -208,6 +211,7 @@
         mobileMenuNote: document.getElementById('mobile-menu-note'),
         mobileMenuBookmark: document.getElementById('mobile-menu-bookmark'),
         mobileMenuBookmarks: document.getElementById('mobile-menu-bookmarks'),
+        mobileMenuCitation: document.getElementById('mobile-menu-citation'),
         mobileMenuFavorite: document.getElementById('mobile-menu-favorite'),
         mobileMenuRecapEnable: document.getElementById('mobile-menu-recap-enable'),
         mobileMenuAccount: document.getElementById('mobile-menu-account'),
@@ -445,7 +449,8 @@
         illustrationEnabled: true,
         characterEnabled: true,
         chatEnabled: true,
-        speedReadingEnabled: true
+        speedReadingEnabled: true,
+        citationEnabled: true
     });
 
     const READER_THEMES = Object.freeze({
@@ -479,6 +484,12 @@
         && globalThis.LibraryDiscover
         && typeof globalThis.LibraryDiscover.buildRecommendations === 'function')
         ? globalThis.LibraryDiscover
+        : null;
+    const citationUtils = (typeof globalThis !== 'undefined'
+        && globalThis.CitationUtils
+        && typeof globalThis.CitationUtils.citationPreviewText === 'function'
+        && typeof globalThis.CitationUtils.copyTextToClipboard === 'function')
+        ? globalThis.CitationUtils
         : null;
 
     function firstMessageFromPayload(payload) {
@@ -687,7 +698,7 @@
         }, 220);
     }
 
-    function showAppToast({ title = 'Error', message, actionLabel, onAction, autoDismissMs = 9000 }) {
+    function showAppToast({ title = 'Error', message, detail, actionLabel, onAction, autoDismissMs = 9000 }) {
         if (!elements.appToastRegion || !message) {
             return;
         }
@@ -719,6 +730,13 @@
         toast.appendChild(titleRow);
         toast.appendChild(messageEl);
 
+        if (typeof detail === 'string' && detail.trim().length > 0) {
+            const detailEl = document.createElement('div');
+            detailEl.className = 'app-toast-detail';
+            detailEl.textContent = detail.trim();
+            toast.appendChild(detailEl);
+        }
+
         if (actionLabel && typeof onAction === 'function') {
             const actionWrap = document.createElement('div');
             actionWrap.className = 'app-toast-actions';
@@ -737,6 +755,140 @@
         elements.appToastRegion.appendChild(toast);
         if (autoDismissMs > 0) {
             setTimeout(() => removeAppToast(toast), autoDismissMs);
+        }
+    }
+
+    function citationPreviewText(citation, maxLength = 280) {
+        if (citationUtils) {
+            return citationUtils.citationPreviewText(citation, maxLength);
+        }
+        const normalized = typeof citation === 'string'
+            ? citation.replace(/\s+/g, ' ').trim()
+            : '';
+        if (!normalized) {
+            return '';
+        }
+        if (normalized.length <= maxLength) {
+            return normalized;
+        }
+        return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+    }
+
+    async function copyTextToClipboard(text) {
+        if (citationUtils) {
+            await citationUtils.copyTextToClipboard(text);
+            return;
+        }
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.setAttribute('readonly', '');
+        textArea.style.position = 'fixed';
+        textArea.style.top = '-9999px';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        textArea.setSelectionRange(0, text.length);
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (!copied) {
+            throw new Error('Clipboard copy command failed');
+        }
+    }
+
+    async function requestMlaCitationForBook(bookId) {
+        const response = await fetch(`/api/library/${bookId}/citation/mla`, { cache: 'no-store' });
+        if (!response.ok) {
+            const payload = await readErrorPayload(response);
+            const message = firstMessageFromPayload(payload)
+                || `Citation request failed with status ${response.status}`;
+            throw new Error(message);
+        }
+        const payload = await response.json();
+        const citation = typeof payload?.citation === 'string' ? payload.citation.trim() : '';
+        if (!citation) {
+            throw new Error('Citation response was empty');
+        }
+        return citation;
+    }
+
+    async function ensureCurrentBookMlaCitation({ force = false } = {}) {
+        const bookId = state.currentBook?.id;
+        if (!bookId) {
+            return '';
+        }
+
+        const hasCachedCitation = state.currentBookCitationBookId === bookId
+            && typeof state.currentBookMlaCitation === 'string'
+            && state.currentBookMlaCitation.trim().length > 0;
+        if (!force && hasCachedCitation) {
+            return state.currentBookMlaCitation.trim();
+        }
+
+        const hasPendingRequest = state.currentBookCitationBookId === bookId
+            && state.currentBookCitationPromise;
+        if (!force && hasPendingRequest) {
+            return state.currentBookCitationPromise;
+        }
+
+        state.currentBookCitationBookId = bookId;
+        let requestPromise = null;
+        requestPromise = (async () => {
+            const citation = await requestMlaCitationForBook(bookId);
+            if (state.currentBook?.id === bookId) {
+                state.currentBookMlaCitation = citation;
+            }
+            return citation;
+        })().finally(() => {
+            if (state.currentBookCitationPromise === requestPromise) {
+                state.currentBookCitationPromise = null;
+            }
+        });
+        state.currentBookCitationPromise = requestPromise;
+        return requestPromise;
+    }
+
+    async function copyCurrentBookMlaCitation() {
+        if (!isCitationActionAvailable()) {
+            return;
+        }
+
+        const citation = typeof state.currentBookMlaCitation === 'string'
+            ? state.currentBookMlaCitation.trim()
+            : '';
+        if (!citation) {
+            // On some mobile browsers clipboard writes require immediate user gesture.
+            // Warm citation in background and ask the user to retry once available.
+            void ensureCurrentBookMlaCitation();
+            showAppToast({
+                title: 'Citation loading',
+                message: 'Preparing MLA citation. Tap again to copy.',
+                autoDismissMs: 2400
+            });
+            return;
+        }
+
+        try {
+            await copyTextToClipboard(citation);
+            showAppToast({
+                title: 'Citation copied',
+                message: 'MLA citation copied to clipboard.',
+                detail: citationPreviewText(citation),
+                autoDismissMs: 5200
+            });
+        } catch (error) {
+            console.debug('Failed to copy MLA citation:', error);
+            showAppToast({
+                title: 'Citation unavailable',
+                message: 'Unable to copy MLA citation right now.',
+                actionLabel: 'Retry',
+                onAction: () => { void copyCurrentBookMlaCitation(); }
+            });
         }
     }
 
@@ -1054,6 +1206,25 @@
             elements.mobileMenuFavorite.textContent = favorite
                 ? 'Remove from My List'
                 : 'Add to My List';
+        }
+
+        updateCitationUi();
+    }
+
+    function isCitationActionAvailable() {
+        return !!state.currentBook?.id && isClassroomFeatureEnabled('citationEnabled');
+    }
+
+    function updateCitationUi() {
+        const citationAvailable = isCitationActionAvailable();
+        if (citationAvailable
+            && !state.currentBookMlaCitation
+            && !state.currentBookCitationPromise) {
+            void ensureCurrentBookMlaCitation();
+        }
+        if (elements.mobileMenuCitation) {
+            elements.mobileMenuCitation.classList.toggle('hidden', !citationAvailable);
+            elements.mobileMenuCitation.disabled = !citationAvailable;
         }
     }
 
@@ -2070,7 +2241,8 @@
             illustrationEnabled: features?.illustrationEnabled !== false,
             characterEnabled: features?.characterEnabled !== false,
             chatEnabled: features?.chatEnabled !== false,
-            speedReadingEnabled: features?.speedReadingEnabled !== false
+            speedReadingEnabled: features?.speedReadingEnabled !== false,
+            citationEnabled: features?.citationEnabled !== false
         };
     }
 
@@ -3231,6 +3403,7 @@
         if (!isClassroomFeatureEnabled('illustrationEnabled')) disabled.push('illustrations');
         if (!isClassroomFeatureEnabled('characterEnabled')) disabled.push('characters');
         if (!isClassroomFeatureEnabled('chatEnabled')) disabled.push('chat');
+        if (!isClassroomFeatureEnabled('citationEnabled')) disabled.push('citations');
         if (elements.classroomFeatureSummary) {
             elements.classroomFeatureSummary.textContent = disabled.length > 0
                 ? `Teacher controls active: ${disabled.join(', ')} off for this class.`
@@ -3358,6 +3531,9 @@
         state.annotationsByKey = new Map();
         state.bookmarks = [];
         state.noteModalParagraphIndex = null;
+        state.currentBookMlaCitation = '';
+        state.currentBookCitationBookId = book.id;
+        state.currentBookCitationPromise = null;
         state.searchChapterFilter = '';
         state.searchLastQuery = '';
         clearSearchHighlightState();
@@ -3381,6 +3557,7 @@
             elements.bookAuthor.textContent = author;
             elements.bookAuthor.classList.toggle('hidden', author.length === 0);
         }
+        void ensureCurrentBookMlaCitation();
         updateFavoriteUi();
         renderSearchChapterFilterOptions();
 
@@ -5141,6 +5318,9 @@
         state.annotationsByKey = new Map();
         state.bookmarks = [];
         state.noteModalParagraphIndex = null;
+        state.currentBookMlaCitation = '';
+        state.currentBookCitationBookId = null;
+        state.currentBookCitationPromise = null;
         updateRecapOptOutControl();
         elements.readerView.classList.add('hidden');
         elements.libraryView.classList.remove('hidden');
@@ -7643,7 +7823,6 @@
                 toggleBookFavorite(state.currentBook.id, { rerenderLibrary: true, showToast: true });
             });
         }
-
         if (elements.annotationMenuToggle) {
             elements.annotationMenuToggle.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -7793,6 +7972,12 @@
             elements.mobileMenuBookmarks.addEventListener('click', () => {
                 closeMobileHeaderMenu();
                 showBookmarksOverlay();
+            });
+        }
+        if (elements.mobileMenuCitation) {
+            elements.mobileMenuCitation.addEventListener('click', () => {
+                closeMobileHeaderMenu();
+                void copyCurrentBookMlaCitation();
             });
         }
         if (elements.mobileMenuFavorite) {
@@ -8644,6 +8829,11 @@
                 case 'B':
                     e.preventDefault();
                     showBookmarksOverlay();
+                    break;
+                case 'x':
+                case 'X':
+                    e.preventDefault();
+                    void copyCurrentBookMlaCitation();
                     break;
                 case 'j':
                     e.preventDefault();
