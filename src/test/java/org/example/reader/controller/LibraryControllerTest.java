@@ -101,6 +101,24 @@ class LibraryControllerTest {
     }
 
     @Test
+    void getMlaCitation_existingBook_returnsCitation() throws Exception {
+        when(bookStorageService.getMlaCitation("book-1"))
+                .thenReturn(Optional.of("Austen, Jane. Pride and Prejudice."));
+
+        mockMvc.perform(get("/api/library/book-1/citation/mla"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.citation", is("Austen, Jane. Pride and Prejudice.")));
+    }
+
+    @Test
+    void getMlaCitation_missingBook_returns404() throws Exception {
+        when(bookStorageService.getMlaCitation("missing-book")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/library/missing-book/citation/mla"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void getChapterContent_existingChapter_returnsContent() throws Exception {
         List<Paragraph> paragraphs = List.of(
             new Paragraph(0, "It is a truth universally acknowledged..."),

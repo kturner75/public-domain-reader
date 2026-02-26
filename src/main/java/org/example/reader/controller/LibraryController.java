@@ -50,6 +50,13 @@ public class LibraryController {
             .orElse(ResponseEntity.notFound().build());
     }
 
+    @GetMapping("/{bookId}/citation/mla")
+    public ResponseEntity<CitationResponse> getMlaCitation(@PathVariable String bookId) {
+        return bookStorageService.getMlaCitation(bookId)
+                .map(citation -> ResponseEntity.ok(new CitationResponse(citation)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     @PatchMapping("/{bookId}/features")
     public ResponseEntity<Book> updateBookFeatures(
             @PathVariable String bookId,
@@ -171,6 +178,8 @@ public class LibraryController {
     }
 
     public record DeleteAllResponse(int deletedCount) {}
+
+    public record CitationResponse(String citation) {}
 
     public record FeatureUpdateRequest(
             Boolean ttsEnabled,

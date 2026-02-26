@@ -1,6 +1,6 @@
 # Product Backlog
 
-Last updated: 2026-02-24
+Last updated: 2026-02-26
 
 Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 
@@ -673,3 +673,34 @@ Statuses: `Discovery`, `Proposed`, `Ready`, `In Progress`, `Blocked`, `Done`
 - Add a visible `Buy Me a Coffee` CTA that opens the configured support URL in a new tab.
 - Ensure CTA placement is accessible and does not interfere with core reading/navigation actions on mobile or desktop.
 - Provide a configuration path for support URL/visibility so deployments can enable, disable, or change destination without code edits.
+
+### BL-029 - MLA Citation Button
+- Type: Feature
+- Priority: P2
+- Effort: S
+- Status: In Progress
+- Problem: Readers need a quick way to produce source citations without leaving the reading flow.
+- Implementation Plan:
+- Phase 1 (Citation Formatter): Add a small MLA citation formatter utility that builds output from existing book metadata and omits missing fields safely.
+- Phase 2 (Reader UI): Add an `MLA Citation` action in the book metadata/detail surface with clipboard copy behavior and inline success/error feedback.
+- Phase 3 (Validation): Add focused tests for formatter edge cases and UI copy interaction to avoid regressions.
+- Acceptance Criteria:
+- Add an `MLA Citation` button on the book detail/metadata surface.
+- Clicking the button generates an MLA-formatted citation from available book metadata and copies it to clipboard.
+- Show inline success feedback (for example, `Copied`) after copy completes.
+- Handle missing metadata gracefully by omitting unavailable fields while preserving a valid citation structure.
+- Ensure desktop and mobile behavior work without regressing existing reader controls.
+- Notes/Dependencies:
+- Final MLA edition target (8th vs 9th) and fallback display mode (copy-only vs copy + modal) will be decided during implementation.
+- Work Tracker:
+| Slice | Status | Scope | Done When |
+| --- | --- | --- | --- |
+| BL-029.1 Citation formatter utility | Done | Implement deterministic MLA formatter using current metadata model with safe fallbacks for missing fields | Formatter returns stable output for complete and partial metadata inputs |
+| BL-029.2 Citation button + clipboard UX | Done | Add `MLA Citation` button to metadata surface; copy generated citation and show inline feedback state | User can copy citation in one click on desktop/mobile with visible success/failure feedback |
+| BL-029.3 Tests + QA checks | Done | Add backend/frontend tests for formatting and clipboard interaction, including missing-metadata paths | Targeted tests pass and no regressions in existing reader controls |
+| BL-029.4 Citation preview toast | Done | Show a post-copy toast that includes the formatted citation text so users can visually confirm what was copied | Copy flow shows readable citation preview in toast while preserving non-blocking reader interaction on desktop/mobile |
+- Session Log:
+- 2026-02-26: Completed BL-029.1 by adding `MlaCitationFormatter` with deterministic MLA output for complete/partial metadata, author-name normalization, month formatting for `Accessed` dates, and passing formatter unit tests (`MlaCitationFormatterTest`).
+- 2026-02-26: Completed BL-029.2 by adding `GET /api/library/{bookId}/citation/mla`, wiring reader `Copy MLA Citation` action into the reader actions menu, adding `x` keyboard shortcut + shortcut help entry, and surfacing copy success/failure with existing app toast feedback.
+- 2026-02-26: Completed BL-029.3 by adding frontend citation utility tests (`src/test/frontend/citation-utils.test.cjs`) for preview formatting and clipboard API/fallback behavior, wiring `citation-utils.js` into reader boot, and validating with `npm run frontend:test` + syntax checks.
+- 2026-02-26: Completed BL-029.4 by enhancing citation-copy success toasts with a readable MLA citation preview (with safe truncation for long values) so users can visually confirm clipboard content without blocking reader flow.
