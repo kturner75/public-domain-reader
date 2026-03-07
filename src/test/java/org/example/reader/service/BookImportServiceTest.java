@@ -10,6 +10,7 @@ import org.example.reader.gutendex.GutendexResponse;
 import org.example.reader.model.Book;
 import org.example.reader.service.BookImportService.ImportResult;
 import org.example.reader.service.BookImportService.SearchResult;
+import org.example.reader.service.CuratedCatalogService.CuratedCatalogBook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +25,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -39,11 +41,14 @@ class BookImportServiceTest {
     @Mock
     private BookStorageService bookStorageService;
 
+    @Mock
+    private CuratedCatalogService curatedCatalogService;
+
     private BookImportService bookImportService;
 
     @BeforeEach
     void setUp() {
-        bookImportService = new BookImportService(gutendexClient, contentParser, bookStorageService);
+        bookImportService = new BookImportService(gutendexClient, contentParser, bookStorageService, curatedCatalogService, "full");
     }
 
     @Test
@@ -172,6 +177,50 @@ class BookImportServiceTest {
         assertEquals(1, results.size());
         assertEquals(List.of("Adventure stories", "Sea stories"), results.get(0).subjects());
         assertEquals(List.of("Classics", "Travel"), results.get(0).bookshelves());
+    }
+
+    @Test
+    void searchGutenbergUsesCuratedCatalogWhenConfigured() {
+        bookImportService = new BookImportService(gutendexClient, contentParser, bookStorageService, curatedCatalogService, "curated");
+        CuratedCatalogBook curated = new CuratedCatalogBook(
+                1342,
+                "Pride and Prejudice",
+                "Jane Austen",
+                100_000,
+                List.of("Courtship fiction"),
+                List.of("Romance")
+        );
+        when(curatedCatalogService.search("austen")).thenReturn(List.of(curated));
+        when(bookStorageService.existsBySource("gutenberg", "1342")).thenReturn(true);
+
+        List<SearchResult> results = bookImportService.searchGutenberg("austen");
+
+        assertEquals(1, results.size());
+        assertEquals(1342, results.get(0).gutenbergId());
+        assertTrue(results.get(0).alreadyImported());
+        verify(gutendexClient, never()).searchBooks(anyString());
+    }
+
+    @Test
+    void getPopularBooksUsesCuratedCatalogWhenConfigured() {
+        bookImportService = new BookImportService(gutendexClient, contentParser, bookStorageService, curatedCatalogService, "curated");
+        CuratedCatalogBook curated = new CuratedCatalogBook(
+                84,
+                "Frankenstein",
+                "Mary Shelley",
+                98_000,
+                List.of("Science fiction"),
+                List.of("Horror")
+        );
+        when(curatedCatalogService.getPopularBooks()).thenReturn(List.of(curated));
+        when(bookStorageService.existsBySource("gutenberg", "84")).thenReturn(false);
+
+        List<SearchResult> results = bookImportService.getPopularBooks(3);
+
+        assertEquals(1, results.size());
+        assertEquals("Frankenstein", results.get(0).title());
+        verify(gutendexClient, never()).getPopularBooks(anyInt());
+        verify(gutendexClient, never()).getPopularBooks();
     }
 
     @Test

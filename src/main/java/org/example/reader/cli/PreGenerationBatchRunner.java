@@ -2,13 +2,12 @@ package org.example.reader.cli;
 
 import org.example.reader.service.PreGenerationService;
 import org.example.reader.service.PreGenerationService.PreGenResult;
+import org.example.reader.service.CuratedCatalogService;
+import org.example.reader.service.CuratedCatalogService.CuratedCatalogBook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +27,7 @@ public class PreGenerationBatchRunner implements CommandLineRunner {
     private static final Logger log = LoggerFactory.getLogger(PreGenerationBatchRunner.class);
 
     private final PreGenerationService preGenerationService;
+    private final CuratedCatalogService curatedCatalogService;
 
     @Value("${pregen.cooldown-minutes:3}")
     private int cooldownMinutes;
@@ -41,46 +41,21 @@ public class PreGenerationBatchRunner implements CommandLineRunner {
     @Value("${pregen.batch.limit:20}")
     private int batchLimit;
 
-    public PreGenerationBatchRunner(PreGenerationService preGenerationService) {
+    public PreGenerationBatchRunner(
+            PreGenerationService preGenerationService,
+            CuratedCatalogService curatedCatalogService) {
         this.preGenerationService = preGenerationService;
+        this.curatedCatalogService = curatedCatalogService;
     }
-
-    /**
-     * Top 20 public domain books with their Project Gutenberg IDs.
-     * All books are confirmed public domain (published before 1928).
-     */
-    private static final List<BookEntry> TOP_20_BOOKS = List.of(
-            new BookEntry(1342, "Pride and Prejudice", "Jane Austen"),
-            new BookEntry(2701, "Moby Dick", "Herman Melville"),
-            new BookEntry(84, "Frankenstein", "Mary Shelley"),
-            new BookEntry(345, "Dracula", "Bram Stoker"),
-            new BookEntry(11, "Alice's Adventures in Wonderland", "Lewis Carroll"),
-            new BookEntry(1260, "Jane Eyre", "Charlotte Bronte"),
-            new BookEntry(768, "Wuthering Heights", "Emily Bronte"),
-            new BookEntry(174, "The Picture of Dorian Gray", "Oscar Wilde"),
-            new BookEntry(98, "A Tale of Two Cities", "Charles Dickens"),
-            new BookEntry(1184, "The Count of Monte Cristo", "Alexandre Dumas"),
-            new BookEntry(2554, "Crime and Punishment", "Fyodor Dostoyevsky"),
-            new BookEntry(1399, "Anna Karenina", "Leo Tolstoy"),
-            new BookEntry(1661, "The Adventures of Sherlock Holmes", "Arthur Conan Doyle"),
-            new BookEntry(1727, "The Odyssey", "Homer"),
-            new BookEntry(996, "Don Quixote", "Miguel de Cervantes"),
-            new BookEntry(135, "Les Miserables", "Victor Hugo"),
-            new BookEntry(2600, "War and Peace", "Leo Tolstoy"),
-            new BookEntry(28054, "The Brothers Karamazov", "Fyodor Dostoyevsky"),
-            new BookEntry(120, "Treasure Island", "Robert Louis Stevenson"),
-            new BookEntry(25, "The Scarlet Letter", "Nathaniel Hawthorne")
-    );
-
-    private record BookEntry(int gutenbergId, String title, String author) {}
 
     @Override
     public void run(String... args) throws Exception {
         log.info("========================================");
         log.info("Pre-Generation Batch Runner");
         log.info("========================================");
-        int effectiveLimit = Math.max(1, Math.min(batchLimit, TOP_20_BOOKS.size()));
-        List<BookEntry> booksToProcess = TOP_20_BOOKS.subList(0, effectiveLimit);
+        List<CuratedCatalogBook> curatedBooks = curatedCatalogService.getPopularBooks();
+        int effectiveLimit = Math.max(1, Math.min(batchLimit, curatedBooks.size()));
+        List<CuratedCatalogBook> booksToProcess = curatedBooks.subList(0, effectiveLimit);
         log.info("Mode: {}", getBatchMode());
         log.info("Processing {} books with {}min cooldown between books", booksToProcess.size(), cooldownMinutes);
         log.info("");
@@ -88,7 +63,7 @@ public class PreGenerationBatchRunner implements CommandLineRunner {
         List<PreGenResult> results = new ArrayList<>();
         int bookNumber = 0;
 
-        for (BookEntry book : booksToProcess) {
+        for (CuratedCatalogBook book : booksToProcess) {
             bookNumber++;
             log.info("========================================");
             log.info("[{}/{}] Processing: '{}' by {}", bookNumber, booksToProcess.size(), book.title(), book.author());
@@ -154,7 +129,7 @@ public class PreGenerationBatchRunner implements CommandLineRunner {
 
         for (int i = 0; i < results.size(); i++) {
             PreGenResult result = results.get(i);
-            BookEntry book = booksToProcess.get(i);
+            CuratedCatalogBook book = booksToProcess.get(i);
             String status = result.success() ? "OK" : "FAILED";
             log.info("[{}] {} - {} illustrations, {} portraits",
                     status, book.title(),

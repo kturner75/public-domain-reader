@@ -13,10 +13,15 @@ public class FeatureController {
     @Value("${speed-reading.enabled:true}")
     private boolean speedReadingEnabled;
 
+    @Value("${library.catalog.mode:curated}")
+    private String catalogMode;
+
     @GetMapping
     public Map<String, Object> getFeatures() {
         Map<String, Object> features = new HashMap<>();
         features.put("speedReadingEnabled", speedReadingEnabled);
+        features.put("catalogMode", catalogMode);
+        features.put("catalogCuratedOnly", !"full".equalsIgnoreCase(catalogMode));
         return features;
     }
 }

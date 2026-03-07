@@ -142,7 +142,9 @@
         achievementsAllItems: [],
         popularCatalogBooks: [],
         librarySearchQuery: '',
-        librarySearchRetryHandler: null
+        librarySearchRetryHandler: null,
+        catalogMode: null,
+        catalogCuratedOnly: false
     };
 
     // DOM Elements
@@ -185,6 +187,7 @@
         allBooks: document.getElementById('all-books'),
         bookList: document.getElementById('book-list'),
         noResults: document.getElementById('no-results'),
+        libraryCatalogModeBadge: document.getElementById('library-catalog-mode-badge'),
         bookTitle: document.getElementById('book-title'),
         bookAuthor: document.getElementById('book-author'),
         favoriteToggle: document.getElementById('favorite-toggle'),
@@ -2380,14 +2383,29 @@
                 const features = await response.json();
                 state.speedReadingEnabled = features.speedReadingEnabled !== false
                     && isClassroomFeatureEnabled('speedReadingEnabled');
+                state.catalogMode = typeof features.catalogMode === 'string'
+                    ? features.catalogMode.toLowerCase()
+                    : null;
+                state.catalogCuratedOnly = features.catalogCuratedOnly === true
+                    || state.catalogMode === 'curated';
             }
         } catch (error) {
             console.warn('Speed reading feature check failed:', error);
         }
 
         state.speedReadingEnabled = state.speedReadingEnabled && isClassroomFeatureEnabled('speedReadingEnabled');
+        updateLibraryCatalogModeBadge();
 
         applySpeedReadingAvailability();
+    }
+
+    function updateLibraryCatalogModeBadge() {
+        if (!elements.libraryCatalogModeBadge) return;
+        const showCuratedBadge = state.catalogCuratedOnly || state.catalogMode === 'curated';
+        elements.libraryCatalogModeBadge.classList.toggle('hidden', !showCuratedBadge);
+        if (showCuratedBadge) {
+            elements.libraryCatalogModeBadge.textContent = 'curated';
+        }
     }
 
     function applySpeedReadingAvailability() {
