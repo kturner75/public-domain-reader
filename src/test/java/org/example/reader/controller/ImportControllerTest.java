@@ -1,6 +1,7 @@
 package org.example.reader.controller;
 
 import org.example.reader.service.BookImportService;
+import org.example.reader.service.BookImportService.CatalogModeStatus;
 import org.example.reader.service.BookImportService.ImportResult;
 import org.example.reader.service.BookImportService.SearchResult;
 import org.junit.jupiter.api.Test;
@@ -79,6 +80,17 @@ class ImportControllerTest {
         mockMvc.perform(get("/api/import/popular").param("page", "3"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].title").value("Dracula"));
+    }
+
+    @Test
+    void getCatalogModeReturnsCurrentMode() throws Exception {
+        when(bookImportService.getCatalogModeStatus()).thenReturn(new CatalogModeStatus("curated", true, 20));
+
+        mockMvc.perform(get("/api/import/catalog-mode"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.catalogMode").value("curated"))
+            .andExpect(jsonPath("$.curatedOnly").value(true))
+            .andExpect(jsonPath("$.curatedBookCount").value(20));
     }
 
     @Test

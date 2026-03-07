@@ -533,6 +533,15 @@ html, body {
     padding: 2rem;
 }
 
+.library-catalog-mode-badge {
+    margin-top: 1.2rem;
+    text-align: right;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    color: #b5b5b5;
+    text-transform: lowercase;
+}
+
 /* Reader View */
 #reader-view {
     padding: var(--page-padding);
@@ -621,10 +630,20 @@ html, body {
     padding-bottom: 0.15rem;
 }
 
-.tts-container.header-mobile-action,
 #speed-reading-container.header-mobile-action,
-.character-container.header-mobile-action,
 .annotation-menu.header-mobile-action {
+    display: none;
+}
+
+/* Keep these quick reading actions in the desktop header. */
+.reader-header .tts-container.header-mobile-action,
+.reader-header .character-container.header-mobile-action {
+    display: flex;
+}
+
+/* Keep account/list actions in the hamburger menu instead of the desktop header. */
+.reader-header #favorite-toggle,
+.reader-header #account-toggle {
     display: none;
 }
 

@@ -1,6 +1,7 @@
 package org.example.reader.controller;
 
 import org.example.reader.service.BookImportService;
+import org.example.reader.service.BookImportService.CatalogModeStatus;
 import org.example.reader.service.BookImportService.ImportResult;
 import org.example.reader.service.BookImportService.SearchResult;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +27,11 @@ public class ImportController {
     @GetMapping("/popular")
     public List<SearchResult> getPopularBooks(@RequestParam(defaultValue = "1") int page) {
         return bookImportService.getPopularBooks(page);
+    }
+
+    @GetMapping("/catalog-mode")
+    public CatalogModeStatus getCatalogMode() {
+        return bookImportService.getCatalogModeStatus();
     }
 
     @PostMapping("/gutenberg/{gutenbergId}")

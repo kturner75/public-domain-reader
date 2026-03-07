@@ -10,6 +10,11 @@ import org.example.reader.gutendex.GutendexBook;
 import org.example.reader.gutendex.GutendexClient;
 import org.example.reader.gutendex.GutendexResponse;
 import org.example.reader.model.Book;
+import org.example.reader.service.CuratedCatalogService.CuratedCatalogBook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -21,18 +26,31 @@ import java.util.Optional;
 @Service
 public class BookImportService {
 
+    private static final Logger log = LoggerFactory.getLogger(BookImportService.class);
     private static final String SOURCE_GUTENBERG = "gutenberg";
 
+    private final CatalogMode catalogMode;
     private final GutendexClient gutendexClient;
     private final GutenbergContentParser contentParser;
     private final BookStorageService bookStorageService;
+    private final CuratedCatalogService curatedCatalogService;
 
+    @Autowired
     public BookImportService(GutendexClient gutendexClient,
                              GutenbergContentParser contentParser,
-                             BookStorageService bookStorageService) {
+                             BookStorageService bookStorageService,
+                             CuratedCatalogService curatedCatalogService,
+                             @Value("${library.catalog.mode:curated}") String catalogMode) {
         this.gutendexClient = gutendexClient;
         this.contentParser = contentParser;
         this.bookStorageService = bookStorageService;
+        this.curatedCatalogService = curatedCatalogService;
+        this.catalogMode = CatalogMode.from(catalogMode);
+        log.info(
+                "Catalog discovery mode: {} (curatedBooks={})",
+                this.catalogMode.toConfigValue(),
+                curatedCatalogService.getPopularBooks().size()
+        );
     }
 
     public record SearchResult(
@@ -53,19 +71,68 @@ public class BookImportService {
         int paragraphCount
     ) {}
 
+    public record CatalogModeStatus(
+            String catalogMode,
+            boolean curatedOnly,
+            int curatedBookCount
+    ) {}
+
+    public CatalogModeStatus getCatalogModeStatus() {
+        return new CatalogModeStatus(
+                catalogMode.toConfigValue(),
+                catalogMode == CatalogMode.CURATED,
+                curatedCatalogService.getPopularBooks().size()
+        );
+    }
+
     public List<SearchResult> searchGutenberg(String query) {
+        if (catalogMode == CatalogMode.CURATED) {
+            return curatedCatalogService.search(query).stream()
+                    .map(this::toSearchResult)
+                    .toList();
+        }
+
         GutendexResponse response = gutendexClient.searchBooks(query);
         return toSearchResults(response);
     }
 
     public List<SearchResult> getPopularBooks() {
+        if (catalogMode == CatalogMode.CURATED) {
+            return curatedCatalogService.getPopularBooks().stream()
+                    .map(this::toSearchResult)
+                    .toList();
+        }
+
         GutendexResponse response = gutendexClient.getPopularBooks();
         return toSearchResults(response);
     }
 
     public List<SearchResult> getPopularBooks(int page) {
+        if (catalogMode == CatalogMode.CURATED) {
+            return curatedCatalogService.getPopularBooks().stream()
+                    .map(this::toSearchResult)
+                    .toList();
+        }
+
         GutendexResponse response = gutendexClient.getPopularBooks(page);
         return toSearchResults(response);
+    }
+
+    private SearchResult toSearchResult(CuratedCatalogBook book) {
+        boolean imported = bookStorageService.existsBySource(
+                SOURCE_GUTENBERG,
+                String.valueOf(book.gutenbergId())
+        );
+
+        return new SearchResult(
+                book.gutenbergId(),
+                book.title(),
+                book.author(),
+                book.downloadCount(),
+                sanitizeMetadataList(book.subjects()),
+                sanitizeMetadataList(book.bookshelves()),
+                imported
+        );
     }
 
     private List<SearchResult> toSearchResults(GutendexResponse response) {
@@ -199,5 +266,22 @@ public class BookImportService {
         }
 
         return desc.toString();
+    }
+
+    private enum CatalogMode {
+        CURATED,
+        FULL;
+
+        private static CatalogMode from(String rawValue) {
+            if (rawValue == null) {
+                return CURATED;
+            }
+            String normalized = rawValue.trim().toLowerCase();
+            return "full".equals(normalized) ? FULL : CURATED;
+        }
+
+        private String toConfigValue() {
+            return this == FULL ? "full" : "curated";
+        }
     }
 }
