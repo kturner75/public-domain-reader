@@ -27,8 +27,12 @@ FROM users
 WHERE password_hash IS NOT NULL;
 
 ALTER TABLE users
-    DROP COLUMN password_hash,
-    DROP COLUMN failed_login_attempts,
+    DROP COLUMN password_hash;
+
+ALTER TABLE users
+    DROP COLUMN failed_login_attempts;
+
+ALTER TABLE users
     DROP COLUMN login_locked_until;
 
 CREATE TABLE user_auth_identities (
