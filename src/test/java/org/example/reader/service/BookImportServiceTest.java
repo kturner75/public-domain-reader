@@ -234,8 +234,9 @@ class BookImportServiceTest {
         ParsedBook parsedBook = new ParsedBook(List.of(chapter));
         when(contentParser.parse(anyString())).thenReturn(parsedBook);
 
+        ArgumentCaptor<BookEntity> bookCaptor = ArgumentCaptor.forClass(BookEntity.class);
         Book savedBook = new Book("book-id", "Test Book", "Test Author", "", null, List.of(), false, false, false);
-        when(bookStorageService.saveBook(any(BookEntity.class))).thenReturn(savedBook);
+        when(bookStorageService.saveBook(bookCaptor.capture())).thenReturn(savedBook);
 
         ImportResult result = bookImportService.importBook(1234);
 
@@ -244,6 +245,9 @@ class BookImportServiceTest {
         assertEquals("Successfully imported", result.message());
         assertEquals(1, result.chapterCount());
         assertEquals(2, result.paragraphCount());
+        assertTrue(bookCaptor.getValue().getTtsEnabled());
+        assertTrue(bookCaptor.getValue().getIllustrationEnabled());
+        assertTrue(bookCaptor.getValue().getCharacterEnabled());
     }
 
     @Test
