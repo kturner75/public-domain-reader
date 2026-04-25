@@ -227,7 +227,7 @@ async function installApiMocks(page) {
 
 async function openReaderForTestBook(page) {
   await page.goto('/');
-  await page.click('#book-list .book-item');
+  await page.click(`#continue-reading-list .book-item[data-book-id="${TEST_BOOK.id}"]`);
   await expect(page.locator('#reader-view')).toBeVisible();
   await expect(page.locator('#book-title')).toHaveText(TEST_BOOK.title);
 }
@@ -282,4 +282,3 @@ test('character chat exposes retry and recovers without duplicating user message
   await expect(page.locator('#chat-messages')).toContainText('Recovered character chat response.');
   await expect(page.locator('#chat-messages .chat-message.user')).toHaveCount(1);
 });
-

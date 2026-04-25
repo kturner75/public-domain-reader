@@ -3204,24 +3204,32 @@
     }
 
     function renderLocalBookItem(entry, options = {}) {
-        const author = normalizeAuthorName(entry.book.author);
-        const badge = options.badge ? `<span class="book-item-badge">${options.badge}</span>` : '';
+        const bookId = escapeHtml(entry.book.id);
+        const title = escapeHtml(entry.book.title || 'Untitled Book');
+        const author = escapeHtml(normalizeAuthorName(entry.book.author));
+        const badge = options.badge ? `<span class="book-item-badge">${escapeHtml(options.badge)}</span>` : '';
         const progress = buildBookProgressSnapshot(entry.activity);
-        const meta = formatBookActivityLabel(entry.activity, progress);
+        const meta = escapeHtml(formatBookActivityLabel(entry.activity, progress));
         const favoriteLabel = entry.favorite ? 'Saved' : 'Save';
         const favoriteTitle = entry.favorite ? 'Remove from My List' : 'Add to My List';
         const favoriteClass = entry.favorite ? ' active' : '';
         return `
-            <div class="book-item" data-book-id="${entry.book.id}">
+            <div
+                class="book-item"
+                data-book-id="${bookId}"
+                role="button"
+                tabindex="0"
+                aria-label="Open ${title}"
+            >
                 <div class="book-item-title-row">
-                    <div class="book-item-title">${entry.book.title}${badge}</div>
+                    <div class="book-item-title">${title}${badge}</div>
                     <button
                         class="book-item-favorite-btn${favoriteClass}"
                         type="button"
                         data-favorite-toggle="true"
-                        data-book-id="${entry.book.id}"
+                        data-book-id="${bookId}"
                         aria-pressed="${entry.favorite ? 'true' : 'false'}"
-                        title="${favoriteTitle}"
+                        title="${escapeHtml(favoriteTitle)}"
                     >
                         ${favoriteLabel}
                     </button>
@@ -3241,13 +3249,20 @@
     function renderCatalogBookItem(book) {
         const importedClass = book.alreadyImported ? ' imported' : '';
         const importedBadge = book.alreadyImported ? '<span class="imported-badge">✓</span>' : '';
-        const author = normalizeAuthorName(book.author);
+        const title = escapeHtml(book.title || 'Untitled Book');
+        const author = escapeHtml(normalizeAuthorName(book.author));
         const reason = (typeof book.discoverReason === 'string' && book.discoverReason.trim().length > 0)
             ? `<div class="book-item-discover-reason">${escapeHtml(book.discoverReason)}</div>`
             : '';
         return `
-            <div class="book-item catalog-book${importedClass}" data-gutenberg-id="${book.gutenbergId}">
-                <div class="book-item-title">${book.title}${importedBadge}</div>
+            <div
+                class="book-item catalog-book${importedClass}"
+                data-gutenberg-id="${escapeHtml(book.gutenbergId)}"
+                role="button"
+                tabindex="0"
+                aria-label="Open ${title}"
+            >
+                <div class="book-item-title">${title}${importedBadge}</div>
                 <div class="book-item-author">${author}</div>
                 ${reason}
             </div>
@@ -3684,9 +3699,12 @@
         const activeQueue = [...entries]
             .filter(entry => !isCompletedEntry(entry))
             .sort(compareByLibraryPriority);
-        const inProgress = activeQueue.filter(isInProgressEntry);
-        const completed = entries.filter(isCompletedEntry).sort(compareCompletedEntries);
         const continueEntry = activeQueue[0] || null;
+        const continueBookId = continueEntry?.book?.id || '';
+        const inProgress = activeQueue.filter(entry =>
+            isInProgressEntry(entry) && entry.book.id !== continueBookId
+        );
+        const completed = entries.filter(isCompletedEntry).sort(compareCompletedEntries);
         const upNext = activeQueue.slice(1, 5);
         const myListEntries = [...entries]
             .filter(entry => entry.favorite)
@@ -5387,7 +5405,14 @@
                 const snippetRaw = escapeHtml(result.snippet || '');
                 const snippet = highlightTermsInText(snippetRaw, terms);
                 return `
-                    <div class="search-result-item" data-chapter-id="${result.chapterId}" data-paragraph-index="${result.paragraphIndex}">
+                    <div
+                        class="search-result-item"
+                        data-chapter-id="${escapeHtml(result.chapterId)}"
+                        data-paragraph-index="${escapeHtml(result.paragraphIndex)}"
+                        role="button"
+                        tabindex="0"
+                        aria-label="Open search result in ${chapterTitle}"
+                    >
                         <div class="search-result-snippet">${snippet || '<em>No snippet available</em>'}</div>
                     </div>
                 `;
@@ -7973,6 +7998,10 @@
             });
         }
 
+        function isKeyboardActivation(event) {
+            return event.key === 'Enter' || event.key === ' ';
+        }
+
         // Personalized/local book selection
         elements.libraryView.addEventListener('click', async (e) => {
             const achievementItem = e.target.closest('[data-achievement-book-id]');
@@ -8035,6 +8064,28 @@
                 const gutenbergId = parseInt(bookItem.dataset.gutenbergId);
                 // Resolve through the import endpoint even for imported catalog entries.
                 // Title/author matching is ambiguous when sample books or alternate metadata exist.
+                await importAndOpenBook(gutenbergId);
+            }
+        });
+        elements.libraryView.addEventListener('keydown', async (e) => {
+            if (!isKeyboardActivation(e) || e.target.closest('button, input, select, textarea, a')) {
+                return;
+            }
+
+            const localBookItem = e.target.closest('.book-item[data-book-id]');
+            if (localBookItem && elements.libraryView.contains(localBookItem)) {
+                e.preventDefault();
+                const book = state.localBooks.find(b => b.id === localBookItem.dataset.bookId);
+                if (book) {
+                    await selectBookWithResume(book);
+                }
+                return;
+            }
+
+            const catalogBookItem = e.target.closest('.book-item[data-gutenberg-id]');
+            if (catalogBookItem && elements.bookList.contains(catalogBookItem)) {
+                e.preventDefault();
+                const gutenbergId = parseInt(catalogBookItem.dataset.gutenbergId);
                 await importAndOpenBook(gutenbergId);
             }
         });
@@ -8705,6 +8756,19 @@
         elements.searchResults.addEventListener('click', (e) => {
             const resultItem = e.target.closest('.search-result-item');
             if (resultItem && resultItem.dataset.chapterId) {
+                const chapterId = resultItem.dataset.chapterId;
+                const parsed = parseInt(resultItem.dataset.paragraphIndex, 10);
+                const paragraphIndex = Number.isInteger(parsed) ? parsed : 0;
+                navigateToSearchResult(chapterId, paragraphIndex);
+            }
+        });
+        elements.searchResults.addEventListener('keydown', (e) => {
+            if (!isKeyboardActivation(e)) {
+                return;
+            }
+            const resultItem = e.target.closest('.search-result-item');
+            if (resultItem && resultItem.dataset.chapterId) {
+                e.preventDefault();
                 const chapterId = resultItem.dataset.chapterId;
                 const parsed = parseInt(resultItem.dataset.paragraphIndex, 10);
                 const paragraphIndex = Number.isInteger(parsed) ? parsed : 0;
