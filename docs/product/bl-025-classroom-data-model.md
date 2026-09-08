@@ -403,7 +403,7 @@ Append-only education-record-adjacent telemetry.
 
 **Event types (v1):** `READING_HEARTBEAT`, `CHAPTER_OPEN`, `CHAPTER_COMPLETE`, `BOOK_PROGRESS`, `QUIZ_ATTEMPT`, `ASSIGNMENT_VIEW`, `AI_TOKEN_USAGE`.
 
-**BL-042.5 this-term cut** (reuse this table; no second ledger, no new column names): `event_type` = `AI_TOKEN_USAGE`; `feature` = `CHAT` (character chat) or `VOICE` (Call Character / realtime). Cost on `estimated_cost_micros`; voice duration on `duration_ms` (do **not** apply the `READING_HEARTBEAT` `[0, 120_000]` clamp — Call Character sessions can run longer); `billed_via` + cached tokens in `metadata_json`. Full acceptance in `docs/product/backlog.md` → `BL-042.5`.
+**BL-042.5 this-term cut** (reuse this table; no second ledger, no new column names): `event_type` = `AI_TOKEN_USAGE`; `feature` = `CHAT` (character chat) or `VOICE` (Call Character / realtime). Cost on `estimated_cost_micros`; voice duration on `duration_ms` (do **not** apply the `READING_HEARTBEAT` `[0, 120_000]` clamp — Call Character sessions can run longer); `billed_via` + cached tokens in `metadata_json`. Full acceptance in [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f) → `BL-042.5`.
 
 **Write path (PR-10 acceptance):**
 
@@ -710,7 +710,7 @@ Policy / Discovery (still open — keep `BL-025.6` / `.7` teacher bulk / `.10` g
 - [ ] School-admin education-record access remains deny-by-default unless policy explicitly allows (`KD-16`, `BL-043.13`)
 - [ ] K-12 / parental model explicitly out of pilot scope (`BL-043.20`)
 
-Runtime gaps vs this schema (2026-08-11 FERPA / student-PII privacy review — triage in `docs/product/backlog.md` → `BL-043` work tracker):
+Runtime gaps vs this schema (2026-08-11 FERPA / student-PII privacy review — triage in [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f) → `BL-043` work tracker):
 
 - [x] Prod auth gate fail-closed (`deployment.mode=public` + Secure cookies) — `BL-043.1` (overlaps `SECURITY_AUDIT` C-01 / H-07). **Code landed 2026-08-23; live status re-probe still required after deploy.**
 - [x] Google OAuth email auto-link requires re-auth/consent — `BL-043.2` (overlaps H-04). **Code landed 2026-08-23; password re-auth before link, sessions deleted on link.**
@@ -834,7 +834,7 @@ Deferred — KD-15 class-agnostic completion for pilot; revisit if dual-class ch
 
 ## References
 
-- `docs/product/backlog.md` — BL-025, BL-042, BL-043, BL-018.6
+- [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f) — living backlog for BL-025, BL-042, BL-043, BL-018.6 (`docs/product/backlog.md` is a pointer only)
 - `docs/product/classroom-landing-usage.md` — demo API contract
 - `docs/product/bl-021-auth-architecture-adr.md` — dual auth planes, 24h hard-delete (Decision 6)
 - `docs/product/current-features.md` — accounts + classroom landing; character chat local nature
@@ -970,7 +970,7 @@ PR-1 ─┼─► PR-2 ─► PR-5 ─► PR-6 ─► PR-7
 | 2026-07-10 | Prefer DATE for calendar bounds: term `start_date`/`end_date`, assignment `due_date`/`available_from_date`; keep TIMESTAMP for audit/expiry instants |
 | 2026-07-10 | Enrollment roster join/leave: `joined_date`/`left_date` as DATE (same category as term bounds); row audit stays on `created_at`/`updated_at` TIMESTAMP |
 | 2026-07-10 | Rename `join_links` → `invite_links` (and `invite_link_id`, `InviteLinkService`) for clarity vs SQL JOIN |
-| 2026-07-10 | **Implementation slice 1 (API/schema):** V14 migration, JPA entities/repos, `ClassroomAuthorizationService`, `InviteLinkService`, `ClassroomAdminService`, context dual-read + `classroom.mode`, feature/assignment/roster APIs. No FE. Pickup checklist: see `docs/product/backlog.md` → Implementation handoff (classroom). |
+| 2026-07-10 | **Implementation slice 1 (API/schema):** V14 migration, JPA entities/repos, `ClassroomAuthorizationService`, `InviteLinkService`, `ClassroomAdminService`, context dual-read + `classroom.mode`, feature/assignment/roster APIs. No FE. Pickup checklist lived in `docs/product/backlog.md` → Implementation handoff (classroom); that archive is in git history. |
 | 2026-07-14 | **Teacher capability slice:** V15 `account_capabilities`, durable `CREATE_CLASSROOM` grants, capability API, backend creation enforcement, role-aware Library/Teaching UI, direct-access denial for students, and operator grant/revoke/status tooling by account email. |
-| 2026-08-11 | FERPA / student-PII privacy review: companion checklist expanded with runtime gaps vs schema hooks; triage ownership points to `BL-043` work tracker in `docs/product/backlog.md` (docs only). |
+| 2026-08-11 | FERPA / student-PII privacy review: companion checklist expanded with runtime gaps vs schema hooks; triage ownership points to `BL-043` in Notion Tasks (docs only; historical text through 2026-09-08 is in git history of `docs/product/backlog.md`). |
 | 2026-08-14 | **BL-042.5** maps this-term chat/voice cost onto existing `classroom_usage_events` columns (`AI_TOKEN_USAGE`, `CHAT`/`VOICE`, `model_name`, `duration_ms`, `estimated_cost_micros`, `metadata_json`). Named `VOICE` for Call Character (not previously listed). Docs only. |

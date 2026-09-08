@@ -1196,7 +1196,7 @@ Resolved / closed (product + design):
 - `src/main/resources/db/migration/V5__user_owned_reader_data.sql`
 - `src/main/resources/static/js/reader.js` (`chapterLoadRequestId`, character chat, `nextParagraph`)
 - `src/main/resources/static/index.html` (`#character-chat-modal`, `#character-toast`)
-- `docs/product/current-features.md`, `docs/product/backlog.md`, `docs/product/bl-021-auth-architecture-adr.md`
+- `docs/product/current-features.md`, [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f) (living backlog; `docs/product/backlog.md` is a pointer), `docs/product/bl-021-auth-architecture-adr.md`
 - `Claude.md` / `Agents.md`
 
 ---
@@ -1257,7 +1257,7 @@ Each PR independently reviewable; flag default off in prod-oriented config.
 ### PR 6 — Hardening: E2E, docs, **required** spoiler gate, rollout
 
 - **PR title:** Reading buddy E2E, spoiler acceptance suite, and rollout docs
-- **Files:** Playwright e2e; **required** spoiler regression tests (stubbed provider); `docs/product/current-features.md` / backlog; properties comments; public-mode auth/rate-limit verification
+- **Files:** Playwright e2e; **required** spoiler regression tests (stubbed provider); `docs/product/current-features.md` / [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f); properties comments; public-mode auth/rate-limit verification
 - **Dependencies:** PR 4, PR 5 (PR 5 soft-dep if summary not user-visible critical)
 - **Description:** **Prod flag-on blocked** until spoiler suite + E2E smoke green.
 
