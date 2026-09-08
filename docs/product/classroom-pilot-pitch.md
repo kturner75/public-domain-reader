@@ -161,7 +161,7 @@ Use this as a 10–15 minute live walkthrough.
 - Classroom domain design: `docs/product/bl-025-classroom-data-model.md`  
 - Classroom demo landing guide: `docs/product/classroom-landing-usage.md`  
 - Reading Buddy design: `docs/product/reading-buddy-mode.md`  
-- Product backlog: `docs/product/backlog.md` (`BL-025`, `BL-042`–`BL-045`)  
+- Product backlog: [Notion Tasks](https://app.notion.com/p/3d0064dd143280c1a8d4d070d92fbf3f) for project [classic-chat-reader](https://app.notion.com/p/7446c6580e2045e1827cf5c9b83b6e18) (`BL-025`, `BL-042`–`BL-045`)  
 
 ---
 
