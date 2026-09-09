@@ -358,12 +358,12 @@ public class CharacterController {
     }
 
     /**
-     * Request portrait generation for one existing PRIMARY character.
+     * Request portrait generation for one existing PRIMARY or SECONDARY character.
      */
     @PostMapping("/{characterId}/portrait/request")
-    public ResponseEntity<Void> requestPortrait(@PathVariable String characterId) {
+    public ResponseEntity<?> requestPortrait(@PathVariable String characterId) {
         if (!characterEnabled) {
-            return ResponseEntity.status(403).build();
+            return portraitForbidden("Character portraits are disabled.");
         }
         Optional<CharacterEntity> characterOpt = characterService.getCharacter(characterId);
         if (characterOpt.isEmpty()) {
@@ -374,29 +374,29 @@ public class CharacterController {
         }
         CharacterEntity character = characterOpt.get();
         if (!isCharacterEnabled(character.getBook())) {
-            return ResponseEntity.status(403).build();
+            return portraitForbidden("Character portraits are disabled for this book.");
         }
-        if (character.getCharacterType() != CharacterType.PRIMARY) {
-            return ResponseEntity.status(403).build();
+        if (!isPortraitEligible(character.getCharacterType())) {
+            return portraitForbidden("Portrait generation is only available for primary and secondary characters.");
         }
         characterService.requestPortrait(characterId);
         return ResponseEntity.accepted().build();
     }
 
     /**
-     * Regenerate a PRIMARY portrait with a custom prompt.
+     * Regenerate a PRIMARY or SECONDARY portrait with a custom prompt.
      * Gated the same way as illustration prompt editing (local on, not a prod Imagine path).
      */
     @PostMapping("/{characterId}/portrait/regenerate")
-    public ResponseEntity<Void> regeneratePortrait(
+    public ResponseEntity<?> regeneratePortrait(
             @PathVariable String characterId,
             @RequestBody RegenerateRequest request) {
 
         if (!characterEnabled) {
-            return ResponseEntity.status(403).build();
+            return portraitForbidden("Character portraits are disabled.");
         }
         if (!allowPromptEditing) {
-            return ResponseEntity.status(403).build();
+            return portraitForbidden("Portrait prompt editing is disabled.");
         }
         if (cacheOnly) {
             return ResponseEntity.status(409).build();
@@ -407,10 +407,10 @@ public class CharacterController {
         }
         CharacterEntity character = characterOpt.get();
         if (!isCharacterEnabled(character.getBook())) {
-            return ResponseEntity.status(403).build();
+            return portraitForbidden("Character portraits are disabled for this book.");
         }
-        if (character.getCharacterType() != CharacterType.PRIMARY) {
-            return ResponseEntity.status(403).build();
+        if (!isPortraitEligible(character.getCharacterType())) {
+            return portraitForbidden("Portrait generation is only available for primary and secondary characters.");
         }
         if (character.getStatus() == CharacterStatus.GENERATING
                 || character.getStatus() == CharacterStatus.PENDING) {
@@ -640,5 +640,13 @@ public class CharacterController {
 
     private boolean isCharacterEnabled(BookEntity book) {
         return characterEnabled && Boolean.TRUE.equals(book.getCharacterEnabled());
+    }
+
+    private static boolean isPortraitEligible(CharacterType type) {
+        return type == CharacterType.PRIMARY || type == CharacterType.SECONDARY;
+    }
+
+    private static ResponseEntity<Map<String, String>> portraitForbidden(String reason) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", reason));
     }
 }

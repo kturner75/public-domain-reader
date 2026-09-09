@@ -26,7 +26,9 @@ import java.util.Optional;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(CharacterController.class)
@@ -83,7 +85,8 @@ class CharacterControllerPromptEditingTest {
                                   "prompt": "Elizabeth Bennet in a pale muslin gown"
                                 }
                                 """))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error", is("Portrait prompt editing is disabled.")));
 
         verify(characterService, never()).regeneratePortraitWithPrompt(
                 org.mockito.ArgumentMatchers.anyString(),
