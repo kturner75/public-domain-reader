@@ -488,7 +488,7 @@ class CharacterControllerTest {
     }
 
     @Test
-    void requestPortrait_secondaryCharacter_returnsForbidden() throws Exception {
+    void requestPortrait_secondaryCharacter_queuesGeneration() throws Exception {
         BookEntity book = new BookEntity("Book One", "Author One", "gutenberg");
         book.setCharacterEnabled(true);
 
@@ -500,9 +500,10 @@ class CharacterControllerTest {
         when(characterService.getCharacter("character-1")).thenReturn(Optional.of(character));
 
         mockMvc.perform(post("/api/characters/character-1/portrait/request"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isAccepted());
 
-        verify(characterService, never()).requestPortrait("character-1");
+        verify(characterService).requestPortrait("character-1");
+        verify(prefetchService, never()).prefetchCharactersForBook(org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -530,6 +531,35 @@ class CharacterControllerTest {
 
         verify(characterService).regeneratePortraitWithPrompt(
                 "character-1", "Elizabeth Bennet in a pale muslin gown");
+        verify(prefetchService, never()).prefetchCharactersForBook(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void regeneratePortrait_secondaryCharacter_queuesCustomPrompt() throws Exception {
+        BookEntity book = new BookEntity("Book One", "Author One", "gutenberg");
+        book.setCharacterEnabled(true);
+
+        CharacterEntity character = new CharacterEntity();
+        character.setId("character-1");
+        character.setBook(book);
+        character.setCharacterType(CharacterType.SECONDARY);
+        character.setStatus(CharacterStatus.COMPLETED);
+
+        when(characterService.getCharacter("character-1")).thenReturn(Optional.of(character));
+        when(characterService.regeneratePortraitWithPrompt(
+                "character-1", "Mr. Shaw in a dark coat")).thenReturn(true);
+
+        mockMvc.perform(post("/api/characters/character-1/portrait/regenerate")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "prompt": "Mr. Shaw in a dark coat"
+                                }
+                                """))
+                .andExpect(status().isAccepted());
+
+        verify(characterService).regeneratePortraitWithPrompt(
+                "character-1", "Mr. Shaw in a dark coat");
         verify(prefetchService, never()).prefetchCharactersForBook(org.mockito.ArgumentMatchers.anyString());
     }
 
